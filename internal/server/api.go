@@ -26,9 +26,49 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleAddProject))
 	mux.HandleFunc("DELETE /api/projects", s.requireAuth(s.handleRemoveProject))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
+	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
+	mux.HandleFunc("GET /api/autostart", s.requireAuth(s.handleAutostartStatus))
+	mux.HandleFunc("POST /api/autostart", s.requireAuth(s.handleAutostartSet))
 
 	mux.HandleFunc("/", s.hostGuard(s.spaHandler()))
 	return mux
+}
+
+// --- autostart ---
+
+func (s *Server) handleAutostartStatus(w http.ResponseWriter, r *http.Request) {
+	if s.autostart == nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"supported": false, "registered": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"supported": true, "registered": s.autostart.IsRegistered()})
+}
+
+type autostartReq struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (s *Server) handleAutostartSet(w http.ResponseWriter, r *http.Request) {
+	if s.autostart == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "autostart not supported on this platform"})
+		return
+	}
+	var req autostartReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	var err error
+	if req.Enabled {
+		err = s.autostart.Register()
+	} else {
+		err = s.autostart.Unregister()
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"registered": s.autostart.IsRegistered()})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -296,6 +336,10 @@ func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	_ = readJSON(r, &req) // empty body is fine (force defaults false)
 	sum := s.SyncAll(r.Context(), req.Force)
 	writeJSON(w, http.StatusOK, sum)
+}
+
+func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.ReconcileOnly())
 }
 
 // persistConfigLocked saves config; on failure writes a 500 and returns the

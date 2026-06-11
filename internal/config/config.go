@@ -42,8 +42,8 @@ const (
 
 // RepoConfig is one tracked git skill repo.
 type RepoConfig struct {
-	URL    string `yaml:"url"`
-	Branch string `yaml:"branch,omitempty"`
+	URL    string `yaml:"url" json:"url"`
+	Branch string `yaml:"branch,omitempty" json:"branch,omitempty"`
 }
 
 // EnabledEntry maps a skill selection to a link target.
@@ -53,15 +53,15 @@ type RepoConfig struct {
 // path. Mode disambiguates follow vs snapshot for the "*" form; for a single
 // skill it is implicitly snapshot.
 type EnabledEntry struct {
-	Skill  string `yaml:"skill"`
-	Target string `yaml:"target"`
-	Mode   Mode   `yaml:"mode,omitempty"`
+	Skill  string `yaml:"skill" json:"skill"`
+	Target string `yaml:"target" json:"target"`
+	Mode   Mode   `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
 // Schedule controls the daily sync cadence.
 type Schedule struct {
 	// DailyAt is the local wall-clock time "HH:MM" the daily cycle fires.
-	DailyAt string `yaml:"daily_at"`
+	DailyAt string `yaml:"daily_at" json:"dailyAt"`
 }
 
 // Config is the user-facing, portable configuration (config.yaml).
@@ -75,13 +75,13 @@ type Config struct {
 // LinkRecord is one daemon-owned link.
 type LinkRecord struct {
 	// Name is the (sanitized) link name as it appears under Target.
-	Name string `yaml:"name"`
+	Name string `yaml:"name" json:"name"`
 	// Target is the directory the link lives in (skills root or project dir).
-	Target string `yaml:"target"`
+	Target string `yaml:"target" json:"target"`
 	// Source is the absolute skill directory the link points at.
-	Source string `yaml:"source"`
+	Source string `yaml:"source" json:"source"`
 	// LinkType is how the link was materialized.
-	LinkType LinkType `yaml:"link_type"`
+	LinkType LinkType `yaml:"link_type" json:"linkType"`
 }
 
 // Manifest is the machine-local ownership record (manifest.yaml).

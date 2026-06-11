@@ -42,12 +42,36 @@ type Server struct {
 	syncer     *gitsync.Syncer
 	reconciler *reconcile.Reconciler
 
+	autostart AutostartManager
+
 	mu          sync.Mutex
 	cfg         config.Config
 	manifest    config.Manifest
 	firstRun    bool
 	repoStatus  map[string]RepoStatus
 	lastSummary reconcile.Summary
+}
+
+// AutostartManager registers/unregisters the daemon for login start (R19). The
+// concrete implementation is platform-specific (internal/autostart); the server
+// depends on the interface so it stays testable without touching the OS.
+type AutostartManager interface {
+	Register() error
+	Unregister() error
+	IsRegistered() bool
+}
+
+// SetAutostart wires in the platform autostart manager (called from main).
+func (s *Server) SetAutostart(m AutostartManager) { s.autostart = m }
+
+// Schedule returns the configured daily time ("HH:MM"), defaulting to 09:00.
+func (s *Server) Schedule() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.Schedule.DailyAt == "" {
+		return "09:00"
+	}
+	return s.cfg.Schedule.DailyAt
 }
 
 // New builds a Server rooted at centralDir.
@@ -118,6 +142,20 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 		s.repoStatus[repo.URL] = st
 	}
 
+	sum := s.reconciler.Apply(s.cfg, &s.manifest)
+	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
+		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
+	}
+	s.lastSummary = sum
+	return sum
+}
+
+// ReconcileOnly re-applies links from the current config without pulling git.
+// The UI calls it after a selection change so links materialize immediately
+// without waiting for a full sync.
+func (s *Server) ReconcileOnly() reconcile.Summary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	sum := s.reconciler.Apply(s.cfg, &s.manifest)
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))

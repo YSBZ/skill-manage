@@ -6,11 +6,59 @@
     <!-- The daemon injects the per-install API token here at serve time (KTD11). -->
     <meta name="sm-token" content="__SM_TOKEN__" />
     <title>SkillManage</title>
+    <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <main id="app">
+    <header>
       <h1>SkillManage</h1>
-      <p>占位页 — UI 在 U10 实现。</p>
+      <div class="actions">
+        <label class="toggle"><input type="checkbox" id="autostart" /> 开机自启</label>
+        <button id="update-now">立即更新全部</button>
+        <button id="update-force" class="ghost" title="丢弃本地改动，强制与上游一致">强制更新</button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <main>
+      <section id="left">
+        <div class="pane-head">
+          <h2>仓库</h2>
+          <div class="row">
+            <button id="export" class="ghost small">导出</button>
+            <button id="import" class="ghost small">导入</button>
+          </div>
+        </div>
+        <form id="add-repo">
+          <input id="repo-url" placeholder="git 仓 URL (https/ssh/git@...)" required />
+          <input id="repo-branch" placeholder="分支(可选)" class="branch" />
+          <button type="submit">添加</button>
+        </form>
+        <ul id="repo-list"></ul>
+
+        <div class="pane-head"><h2>项目</h2></div>
+        <form id="add-project">
+          <input id="project-path" placeholder="项目路径 (其下的 .claude/skills 作为目标)" required />
+          <button type="submit">登记</button>
+        </form>
+        <ul id="project-list"></ul>
+      </section>
+
+      <section id="right">
+        <div class="pane-head">
+          <h2 id="right-title">选择左侧一个仓库</h2>
+          <div class="row" id="repo-mode-row"></div>
+        </div>
+        <div id="target-row" class="row hidden">
+          <label>链接目标：</label>
+          <select id="target"></select>
+        </div>
+        <ul id="skill-list"></ul>
+      </section>
     </main>
+
+    <footer id="summary"></footer>
+
+    <script src="/app.js"></script>
   </body>
 </html>

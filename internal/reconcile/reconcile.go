@@ -19,11 +19,11 @@ import (
 
 // Summary is the observable outcome of one reconcile cycle.
 type Summary struct {
-	Created   []config.LinkRecord
-	Removed   []config.LinkRecord
-	Pruned    []config.LinkRecord
-	Conflicts []linker.Conflict
-	Errors    []string
+	Created   []config.LinkRecord `json:"created"`
+	Removed   []config.LinkRecord `json:"removed"`
+	Pruned    []config.LinkRecord `json:"pruned"`
+	Conflicts []linker.Conflict   `json:"conflicts"`
+	Errors    []string            `json:"errors"`
 }
 
 // Reconciler applies enabled[] to the filesystem under a central repos root.

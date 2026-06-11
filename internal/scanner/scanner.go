@@ -15,11 +15,11 @@ import (
 // Skill is one discovered skill unit.
 type Skill struct {
 	// LogicalName is the source directory name, preserved verbatim.
-	LogicalName string
+	LogicalName string `json:"logicalName"`
 	// LinkName is the filesystem-safe name used for the link (KTD3).
-	LinkName string
+	LinkName string `json:"linkName"`
 	// Dir is the absolute path to the skill directory.
-	Dir string
+	Dir string `json:"dir"`
 }
 
 // Scan walks repoRoot and returns its skill units, sorted by LinkName for

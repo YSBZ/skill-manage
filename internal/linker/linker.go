@@ -219,10 +219,10 @@ const (
 
 // Conflict is a detected naming problem in a desired link set.
 type Conflict struct {
-	Kind     ConflictKind
-	LinkName string
-	Targets  []string
-	Sources  []string
+	Kind     ConflictKind `json:"kind"`
+	LinkName string       `json:"linkName"`
+	Targets  []string     `json:"targets"`
+	Sources  []string     `json:"sources"`
 }
 
 // DetectConflicts inspects a desired link set for within-root collisions and
