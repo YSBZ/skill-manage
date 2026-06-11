@@ -126,7 +126,18 @@ func (mgr *Manager) Link(d DesiredLink, manifest *config.Manifest) (created bool
 
 	default:
 		// a real file or directory
-		if findRecord(manifest, d.Target, d.LinkName) != nil {
+		if rec := findRecord(manifest, d.Target, d.LinkName); rec != nil {
+			if rec.LinkType == config.LinkCopy {
+				// Our copy fallback (KTD12): a copy is a real dir we own. Re-copy
+				// every reconcile so it stays fresh (a static copy does not
+				// auto-refresh like a link).
+				if err := removePrimitive(tp, config.LinkCopy); err != nil {
+					return false, err
+				}
+				removeRecord(manifest, d.Target, d.LinkName)
+				return mgr.createAndRecord(d, manifest)
+			}
+			// We expected a link but found a real dir — refuse to treat as owned.
 			return false, fmt.Errorf("%w: %s is now a real path", ErrDiverged, tp)
 		}
 		return false, fmt.Errorf("%w: %s", ErrTargetOccupied, tp)

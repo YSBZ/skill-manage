@@ -166,6 +166,32 @@ func TestLinkReplaceStaleSource(t *testing.T) {
 	}
 }
 
+func TestLinkRecopiesOwnedCopy(t *testing.T) {
+	f := newFixture(t)
+	src := f.mkSource(t, "ce-plan")
+	// Simulate an existing owned copy: a real dir at the target + a copy record.
+	tp := filepath.Join(f.target, "ce-plan")
+	if err := os.MkdirAll(tp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tp, "stale.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.man.Links = append(f.man.Links, config.LinkRecord{Name: "ce-plan", Target: f.target, Source: src, LinkType: config.LinkCopy})
+
+	// Link must treat the copy as owned and refresh it (KTD12), not ErrDiverged.
+	created, err := f.mgr.Link(f.desired("ce-plan", src), f.man)
+	if err != nil {
+		t.Fatalf("owned copy should be refreshed, got err: %v", err)
+	}
+	if !created {
+		t.Fatal("re-copy should report created=true")
+	}
+	if _, err := os.Stat(filepath.Join(tp, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale copy content should be gone after refresh: %v", err)
+	}
+}
+
 func TestUnlink(t *testing.T) {
 	f := newFixture(t)
 	src := f.mkSource(t, "ce-plan")
