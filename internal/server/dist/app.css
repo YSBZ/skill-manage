@@ -19,6 +19,12 @@ body {
   font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
+  /* Full-height app shell: header/banner/footer stay fixed, the layout row
+     fills the rest and its two columns scroll independently. */
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* header */
@@ -26,7 +32,7 @@ header {
   display: flex; align-items: center; gap: 24px;
   padding: 12px 22px; border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, #12151b, #0e1014);
-  position: sticky; top: 0; z-index: 10;
+  flex: 0 0 auto; z-index: 10;
 }
 .brand { font-size: 16px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
 .brand .logo { color: var(--accent); margin-right: 4px; }
@@ -36,10 +42,12 @@ header {
 .actions { display: flex; align-items: center; gap: 10px; }
 .toggle { color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
-/* layout */
-.layout { display: grid; grid-template-columns: 320px 1fr; align-items: start; }
-aside { border-right: 1px solid var(--line); padding: 16px 18px; min-height: calc(100vh - 110px); }
-main { padding: 16px 22px; }
+/* layout: the grid row fills the remaining viewport height; min-height:0 lets
+   the two columns become independent scroll containers instead of growing the
+   page. */
+.layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 320px 1fr; align-items: stretch; }
+aside { border-right: 1px solid var(--line); padding: 16px 18px; overflow-y: auto; min-height: 0; }
+main { padding: 16px 22px; overflow-y: auto; min-height: 0; }
 .pane-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; }
 .pane-head:first-child { margin-top: 4px; }
 .pane-head h2 { font-size: 11px; color: var(--muted); margin: 0; text-transform: uppercase; letter-spacing: .08em; }
@@ -87,7 +95,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .st-shadowed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 
 /* main: search + groups */
-.main-head { position: sticky; top: 62px; background: var(--bg); padding-bottom: 12px; z-index: 5; }
+.main-head { position: sticky; top: 0; background: var(--bg); padding: 0 0 12px; margin-top: -4px; z-index: 5; }
 #search { width: 100%; font-size: 14px; padding: 9px 12px; }
 .group { margin-bottom: 18px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow); }
 .group-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; background: var(--panel-2); }
@@ -96,30 +104,45 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .group.collapsed .caret { transform: rotate(-90deg); }
 .group-title { font-weight: 600; }
 .group-spacer { flex: 1; }
-.group-body { padding: 6px; }
+.group-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding: 12px; }
 .group.collapsed .group-body { display: none; }
 
 /* skill card */
-.skill { display: flex; align-items: flex-start; gap: 11px; padding: 10px 11px; border-radius: 9px; }
-.skill:hover { background: var(--panel-2); }
-.skill input[type=checkbox] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
+.skill {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 13px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--panel-2);
+  transition: border-color .12s, background .12s;
+}
+.skill:hover { border-color: var(--accent-dim); background: #20262f; }
+.skill input[type=checkbox] { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
 .skill-main { flex: 1; min-width: 0; }
 .skill-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .skill-name { font-weight: 600; }
 .skill-logical { color: var(--muted); font-size: 12px; }
-.skill-desc { color: var(--muted); font-size: 12.5px; margin-top: 3px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.skill-desc { color: var(--muted); font-size: 12.5px; margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .skill-detail-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 .follow-pill { font-size: 11px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 8px; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 
 /* misc */
 .muted { color: var(--muted); }
-.banner { padding: 10px 22px; background: #2a2110; color: var(--warn); border-bottom: 1px solid var(--line); }
+.banner { flex: 0 0 auto; padding: 10px 22px; background: #2a2110; color: var(--warn); border-bottom: 1px solid var(--line); }
 .banner.err { background: #2a1414; color: var(--err); }
-.hidden { display: none; }
-footer { padding: 10px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.hidden { display: none !important; }
+footer { flex: 0 0 auto; padding: 10px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
 footer .conflict { color: var(--warn); }
 footer .error { color: var(--err); }
+
+/* custom tooltip */
+.tip {
+  position: fixed; z-index: 100; max-width: 440px;
+  padding: 8px 11px; border-radius: 8px;
+  background: #0b0d11; border: 1px solid var(--line); color: var(--text);
+  font-size: 12.5px; line-height: 1.55;
+  box-shadow: var(--shadow); pointer-events: none;
+  white-space: normal; word-break: break-word;
+}
 
 /* modal */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }

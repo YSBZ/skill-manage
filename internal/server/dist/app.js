@@ -3,6 +3,33 @@ const TOKEN = document.querySelector('meta[name="sm-token"]').content;
 const $ = (s, el = document) => el.querySelector(s);
 const ce = (t, props = {}) => Object.assign(document.createElement(t), props);
 
+// Instant custom tooltip — the native `title` reveal is too slow. Shown only
+// for descriptions that are actually truncated, follows the cursor, and is
+// pointer-events:none so it never interferes with hover/click detection.
+const tip = ce("div", { className: "tip hidden" });
+document.body.append(tip);
+function placeTip(x, y) {
+  const pad = 14;
+  let left = x + pad, top = y + pad;
+  if (left + tip.offsetWidth > window.innerWidth - 8) left = x - tip.offsetWidth - pad;
+  if (top + tip.offsetHeight > window.innerHeight - 8) top = y - tip.offsetHeight - pad;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = Math.max(8, top) + "px";
+}
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest && e.target.closest(".skill-desc");
+  if (!el || el.scrollHeight <= el.clientHeight + 1) return; // not truncated → no tip
+  tip.textContent = el.textContent;
+  tip.classList.remove("hidden");
+  placeTip(e.clientX, e.clientY);
+});
+document.addEventListener("mousemove", (e) => {
+  if (!tip.classList.contains("hidden")) placeTip(e.clientX, e.clientY);
+});
+document.addEventListener("mouseout", (e) => {
+  if (e.target.closest && e.target.closest(".skill-desc")) tip.classList.add("hidden");
+});
+
 async function api(method, path, body) {
   const opts = { method, headers: { Authorization: "Bearer " + TOKEN } };
   if (body !== undefined) {
