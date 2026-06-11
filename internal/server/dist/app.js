@@ -17,7 +17,12 @@ async function api(method, path, body) {
   return data;
 }
 
-const state = { status: null, selected: null, skills: [] };
+const state = {
+  status: null,
+  skillsByRepo: {},
+  collapsed: new Set(),
+  search: "",
+};
 
 function banner(msg, isErr) {
   const b = $("#banner");
@@ -26,123 +31,171 @@ function banner(msg, isErr) {
   b.className = "banner" + (isErr ? " err" : "");
 }
 
-function targetOptions() {
+const targetOptions = () => {
   const opts = ["~/.claude/skills/"];
   (state.status.projects || []).forEach((p) => opts.push(p.replace(/\/$/, "") + "/.claude/skills"));
   return opts;
+};
+const currentTarget = () => { const s = $("#target"); return s && s.value ? s.value : "~/.claude/skills/"; };
+
+const enabledFollow = (repo) =>
+  (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === currentTarget());
+const enabledSnapshot = (repo, link) =>
+  (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === currentTarget());
+
+function skillBadge(linkName) {
+  const s = state.status.lastSummary;
+  const confs = (s && s.conflicts) || [];
+  if (confs.some((c) => c.kind === "collision" && c.linkName === linkName))
+    return { cls: "st-conflict", text: "撞名" };
+  if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName))
+    return { cls: "st-shadowed", text: "被遮蔽" };
+  if ((state.status.links || []).some((l) => l.name === linkName))
+    return { cls: "st-linked", text: "已链接" };
+  return { cls: "", text: "未链接" };
 }
 
 async function load() {
   try { state.status = await api("GET", "/api/status"); }
   catch (e) { banner("加载失败：" + e.message, true); return; }
-  renderRepos(); renderProjects(); renderRight(); renderSummary(); loadAutostart();
-  banner((state.status.repos || []).length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
+  const repos = state.status.repos || [];
+  const entries = await Promise.all(repos.map(async (r) => {
+    try { return [r.name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(r.name))) || []]; }
+    catch { return [r.name, []]; }
+  }));
+  state.skillsByRepo = Object.fromEntries(entries);
+  renderStats(); renderRepos(); renderTarget(); renderProjects(); renderSkills(); renderSummary(); loadAutostart();
+  banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
 }
 
-function badge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
+function renderStats() {
+  const el = $("#stats");
+  const repos = (state.status.repos || []).length;
+  const linked = (state.status.links || []).length;
+  const conflicts = ((state.status.lastSummary && state.status.lastSummary.conflicts) || []).length;
+  el.innerHTML = "";
+  el.append(ce("span", { innerHTML: `仓库 <b>${repos}</b>` }));
+  el.append(ce("span", { innerHTML: `已链接 <b>${linked}</b>` }));
+  const c = ce("span", { innerHTML: `冲突 <b>${conflicts}</b>` });
+  if (conflicts) c.className = "stat-warn";
+  el.append(c);
+}
+
+function stateBadge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
 
 function renderRepos() {
   const ul = $("#repo-list"); ul.innerHTML = "";
   (state.status.repos || []).forEach((repo) => {
     const li = ce("li");
-    if (state.selected === repo.name) li.classList.add("selected");
     const top = ce("div", { className: "repo-top" });
-    const left = ce("div");
-    left.append(ce("div", { className: "repo-name", textContent: repo.name }),
-                ce("div", { className: "repo-url", textContent: repo.url }));
-    top.append(left, badge(repo.state || "never-synced"));
-    top.onclick = () => selectRepo(repo.name);
+    top.append(ce("span", { className: "repo-name", textContent: repo.name }), stateBadge(repo.state || "never-synced"));
     li.append(top);
-    if (repo.error) li.append(ce("div", { className: "err-detail", textContent: repo.error }));
-    const actions = ce("div", { className: "row", style: "margin-top:8px" });
+    li.append(ce("div", { className: "repo-url", textContent: repo.url }));
+    const meta = ce("div", { className: "repo-meta" });
+    const n = (state.skillsByRepo[repo.name] || []).length;
+    meta.append(ce("span", { className: "badge count", textContent: n + " skill" }));
+    meta.append(ce("span", { className: "group-spacer" }));
     const rm = ce("button", { className: "danger small", textContent: "移除" });
-    rm.onclick = async (e) => {
-      e.stopPropagation();
+    rm.onclick = async () => {
       if (!confirm("移除仓库 " + repo.name + "？其链接会在下次应用时清理。")) return;
       await api("DELETE", "/api/repos", { url: repo.url });
-      if (state.selected === repo.name) state.selected = null;
       await apply();
     };
-    actions.append(rm); li.append(actions);
+    meta.append(rm);
+    li.append(meta);
+    if (repo.error) li.append(ce("div", { className: "muted", style: "color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap", textContent: repo.error }));
     ul.append(li);
   });
+}
+
+function renderTarget() {
+  const sel = $("#target"); const prev = sel.value; sel.innerHTML = "";
+  targetOptions().forEach((o) => sel.append(ce("option", { value: o, textContent: o })));
+  if (prev && targetOptions().includes(prev)) sel.value = prev;
+  sel.onchange = () => { renderSkills(); };
 }
 
 function renderProjects() {
   const ul = $("#project-list"); ul.innerHTML = "";
   (state.status.projects || []).forEach((p) => {
     const li = ce("li");
-    const row = ce("div", { className: "skill-row" });
-    row.append(ce("span", { textContent: p }));
+    li.append(ce("span", { className: "path", textContent: p }));
     const rm = ce("button", { className: "danger small", textContent: "移除" });
     rm.onclick = async () => { await api("DELETE", "/api/projects", { path: p }); await apply(); };
-    row.append(rm); li.append(row); ul.append(li);
+    li.append(rm); ul.append(li);
   });
 }
 
-const enabledFollow = (repo, target) =>
-  (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === target);
-const enabledSnapshot = (repo, link, target) =>
-  (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === target);
-const createdThisCycle = (name) => {
-  const s = state.status.lastSummary;
-  return s && s.created && s.created.some((c) => c.name === name);
-};
+function renderSkills() {
+  const root = $("#skills"); root.innerHTML = "";
+  const repos = state.status.repos || [];
+  const term = state.search.trim().toLowerCase();
+  if (repos.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
 
-async function selectRepo(name) {
-  state.selected = name;
-  try { state.skills = (await api("GET", "/api/skills?repo=" + encodeURIComponent(name))) || []; }
-  catch { state.skills = []; }
-  renderRepos(); renderRight();
-}
+  let anyShown = false;
+  repos.forEach((repo) => {
+    let skills = state.skillsByRepo[repo.name] || [];
+    if (term) skills = skills.filter((s) => s.linkName.toLowerCase().includes(term) || (s.description || "").toLowerCase().includes(term));
+    if (term && skills.length === 0) return;
+    anyShown = true;
 
-const currentTarget = () => { const sel = $("#target"); return sel && sel.value ? sel.value : "~/.claude/skills/"; };
+    const collapsed = state.collapsed.has(repo.name);
+    const group = ce("div", { className: "group" + (collapsed ? " collapsed" : "") });
 
-function renderRight() {
-  const title = $("#right-title"), modeRow = $("#repo-mode-row"),
-        targetRow = $("#target-row"), ul = $("#skill-list");
-  modeRow.innerHTML = ""; ul.innerHTML = "";
-  if (!state.selected) { title.textContent = "选择左侧一个仓库"; targetRow.classList.add("hidden"); return; }
-  title.textContent = state.selected;
-  targetRow.classList.remove("hidden");
-
-  const sel = $("#target"); const prev = sel.value; sel.innerHTML = "";
-  targetOptions().forEach((o) => sel.append(ce("option", { value: o, textContent: o })));
-  if (prev && targetOptions().includes(prev)) sel.value = prev;
-  sel.onchange = renderRight;
-  const target = currentTarget();
-
-  const follow = enabledFollow(state.selected, target);
-  const fbtn = ce("button", { className: follow ? "" : "ghost", textContent: follow ? "🔄 跟随中（点此取消）" : "全选并跟随" });
-  fbtn.onclick = async () => {
-    if (follow) await api("DELETE", "/api/enabled", { skill: state.selected + "/*", target });
-    else await api("POST", "/api/enabled", { skill: state.selected + "/*", target, mode: "follow" });
-    await apply();
-  };
-  modeRow.append(fbtn);
-  if (follow) modeRow.append(ce("span", { className: "follow-pill", textContent: "上游新增会自动链接" }));
-
-  if (state.skills.length === 0) {
-    ul.append(ce("li", { className: "muted", textContent: "此仓暂无 skill（可能尚未同步，点“立即更新全部”）" }));
-    return;
-  }
-  state.skills.forEach((sk) => {
-    const li = ce("li");
-    const row = ce("div", { className: "skill-row" });
-    const left = ce("div", { className: "skill-name" });
-    const cb = ce("input", { type: "checkbox" });
-    cb.checked = follow || enabledSnapshot(state.selected, sk.linkName, target);
-    cb.disabled = follow; // follow links everything
-    cb.onchange = async () => {
-      if (cb.checked) await api("POST", "/api/enabled", { skill: state.selected + "/" + sk.linkName, target, mode: "snapshot" });
-      else await api("DELETE", "/api/enabled", { skill: state.selected + "/" + sk.linkName, target });
+    const head = ce("div", { className: "group-head" });
+    head.append(ce("span", { className: "caret", textContent: "▾" }));
+    head.append(ce("span", { className: "group-title", textContent: repo.name }));
+    head.append(ce("span", { className: "badge count", textContent: skills.length + " skill" }));
+    head.append(ce("span", { className: "group-spacer" }));
+    const follow = enabledFollow(repo.name);
+    const fbtn = ce("button", { className: (follow ? "" : "ghost") + " small", textContent: follow ? "🔄 跟随中" : "全选并跟随" });
+    fbtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (follow) await api("DELETE", "/api/enabled", { skill: repo.name + "/*", target: currentTarget() });
+      else await api("POST", "/api/enabled", { skill: repo.name + "/*", target: currentTarget(), mode: "follow" });
       await apply();
     };
-    left.append(cb, ce("span", { textContent: sk.linkName }));
-    if (sk.logicalName !== sk.linkName) left.append(ce("span", { className: "muted", textContent: "(" + sk.logicalName + ")" }));
-    if (createdThisCycle(sk.linkName)) left.append(ce("span", { className: "tag-new", textContent: "new" }));
-    row.append(left); li.append(row); ul.append(li);
+    head.append(fbtn);
+    head.onclick = () => {
+      if (collapsed) state.collapsed.delete(repo.name); else state.collapsed.add(repo.name);
+      group.classList.toggle("collapsed");
+    };
+    group.append(head);
+
+    const body = ce("div", { className: "group-body" });
+    if (skills.length === 0) body.append(ce("div", { className: "empty", textContent: "此仓暂无 skill（可能尚未同步，点“立即更新”）" }));
+    skills.forEach((sk) => body.append(skillCard(repo.name, sk, follow)));
+    group.append(body);
+    root.append(group);
   });
+  if (!anyShown) root.append(ce("div", { className: "empty", textContent: term ? "没有匹配的 skill" : "暂无 skill" }));
+}
+
+function skillCard(repo, sk, follow) {
+  const row = ce("div", { className: "skill" });
+  const cb = ce("input", { type: "checkbox" });
+  cb.checked = follow || enabledSnapshot(repo, sk.linkName);
+  cb.disabled = follow;
+  cb.onchange = async () => {
+    if (cb.checked) await api("POST", "/api/enabled", { skill: repo + "/" + sk.linkName, target: currentTarget(), mode: "snapshot" });
+    else await api("DELETE", "/api/enabled", { skill: repo + "/" + sk.linkName, target: currentTarget() });
+    await apply();
+  };
+  row.append(cb);
+
+  const main = ce("div", { className: "skill-main" });
+  const r1 = ce("div", { className: "skill-row1" });
+  r1.append(ce("span", { className: "skill-name", textContent: sk.linkName }));
+  if (sk.logicalName !== sk.linkName) r1.append(ce("span", { className: "skill-logical", textContent: "(" + sk.logicalName + ")" }));
+  const b = skillBadge(sk.linkName);
+  r1.append(ce("span", { className: "badge " + b.cls, textContent: b.text }));
+  const detail = ce("button", { className: "skill-detail-btn", textContent: "详情" });
+  detail.onclick = () => openDetail(repo, sk.linkName);
+  r1.append(detail);
+  main.append(r1);
+  if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
+  row.append(main);
+  return row;
 }
 
 function renderSummary() {
@@ -163,11 +216,24 @@ function renderSummary() {
   (s.errors || []).forEach((e) => f.append(ce("div", { className: "error", textContent: "✗ " + e })));
 }
 
+async function openDetail(repo, name) {
+  $("#modal-title").textContent = name;
+  $("#modal-desc").textContent = "";
+  $("#modal-content").textContent = "加载中…";
+  $("#modal").classList.remove("hidden");
+  try {
+    const d = await api("GET", "/api/skill?repo=" + encodeURIComponent(repo) + "&name=" + encodeURIComponent(name));
+    $("#modal-desc").textContent = d.description || "";
+    $("#modal-content").textContent = d.content || "(空)";
+  } catch (e) {
+    $("#modal-content").textContent = "加载失败：" + e.message;
+  }
+}
+
 async function apply() {
   try { await api("POST", "/api/apply"); }
   catch (e) { banner("应用失败：" + e.message, true); }
   await load();
-  if (state.selected) await selectRepo(state.selected);
 }
 
 async function updateNow(force) {
@@ -175,7 +241,6 @@ async function updateNow(force) {
   try { await api("POST", "/api/update-now", { force: !!force }); banner(""); }
   catch (e) { banner("同步失败：" + e.message, true); }
   await load();
-  if (state.selected) await selectRepo(state.selected);
 }
 
 async function loadAutostart() {
@@ -185,6 +250,8 @@ async function loadAutostart() {
   } catch { /* ignore */ }
 }
 
+// events
+$("#search").oninput = (e) => { state.search = e.target.value; renderSkills(); };
 $("#add-repo").onsubmit = async (e) => {
   e.preventDefault();
   const url = $("#repo-url").value.trim(), branch = $("#repo-branch").value.trim();
@@ -226,5 +293,7 @@ $("#import").onclick = () => {
   };
   inp.click();
 };
+$("#modal-close").onclick = () => $("#modal").classList.add("hidden");
+$("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); };
 
 load();

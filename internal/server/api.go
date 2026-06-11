@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"skillmanage/internal/config"
@@ -23,6 +24,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/export", s.requireAuth(s.handleExportRepos))
 	mux.HandleFunc("POST /api/repos/import", s.requireAuth(s.handleImportRepos))
 	mux.HandleFunc("GET /api/skills", s.requireAuth(s.handleListSkills))
+	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleAddProject))
@@ -232,6 +234,41 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, skills)
+}
+
+// skillDetail is the full view of one skill (its SKILL.md content + metadata).
+type skillDetail struct {
+	LinkName    string `json:"linkName"`
+	LogicalName string `json:"logicalName"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+}
+
+func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	name := r.URL.Query().Get("name")
+	if !reconcile.ValidRepoName(repo) || !reconcile.ValidRepoName(name) {
+		http.Error(w, "invalid repo or name", http.StatusBadRequest)
+		return
+	}
+	skills, err := scanner.Scan(filepath.Join(s.reposRoot, repo))
+	if err != nil {
+		http.Error(w, "repo not found", http.StatusNotFound)
+		return
+	}
+	for _, sk := range skills {
+		if sk.LinkName == name || sk.LogicalName == name {
+			content, _ := os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+			writeJSON(w, http.StatusOK, skillDetail{
+				LinkName:    sk.LinkName,
+				LogicalName: sk.LogicalName,
+				Description: sk.Description,
+				Content:     string(content),
+			})
+			return
+		}
+	}
+	http.Error(w, "skill not found", http.StatusNotFound)
 }
 
 // --- enabled ---
