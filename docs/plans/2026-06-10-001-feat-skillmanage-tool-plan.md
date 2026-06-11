@@ -1,7 +1,7 @@
 ---
 title: "feat: SkillManage — 跨平台 skill 仓管理 daemon"
 type: feat
-status: active
+status: completed
 date: 2026-06-10
 origin: docs/requirements.md
 ---
