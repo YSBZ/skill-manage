@@ -11,7 +11,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// defaultCmdTimeout bounds a single git invocation. update-now detaches the
+// request context (so closing the tab does not cancel a sync), which means a
+// git process blocked on an unreachable host would otherwise hang forever and
+// pin a sync slot. Skill repos are small, so a few minutes is generous.
+const defaultCmdTimeout = 5 * time.Minute
 
 // ErrDirty is returned (as Result.Err) when an existing mirror has local
 // modifications and Options.Force is false. The caller decides whether to warn
@@ -52,8 +59,9 @@ type Result struct {
 // Syncer runs git against a resolved git binary with an empty hooks directory
 // so repo-supplied hooks never execute during sync (R25).
 type Syncer struct {
-	git      string
-	hooksDir string
+	git        string
+	hooksDir   string
+	cmdTimeout time.Duration // per-command wall-clock bound; <=0 disables
 }
 
 // NewSyncer resolves the system git and creates the empty hooks directory.
@@ -66,7 +74,7 @@ func NewSyncer() (*Syncer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create empty hooks dir: %w", err)
 	}
-	return &Syncer{git: gitPath, hooksDir: hooksDir}, nil
+	return &Syncer{git: gitPath, hooksDir: hooksDir, cmdTimeout: defaultCmdTimeout}, nil
 }
 
 // Close removes the temporary hooks directory.
@@ -144,6 +152,14 @@ func (s *Syncer) sync(ctx context.Context, dir, remote string, opts Options) Res
 
 // run executes git with daemon-safe flags and env, returning (stdout, stderr, err).
 func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, string, error) {
+	// Bound each invocation so a process blocked on an unreachable remote
+	// cannot hang indefinitely (a detached update-now context has no deadline
+	// of its own). A zero timeout (test-constructed Syncers) disables this.
+	if s.cmdTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.cmdTimeout)
+		defer cancel()
+	}
 	full := append([]string{"-c", "core.hooksPath=" + s.hooksDir}, args...)
 	cmd := exec.CommandContext(ctx, s.git, full...)
 	if dir != "" {

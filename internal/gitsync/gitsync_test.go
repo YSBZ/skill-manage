@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runGit(t *testing.T, dir string, args ...string) {
@@ -204,5 +205,31 @@ func TestRunPassesDaemonSafeFlags(t *testing.T) {
 		if !strings.Contains(string(env), want) {
 			t.Errorf("expected env to contain %q", want)
 		}
+	}
+}
+
+// TestRunPerCommandTimeout proves a single git invocation is killed by the
+// per-command timeout even when the caller's context has no deadline (the
+// detached update-now case). A fake git that sleeps far longer than the
+// timeout must return an error promptly, not hang.
+func TestRunPerCommandTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-git shell script is POSIX")
+	}
+	tmp := t.TempDir()
+	fakeGit := filepath.Join(tmp, "git")
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Syncer{git: fakeGit, hooksDir: filepath.Join(tmp, "hooks"), cmdTimeout: 50 * time.Millisecond}
+
+	start := time.Now()
+	_, _, err := s.run(context.Background(), "", "fetch")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("run did not honor the per-command timeout (took %v)", elapsed)
 	}
 }

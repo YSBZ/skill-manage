@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -133,6 +134,61 @@ func TestImportRejectsAllOnInvalid(t *testing.T) {
 	if len(cfg.Repos) != 0 {
 		t.Errorf("no repos should be added when import is rejected, got %+v", cfg.Repos)
 	}
+}
+
+func TestAddRepoRejectsNameCollision(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/repos", s.token, repoReq{URL: "git@github.com:teamA/skills.git"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first add: got %d, want 201", w.Code)
+	}
+	// distinct URL, same last segment → same on-disk dir → must be rejected
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/repos", s.token, repoReq{URL: "git@gitlab.com:teamB/skills.git"}))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("colliding add: got %d, want 409", w.Code)
+	}
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	if len(cfg.Repos) != 1 {
+		t.Errorf("collision must not be persisted, got %+v", cfg.Repos)
+	}
+}
+
+func TestImportRejectsNameCollision(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	// two valid URLs whose names both derive to "skills" → batch-internal collision
+	body := importReq{Repos: []repoReq{
+		{URL: "git@github.com:teamA/skills.git"},
+		{URL: "git@gitlab.com:teamB/skills.git"},
+	}}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/repos/import", s.token, body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("import with name collision: got %d, want 400", w.Code)
+	}
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	if len(cfg.Repos) != 0 {
+		t.Errorf("no repos should be added when import collides, got %+v", cfg.Repos)
+	}
+}
+
+func TestWaitForSyncsDrains(t *testing.T) {
+	s := newTestServer(t)
+	// Idle: WaitForSyncs must not deadlock.
+	s.WaitForSyncs()
+	// No repos configured → each SyncAll is a fast no-op. Running several keeps
+	// the WaitGroup Add/Done balanced (an unbalanced Done would panic), and a
+	// final WaitForSyncs returns cleanly. (The in-flight blocking case can't be
+	// exercised deterministically without a blocking syncer seam; in production
+	// the drained goroutines are launched at startup, long before shutdown.)
+	for i := 0; i < 5; i++ {
+		s.SyncAll(context.Background(), false)
+	}
+	s.WaitForSyncs()
 }
 
 func TestBindFallback(t *testing.T) {

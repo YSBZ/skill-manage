@@ -76,6 +76,10 @@ func run(centralDir string, registerAutostart bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Request-detached syncs (update-now) parent off this context so they
+	// survive a closed browser tab but still cancel on daemon shutdown.
+	srv.SetBaseContext(ctx)
+
 	// Daily scheduler + an initial sync on launch.
 	sched, err := scheduler.New(srv.Schedule(), func(c context.Context) { srv.SyncAll(c, false) })
 	if err != nil {
@@ -103,8 +107,14 @@ func run(centralDir string, registerAutostart bool) error {
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	serveErr := httpSrv.Serve(ln)
+	// Serve has returned → the daemon is shutting down and ctx is cancelled.
+	// Drain in-flight syncs (the launch sync, any scheduled run, a detached
+	// update-now) before the deferred lock release and srv.Close() remove the
+	// git hooks dir out from under a still-running git subprocess.
+	srv.WaitForSyncs()
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
 	}
 	return nil
 }

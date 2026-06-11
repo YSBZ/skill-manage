@@ -178,6 +178,29 @@ func TestApplyRejectsTraversalRepo(t *testing.T) {
 	}
 }
 
+func TestRepoNameCollides(t *testing.T) {
+	existing := []string{
+		"git@github.com:teamA/skills.git",
+		"https://example.com/group/ops-skills.git",
+	}
+	// Different host/path but identical last segment → same on-disk dir.
+	if !RepoNameCollides(existing, "git@gitlab.com:teamB/skills.git") {
+		t.Error("expected collision: teamB/skills maps to the same dir as teamA/skills")
+	}
+	// Identical URL is the ordinary duplicate case, not a collision.
+	if RepoNameCollides(existing, "git@github.com:teamA/skills.git") {
+		t.Error("identical URL must not count as a collision")
+	}
+	// A genuinely new, distinct name does not collide.
+	if RepoNameCollides(existing, "https://example.com/team/frontend-skills.git") {
+		t.Error("distinct repo name should not collide")
+	}
+	// .git suffix vs none still derives the same name → collision.
+	if !RepoNameCollides(existing, "https://example.com/other/ops-skills") {
+		t.Error("ops-skills (no .git) should collide with ops-skills.git")
+	}
+}
+
 func TestRepoName(t *testing.T) {
 	cases := map[string]string{
 		"git@github.com:team/backend-skills.git":          "backend-skills",

@@ -1,8 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -136,11 +136,19 @@ func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	existingURLs := make([]string, 0, len(s.cfg.Repos))
 	for _, existing := range s.cfg.Repos {
 		if existing.URL == req.URL {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "repo already tracked"})
 			return
 		}
+		existingURLs = append(existingURLs, existing.URL)
+	}
+	if reconcile.RepoNameCollides(existingURLs, req.URL) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("repo name %q collides with an already-tracked repo (same directory name); rename one upstream or track a different fork", reconcile.RepoName(req.URL)),
+		})
+		return
 	}
 	s.cfg.Repos = append(s.cfg.Repos, config.RepoConfig{URL: req.URL, Branch: req.Branch})
 	if err := s.persistConfigLocked(w); err != nil {
@@ -201,8 +209,33 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	have := map[string]bool{}
+	// nameOwner maps each on-disk RepoName to the URL that owns it, seeded from
+	// already-tracked repos. A second URL claiming the same name (whether from
+	// the existing set or earlier in this batch) is a collision (KTD5/R5): the
+	// two would share one mirror dir. Reject the whole import so the user fixes
+	// the source list rather than silently dropping one repo.
+	nameOwner := map[string]string{}
 	for _, repo := range s.cfg.Repos {
 		have[repo.URL] = true
+		nameOwner[reconcile.RepoName(repo.URL)] = repo.URL
+	}
+	for _, rp := range req.Repos {
+		if have[rp.URL] {
+			continue // duplicate URL is skipped below, not a collision
+		}
+		name := reconcile.RepoName(rp.URL)
+		if owner, taken := nameOwner[name]; taken && owner != rp.URL {
+			rejected = append(rejected, map[string]string{
+				"url":   rp.URL,
+				"error": fmt.Sprintf("repo name %q collides with %q (same directory name)", name, owner),
+			})
+			continue
+		}
+		nameOwner[name] = rp.URL // claim it so a later batch entry collides too
+	}
+	if len(rejected) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"rejected": rejected})
+		return
 	}
 	added, skipped := 0, 0
 	for _, rp := range req.Repos {
@@ -212,6 +245,7 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cfg.Repos = append(s.cfg.Repos, config.RepoConfig{URL: rp.URL, Branch: rp.Branch})
 		have[rp.URL] = true
+		nameOwner[reconcile.RepoName(rp.URL)] = rp.URL
 		added++
 	}
 	if err := s.persistConfigLocked(w); err != nil {
@@ -373,9 +407,10 @@ type updateReq struct {
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	var req updateReq
 	_ = readJSON(r, &req) // empty body is fine (force defaults false)
-	// Detach from the request context so closing the browser tab mid-sync does
-	// not cancel in-flight git subprocesses and leave repos half-fetched.
-	sum := s.SyncAll(context.WithoutCancel(r.Context()), req.Force)
+	// Use the daemon-lifetime context, not the request's: closing the browser
+	// tab mid-sync must not cancel in-flight git subprocesses (and leave repos
+	// half-fetched), but daemon shutdown still cancels so the sync drains.
+	sum := s.SyncAll(s.detachedCtx(), req.Force)
 	writeJSON(w, http.StatusOK, sum)
 }
 

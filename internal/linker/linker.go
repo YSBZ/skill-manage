@@ -187,11 +187,17 @@ func (mgr *Manager) PruneDangling(manifest *config.Manifest) ([]config.LinkRecor
 		}
 		// Only prune things that are still our kind of link (or already gone).
 		isOurLink := statErr == nil && isLinkMode(lst.Mode())
+		// A copy fallback (KTD12) is a real directory we own. Only treat it as
+		// our copy — and thus eligible for RemoveAll — when the on-disk path is
+		// still a directory. If it diverged into a symlink or file, refuse the
+		// destructive RemoveAll (KTD5 never-clobber); keep the record so the
+		// divergence stays visible rather than silently nuking the path.
+		isOurCopy := statErr == nil && rec.LinkType == config.LinkCopy && lst.IsDir()
 		if linkGone {
 			removed = append(removed, rec)
 			continue
 		}
-		if sourceGone && (isOurLink || rec.LinkType == config.LinkCopy) {
+		if sourceGone && (isOurLink || isOurCopy) {
 			if err := removePrimitive(tp, rec.LinkType); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return removed, err
 			}

@@ -58,6 +58,24 @@ func RepoName(url string) string {
 	return strings.TrimSuffix(u, ".git")
 }
 
+// RepoNameCollides reports whether candidate's on-disk RepoName matches the
+// RepoName of any URL in existing (an identical URL is not a collision — that
+// is the ordinary duplicate case). Two repos that derive the same directory
+// name would share one mirror under the repos root and silently overwrite each
+// other on every sync, so adding or importing such a repo must be rejected.
+func RepoNameCollides(existing []string, candidate string) bool {
+	cn := RepoName(candidate)
+	for _, u := range existing {
+		if u == candidate {
+			continue
+		}
+		if RepoName(u) == cn {
+			return true
+		}
+	}
+	return false
+}
+
 // Apply reconciles cfg against manifest, mutating manifest in place. The caller
 // persists the manifest afterwards.
 func (r *Reconciler) Apply(cfg config.Config, manifest *config.Manifest) Summary {

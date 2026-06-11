@@ -45,6 +45,15 @@ type Server struct {
 
 	autostart AutostartManager
 
+	// baseCtx is the daemon-lifetime context used as the parent for syncs that
+	// must outlive the originating HTTP request (update-now: closing the tab
+	// must not abort the sync) yet still cancel on daemon shutdown. Set once via
+	// SetBaseContext before serving; nil means context.Background().
+	baseCtx context.Context
+	// syncWG tracks in-flight SyncAll calls so shutdown can drain them before
+	// the lock is released and the git hooks dir is removed (reliability).
+	syncWG sync.WaitGroup
+
 	mu          sync.Mutex
 	cfg         config.Config
 	manifest    config.Manifest
@@ -64,6 +73,25 @@ type AutostartManager interface {
 
 // SetAutostart wires in the platform autostart manager (called from main).
 func (s *Server) SetAutostart(m AutostartManager) { s.autostart = m }
+
+// SetBaseContext sets the daemon-lifetime parent context for request-detached
+// syncs. Call once before serving.
+func (s *Server) SetBaseContext(ctx context.Context) { s.baseCtx = ctx }
+
+// detachedCtx returns the daemon-lifetime context (or Background if unset). It
+// is detached from any HTTP request so a sync survives the request that started
+// it, while still cancelling on daemon shutdown.
+func (s *Server) detachedCtx() context.Context {
+	if s.baseCtx != nil {
+		return s.baseCtx
+	}
+	return context.Background()
+}
+
+// WaitForSyncs blocks until all in-flight SyncAll calls return. The daemon
+// calls it on shutdown — after the base context is cancelled — so the lock and
+// git hooks dir are not torn down while git subprocesses are still running.
+func (s *Server) WaitForSyncs() { s.syncWG.Wait() }
 
 // Schedule returns the configured daily time ("HH:MM"), defaulting to 09:00.
 func (s *Server) Schedule() string {
@@ -129,6 +157,8 @@ func (s *Server) Close() error {
 // local drift (R5 mirror semantics); when false, dirty repos are surfaced and
 // left untouched (R26). The scheduler and the update-now endpoint both call it.
 func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
+	s.syncWG.Add(1)
+	defer s.syncWG.Done()
 	// Snapshot the repo list under a short lock, then run the git network I/O
 	// UNLOCKED so a slow/hung fetch never blocks the UI or other handlers.
 	s.mu.Lock()

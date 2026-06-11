@@ -257,6 +257,39 @@ func TestPruneDanglingLinkGone(t *testing.T) {
 	}
 }
 
+// TestPruneDanglingCopyDivergedNotClobbered guards the RemoveAll path: a record
+// claims a copy we own, but the on-disk path diverged into a plain file. Even
+// with the source gone, PruneDangling must refuse the destructive RemoveAll and
+// keep the record so the divergence stays visible (KTD5 never-clobber).
+func TestPruneDanglingCopyDivergedNotClobbered(t *testing.T) {
+	f := newFixture(t)
+	if err := os.MkdirAll(f.target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tp := filepath.Join(f.target, "ce-plan")
+	if err := os.WriteFile(tp, []byte("not our copy dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Manifest records a copy whose source no longer exists.
+	f.man.Links = append(f.man.Links, config.LinkRecord{
+		Name: "ce-plan", Target: f.target,
+		Source: filepath.Join(f.reposRoot, "gone", "ce-plan"), LinkType: config.LinkCopy,
+	})
+	removed, err := f.mgr.PruneDangling(f.man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Errorf("diverged non-dir copy must not be pruned, got %+v", removed)
+	}
+	if _, err := os.Stat(tp); err != nil {
+		t.Errorf("diverged path must be left untouched: %v", err)
+	}
+	if len(f.man.Links) != 1 {
+		t.Errorf("record should be kept so divergence stays visible, got %+v", f.man.Links)
+	}
+}
+
 func TestDetectConflicts(t *testing.T) {
 	desired := []DesiredLink{
 		// collision: same target+name, two sources
