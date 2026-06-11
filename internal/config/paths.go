@@ -33,3 +33,10 @@ func AddressPath(centralDir string) string {
 func TokenPath(centralDir string) string {
 	return filepath.Join(centralDir, "token")
 }
+
+// LastSyncPath records the timestamp of the last successful sync, so the
+// scheduler's startup missed-run check has a real value to compare against
+// (KTD7) instead of assuming "just ran".
+func LastSyncPath(centralDir string) string {
+	return filepath.Join(centralDir, "last-sync")
+}

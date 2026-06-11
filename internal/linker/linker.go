@@ -331,6 +331,11 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(out, 0o755)
 		}
+		// Do not dereference symlinks: copying their target contents could pull
+		// in files from outside the source tree. Skip them.
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err

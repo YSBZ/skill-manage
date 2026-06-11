@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
@@ -220,11 +222,11 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
-	if repo == "" {
-		http.Error(w, "missing repo", http.StatusBadRequest)
+	if !reconcile.ValidRepoName(repo) {
+		http.Error(w, "invalid repo", http.StatusBadRequest)
 		return
 	}
-	skills, err := scanner.Scan(s.reposRoot + "/" + repo)
+	skills, err := scanner.Scan(filepath.Join(s.reposRoot, repo))
 	if err != nil {
 		writeJSON(w, http.StatusOK, []scanner.Skill{}) // not yet synced → empty
 		return
@@ -334,7 +336,9 @@ type updateReq struct {
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	var req updateReq
 	_ = readJSON(r, &req) // empty body is fine (force defaults false)
-	sum := s.SyncAll(r.Context(), req.Force)
+	// Detach from the request context so closing the browser tab mid-sync does
+	// not cancel in-flight git subprocesses and leave repos half-fetched.
+	sum := s.SyncAll(context.WithoutCancel(r.Context()), req.Force)
 	writeJSON(w, http.StatusOK, sum)
 }
 

@@ -77,6 +77,40 @@ func TestScanDoesNotDescendIntoSkill(t *testing.T) {
 	}
 }
 
+func TestScanParsesDescription(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "ce-plan")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: ce-plan\ndescription: Create structured implementation plans.\n---\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 1 || skills[0].Description != "Create structured implementation plans." {
+		t.Errorf("description not parsed: %+v", skills)
+	}
+}
+
+func TestScanNoFrontmatterEmptyDescription(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "plain")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# no frontmatter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, _ := Scan(root)
+	if len(skills) != 1 || skills[0].Description != "" {
+		t.Errorf("missing frontmatter should yield empty description: %+v", skills)
+	}
+}
+
 func TestScanEmptyRepo(t *testing.T) {
 	skills, err := Scan(t.TempDir())
 	if err != nil {

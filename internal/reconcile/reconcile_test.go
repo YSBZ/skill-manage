@@ -150,6 +150,34 @@ func TestUpstreamDeletePruned(t *testing.T) {
 	}
 }
 
+func TestValidRepoName(t *testing.T) {
+	for _, ok := range []string{"backend-skills", "fe.skills", "a_b"} {
+		if !ValidRepoName(ok) {
+			t.Errorf("ValidRepoName(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", "../etc", "a/b", `a\b`, "../../root"} {
+		if ValidRepoName(bad) {
+			t.Errorf("ValidRepoName(%q) = true, want false (traversal guard)", bad)
+		}
+	}
+}
+
+func TestApplyRejectsTraversalRepo(t *testing.T) {
+	f := newFix(t)
+	// a crafted enabled entry whose repo selector tries to escape reposRoot
+	cfg := config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "../../../../etc/*", Target: f.target, Mode: config.ModeFollow},
+	}}
+	sum := f.rec.Apply(cfg, f.man)
+	if len(sum.Errors) == 0 {
+		t.Error("traversal repo selector should be rejected with an error")
+	}
+	if len(f.man.Links) != 0 {
+		t.Errorf("no links should be created for a traversal selector, got %+v", f.man.Links)
+	}
+}
+
 func TestRepoName(t *testing.T) {
 	cases := map[string]string{
 		"git@github.com:team/backend-skills.git":          "backend-skills",

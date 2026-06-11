@@ -8,6 +8,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -85,20 +86,31 @@ func (s *Scheduler) RunNow() {
 // startup missed-run check.
 func (s *Scheduler) Run(ctx context.Context, lastRun time.Time) {
 	if MissedToday(s.now(), lastRun, s.hour, s.min) {
-		s.job(ctx)
+		s.runJob(ctx)
 	}
 	for {
-		next := NextFire(s.now(), s.hour, s.min)
-		timer := time.NewTimer(next.Sub(s.now()))
+		now := s.now() // sample once so the timer interval can't go negative
+		timer := time.NewTimer(NextFire(now, s.hour, s.min).Sub(now))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
-			s.job(ctx)
+			s.runJob(ctx)
 		case <-s.trigger:
 			timer.Stop()
-			s.job(ctx)
+			s.runJob(ctx)
 		}
 	}
+}
+
+// runJob runs the cycle with panic recovery so a single failing sync can never
+// kill the scheduler loop and silently stop all future daily runs.
+func (s *Scheduler) runJob(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("skillmanage: scheduled job panicked, loop continues: %v", r)
+		}
+	}()
+	s.job(ctx)
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
@@ -128,10 +129,14 @@ func (s *Server) Close() error {
 // local drift (R5 mirror semantics); when false, dirty repos are surfaced and
 // left untouched (R26). The scheduler and the update-now endpoint both call it.
 func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
+	// Snapshot the repo list under a short lock, then run the git network I/O
+	// UNLOCKED so a slow/hung fetch never blocks the UI or other handlers.
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	repos := append([]config.RepoConfig(nil), s.cfg.Repos...)
+	s.mu.Unlock()
 
-	for _, repo := range s.cfg.Repos {
+	statuses := make(map[string]RepoStatus, len(repos))
+	for _, repo := range repos {
 		name := reconcile.RepoName(repo.URL)
 		dir := filepath.Join(s.reposRoot, name)
 		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
@@ -139,15 +144,36 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 		if res.Err != nil {
 			st.Error = res.Err.Error()
 		}
-		s.repoStatus[repo.URL] = st
+		statuses[repo.URL] = st
 	}
 
+	// Re-acquire to apply reconcile and write state (fast, no network I/O).
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for url, st := range statuses {
+		s.repoStatus[url] = st
+	}
 	sum := s.reconciler.Apply(s.cfg, &s.manifest)
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
 	}
 	s.lastSummary = sum
+	_ = os.WriteFile(config.LastSyncPath(s.centralDir), []byte(time.Now().Format(time.RFC3339)), 0o644)
 	return sum
+}
+
+// LastSync returns the timestamp of the last successful sync, or the zero time
+// if none is recorded — used by the scheduler's startup missed-run check.
+func (s *Server) LastSync() time.Time {
+	b, err := os.ReadFile(config.LastSyncPath(s.centralDir))
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, string(bytes.TrimSpace(b)))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // ReconcileOnly re-applies links from the current config without pulling git.

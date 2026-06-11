@@ -37,6 +37,17 @@ func New(reposRoot string) *Reconciler {
 	return &Reconciler{reposRoot: reposRoot, mgr: linker.NewManager(reposRoot)}
 }
 
+// ValidRepoName reports whether name is a safe single path segment for a repo
+// directory under the repos root — no separators, no "." / ".." — so a
+// crafted repo selector cannot traverse out of reposRoot (path-traversal
+// guard for handleListSkills and computeDesired).
+func ValidRepoName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsAny(name, `/\`)
+}
+
 // RepoName derives a repo's on-disk directory name from its URL: the last path
 // segment with any ".git" suffix removed.
 func RepoName(url string) string {
@@ -73,10 +84,13 @@ func (r *Reconciler) Apply(cfg config.Config, manifest *config.Manifest) Summary
 	desiredKeys := map[linkKey]bool{}
 	for _, d := range desired {
 		k := linkKey{d.Target, d.LinkName}
+		// Mark the key desired BEFORE the collision skip so the removal pass in
+		// step 5 does not tear down a previously-working link while the user
+		// resolves the alias (R13).
+		desiredKeys[k] = true
 		if skip[k] {
 			continue
 		}
-		desiredKeys[k] = true
 		created, err := r.mgr.Link(d, manifest)
 		if err != nil {
 			sum.Errors = append(sum.Errors, fmt.Sprintf("link %s -> %s: %v", filepath.Join(d.Target, d.LinkName), d.Source, err))
@@ -148,7 +162,7 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 
 	for _, e := range cfg.Enabled {
 		repo, sel := splitSkill(e.Skill)
-		if repo == "" {
+		if repo == "" || !ValidRepoName(repo) {
 			errs = append(errs, fmt.Sprintf("invalid enabled skill selector %q", e.Skill))
 			continue
 		}

@@ -81,7 +81,9 @@ func run(centralDir string, registerAutostart bool) error {
 	if err != nil {
 		return err
 	}
-	go sched.Run(ctx, time.Now())
+	// Pass the persisted last-sync time so the scheduler's missed-run check can
+	// actually fire after a sleep/downtime gap (not time.Now(), which disables it).
+	go sched.Run(ctx, srv.LastSync())
 	go srv.SyncAll(ctx, false)
 
 	ln, err := srv.Bind(defaultPort)
