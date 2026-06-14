@@ -191,6 +191,44 @@ func TestWaitForSyncsDrains(t *testing.T) {
 	s.WaitForSyncs()
 }
 
+func TestTargetsEndpoint(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/targets", s.token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("targets: got %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "~/.claude/skills/") || !strings.Contains(body, "~/.codex/skills/") {
+		t.Errorf("targets should list CC + Codex personal dirs, got %s", body)
+	}
+	// missing token → 401
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/targets", "", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("targets without token: got %d, want 401", w.Code)
+	}
+}
+
+func TestAddEnabledRejectsGuardedTarget(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/enabled", s.token, config.EnabledEntry{
+		Skill: "demo/foo", Target: "~/.codex/skills/.system", Mode: config.ModeSnapshot,
+	}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("guarded target should be 400, got %d", w.Code)
+	}
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	if len(cfg.Enabled) != 0 {
+		t.Errorf("guarded enable must not persist, got %+v", cfg.Enabled)
+	}
+}
+
 func TestBindFallback(t *testing.T) {
 	s := newTestServer(t)
 	// take an OS-assigned port

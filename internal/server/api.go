@@ -9,6 +9,7 @@ import (
 
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
+	"skillmanage/internal/harness"
 	"skillmanage/internal/reconcile"
 	"skillmanage/internal/scanner"
 )
@@ -23,6 +24,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/repos", s.requireAuth(s.handleRemoveRepo))
 	mux.HandleFunc("GET /api/repos/export", s.requireAuth(s.handleExportRepos))
 	mux.HandleFunc("POST /api/repos/import", s.requireAuth(s.handleImportRepos))
+	mux.HandleFunc("GET /api/targets", s.requireAuth(s.handleTargets))
 	mux.HandleFunc("GET /api/skills", s.requireAuth(s.handleListSkills))
 	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
@@ -254,6 +256,21 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"added": added, "skipped": skipped})
 }
 
+// --- targets ---
+
+// handleTargets returns every linkable skill target: the personal CC/Codex
+// dirs plus each registered project's per-harness dirs (U1/U2).
+func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	projects := append([]string(nil), s.cfg.Projects...)
+	s.mu.Unlock()
+	targets := harness.PersonalTargets()
+	for _, p := range projects {
+		targets = append(targets, harness.ProjectTargets(p)...)
+	}
+	writeJSON(w, http.StatusOK, targets)
+}
+
 // --- skills ---
 
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +328,12 @@ func (s *Server) handleAddEnabled(w http.ResponseWriter, r *http.Request) {
 	var e config.EnabledEntry
 	if err := readJSON(r, &e); err != nil || e.Skill == "" || e.Target == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Never let a selection target a Codex-guarded directory (KTD7 #3): the
+	// guard must hold on the write path, not only in the target list.
+	if harness.Guarded(e.Target) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target is a guarded directory"})
 		return
 	}
 	s.mu.Lock()

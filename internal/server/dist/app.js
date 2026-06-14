@@ -46,6 +46,7 @@ async function api(method, path, body) {
 
 const state = {
   status: null,
+  targets: [],
   skillsByRepo: {},
   collapsed: new Set(),
   search: "",
@@ -58,11 +59,7 @@ function banner(msg, isErr) {
   b.className = "banner" + (isErr ? " err" : "");
 }
 
-const targetOptions = () => {
-  const opts = ["~/.claude/skills/"];
-  (state.status.projects || []).forEach((p) => opts.push(p.replace(/\/$/, "") + "/.claude/skills"));
-  return opts;
-};
+const targetDirs = () => state.targets.map((t) => t.dir);
 const currentTarget = () => { const s = $("#target"); return s && s.value ? s.value : "~/.claude/skills/"; };
 
 const enabledFollow = (repo) =>
@@ -85,6 +82,8 @@ function skillBadge(linkName) {
 async function load() {
   try { state.status = await api("GET", "/api/status"); }
   catch (e) { banner("加载失败：" + e.message, true); return; }
+  try { state.targets = (await api("GET", "/api/targets")) || []; }
+  catch { state.targets = []; }
   const repos = state.status.repos || [];
   const entries = await Promise.all(repos.map(async (r) => {
     try { return [r.name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(r.name))) || []]; }
@@ -137,8 +136,8 @@ function renderRepos() {
 
 function renderTarget() {
   const sel = $("#target"); const prev = sel.value; sel.innerHTML = "";
-  targetOptions().forEach((o) => sel.append(ce("option", { value: o, textContent: o })));
-  if (prev && targetOptions().includes(prev)) sel.value = prev;
+  state.targets.forEach((t) => sel.append(ce("option", { value: t.dir, textContent: t.label + (t.ambiguous ? " ⚠" : "") + " — " + t.dir })));
+  if (prev && targetDirs().includes(prev)) sel.value = prev;
   sel.onchange = () => { renderSkills(); };
 }
 
