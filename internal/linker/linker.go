@@ -217,10 +217,15 @@ const (
 	// ConflictCollision: two distinct sources want the same name under the
 	// same target — the user must alias one (R13).
 	ConflictCollision ConflictKind = "collision"
-	// ConflictShadow: the same name is linked under more than one target; CC
-	// shadows the project-level one (personal-over-project), so the user should
-	// know (cross-target shadowing).
+	// ConflictShadow: the same name is linked under more than one target within
+	// the SAME harness; the personal one shadows the project-level one, so the
+	// user should know (cross-target shadowing). NOT raised across harnesses —
+	// CC and Codex carrying the same name is the intended dual-harness mapping.
 	ConflictShadow ConflictKind = "shadow"
+	// ConflictNested: a skill source containing a nested SKILL.md is mapped to a
+	// Codex target; Codex will register the nested skill independently (#22275),
+	// polluting its list. Advisory — the link is still created (KTD6).
+	ConflictNested ConflictKind = "nested"
 )
 
 // Conflict is a detected naming problem in a desired link set.

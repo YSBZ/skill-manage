@@ -17,6 +17,33 @@ func mkSkill(t *testing.T, root, rel string) {
 	}
 }
 
+func TestScanHasNested(t *testing.T) {
+	root := t.TempDir()
+	mkSkill(t, root, "plain")
+	mkSkill(t, root, "compound")
+	mkSkill(t, root, filepath.Join("compound", "child"))
+
+	skills, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Scan does not descend into a skill, so compound/child is NOT a separate
+	// skill — only "compound" and "plain" surface.
+	if len(skills) != 2 {
+		t.Fatalf("want 2 top-level skills (no descent), got %d: %+v", len(skills), skills)
+	}
+	by := map[string]Skill{}
+	for _, s := range skills {
+		by[s.LinkName] = s
+	}
+	if by["plain"].HasNested {
+		t.Errorf("plain skill should have HasNested=false")
+	}
+	if !by["compound"].HasNested {
+		t.Errorf("compound skill (nested child SKILL.md) should have HasNested=true")
+	}
+}
+
 func TestScanFindsTopLevelSkills(t *testing.T) {
 	root := t.TempDir()
 	mkSkill(t, root, "ce-plan")

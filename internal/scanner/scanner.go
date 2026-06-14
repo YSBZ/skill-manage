@@ -26,6 +26,12 @@ type Skill struct {
 	// Description is the SKILL.md frontmatter `description`, surfaced in the UI
 	// so cards show what each skill does. Empty when absent or unparseable.
 	Description string `json:"description"`
+	// HasNested is true when the skill directory contains a SKILL.md in a
+	// subdirectory (a "compound" skill). Codex recursively scans a linked skill
+	// dir and registers nested SKILL.md as independent skills (#22275), so a
+	// nested source mapped to a Codex target pollutes Codex's list. reconcile
+	// uses this to raise a nested-conflict warning for Codex targets only (KTD6).
+	HasNested bool `json:"hasNested,omitempty"`
 }
 
 // frontmatter is the subset of SKILL.md YAML frontmatter the scanner reads.
@@ -89,6 +95,7 @@ func Scan(repoRoot string) ([]Skill, error) {
 				LinkName:    pathutil.SanitizePathName(name),
 				Dir:         abs,
 				Description: parseDescription(filepath.Join(path, "SKILL.md")),
+				HasNested:   hasNestedSkillMd(path),
 			})
 			return filepath.SkipDir // do not descend into a skill (KTD4)
 		}
@@ -99,4 +106,27 @@ func Scan(repoRoot string) ([]Skill, error) {
 	}
 	sort.Slice(skills, func(i, j int) bool { return skills[i].LinkName < skills[j].LinkName })
 	return skills, nil
+}
+
+// hasNestedSkillMd reports whether skillDir contains a SKILL.md below its root
+// (i.e. inside a subdirectory). The root SKILL.md itself does not count.
+func hasNestedSkillMd(skillDir string) bool {
+	found := false
+	_ = filepath.WalkDir(skillDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != skillDir && d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == "SKILL.md" && filepath.Dir(p) != skillDir {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }

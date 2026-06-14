@@ -150,6 +150,50 @@ func TestUpstreamDeletePruned(t *testing.T) {
 	}
 }
 
+func TestNestedConflictCodexOnly(t *testing.T) {
+	f := newFix(t)
+	f.mkSkill(t, "alpha", "compound")
+	// add a nested SKILL.md inside the skill dir → HasNested
+	nested := filepath.Join(f.reposRoot, "alpha", "compound", "child")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte("---\nname: child\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	codexTarget := filepath.Join(t.TempDir(), ".codex", "skills") // IsCodexTarget true (suffix)
+	ccTarget := f.target                                          // plain dir → not Codex
+
+	hasNested := func(sum Summary) bool {
+		for _, c := range sum.Conflicts {
+			if c.Kind == "nested" && c.LinkName == "compound" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Codex target → nested warning, link still created.
+	sum := f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "alpha/compound", Target: codexTarget, Mode: config.ModeSnapshot},
+	}}, &config.Manifest{})
+	if !hasNested(sum) {
+		t.Errorf("Codex target with nested source should warn, got conflicts %+v", sum.Conflicts)
+	}
+	if _, err := os.Stat(filepath.Join(codexTarget, "compound", "SKILL.md")); err != nil {
+		t.Errorf("nested warning must not block the link: %v", err)
+	}
+
+	// CC target → no nested warning.
+	sum = f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "alpha/compound", Target: ccTarget, Mode: config.ModeSnapshot},
+	}}, &config.Manifest{})
+	if hasNested(sum) {
+		t.Errorf("CC target must not raise nested warning, got %+v", sum.Conflicts)
+	}
+}
+
 func TestValidRepoName(t *testing.T) {
 	for _, ok := range []string{"backend-skills", "fe.skills", "a_b"} {
 		if !ValidRepoName(ok) {

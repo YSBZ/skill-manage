@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"skillmanage/internal/config"
+	"skillmanage/internal/harness"
 	"skillmanage/internal/linker"
 	"skillmanage/internal/scanner"
 )
@@ -88,14 +89,15 @@ func (r *Reconciler) Apply(cfg config.Config, manifest *config.Manifest) Summary
 	}
 	sum.Pruned = pruned
 
-	// 2. Compute desired links from enabled[].
-	desired, derrs := r.computeDesired(cfg)
+	// 2. Compute desired links from enabled[]. nested holds Codex-target nested
+	//    SKILL.md warnings (KTD6), produced where the scanner.Skill is in scope.
+	desired, nested, derrs := r.computeDesired(cfg)
 	sum.Errors = append(sum.Errors, derrs...)
 
 	// 3. Detect conflicts. Collisions (same target+name, different source) are
-	//    skipped pending user alias; shadowing links are still created (CC will
-	//    shadow the project one) but surfaced as a warning.
-	sum.Conflicts = linker.DetectConflicts(desired)
+	//    skipped pending user alias; shadowing links are still created but
+	//    surfaced as a warning. Nested-SKILL.md warnings are appended.
+	sum.Conflicts = append(linker.DetectConflicts(desired), nested...)
 	skip := collisionSkipSet(sum.Conflicts)
 
 	// 4. Create/refresh desired links.
@@ -153,10 +155,25 @@ func collisionSkipSet(conflicts []linker.Conflict) map[linkKey]bool {
 }
 
 // computeDesired expands every enabled entry into desired links, scanning each
-// repo at most once.
-func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []string) {
+// repo at most once. It also returns nested-SKILL.md conflicts for sources
+// mapped to a Codex target (KTD6) — produced here because the scanner.Skill
+// (which carries HasNested) is in scope, whereas linker.DetectConflicts only
+// sees DesiredLink.
+func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []linker.Conflict, []string) {
 	var desired []linker.DesiredLink
+	var nested []linker.Conflict
 	var errs []string
+
+	noteNested := func(sk scanner.Skill, target string) {
+		if sk.HasNested && harness.IsCodexTarget(target) {
+			nested = append(nested, linker.Conflict{
+				Kind:     linker.ConflictNested,
+				LinkName: sk.LinkName,
+				Targets:  []string{target},
+				Sources:  []string{sk.Dir},
+			})
+		}
+	}
 
 	scanCache := map[string][]scanner.Skill{}
 	scanErr := map[string]bool{}
@@ -193,6 +210,7 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 		if sel == "*" {
 			for _, sk := range skills {
 				desired = append(desired, linker.DesiredLink{LinkName: sk.LinkName, Target: target, Source: sk.Dir})
+				noteNested(sk, target)
 			}
 			continue
 		}
@@ -209,8 +227,9 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 			continue
 		}
 		desired = append(desired, linker.DesiredLink{LinkName: matched.LinkName, Target: target, Source: matched.Dir})
+		noteNested(*matched, target)
 	}
-	return desired, errs
+	return desired, nested, errs
 }
 
 // splitSkill splits "repo/sel" into ("repo", "sel"). sel may be "*".
