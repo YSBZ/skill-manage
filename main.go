@@ -137,11 +137,17 @@ func run(dir string, registerAutostart, openBrowser bool) error {
 	if errors.Is(err, lock.ErrLocked) {
 		// Already running. A double-clicked window would otherwise just print an
 		// error and vanish ("闪一下就关了"); instead point the user at the live
-		// instance and exit cleanly.
-		if openBrowser {
-			if url := readAddressURL(dir); url != "" {
+		// instance and exit cleanly. Print a clear line first so a manual/console
+		// launch doesn't look like a silent crash — the bare exit-0 reads as
+		// "闪退、什么都没发生" even though the daemon is healthy.
+		if url := readAddressURL(dir); url != "" {
+			fmt.Printf("skillmanage: 已在运行，控制台 %s\n", url)
+			if openBrowser {
+				fmt.Println("skillmanage: 已尝试在浏览器打开上述地址。")
 				_ = browser.Open(url)
 			}
+		} else {
+			fmt.Println("skillmanage: 已有一个实例在运行（未找到地址文件）。")
 		}
 		return nil
 	}
