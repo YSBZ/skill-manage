@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -272,6 +274,64 @@ func TestAddRemoveTarget(t *testing.T) {
 		if e.Target == "/work/proj/.claude/skills" {
 			t.Errorf("enabled entry for removed target should be dropped: %+v", cfg.Enabled)
 		}
+	}
+}
+
+func TestAdoptAddsEnabledMapping(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	// a real skill living in a directory we will register as a sync target
+	dir := t.TempDir()
+	skill := filepath.Join(dir, "demo")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: demo\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": dir}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add target: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/adopt", s.token, map[string]string{"id": "demo", "root": dir}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("adopt: %d body=%s", w.Code, w.Body.String())
+	}
+	// the in-place link must be recorded as a first-class mapping, otherwise
+	// reconcile's orphan pass would delete it on the next sync.
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	found := false
+	for _, e := range cfg.Enabled {
+		if e.Skill == "@local/demo" && e.Target == dir {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("adopt must add @local/demo → %s, got %+v", dir, cfg.Enabled)
+	}
+	if fi, _ := os.Lstat(skill); fi == nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("original should be a symlink into the store after adopt")
+	}
+}
+
+func TestBackfillAdoptedEnabled(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "local")
+	cfg := &config.Config{}
+	m := &config.Manifest{Links: []config.LinkRecord{
+		{Name: "foo", Target: "~/.claude/skills", Source: filepath.Join(store, "foo"), LinkType: config.LinkSymlink},
+		{Name: "bar", Target: "/x/.codex/skills", Source: "/other/bar"}, // not store-sourced → ignored
+	}}
+	if !backfillAdoptedEnabled(cfg, m, store) {
+		t.Fatal("expected backfill to add the orphan store link")
+	}
+	if len(cfg.Enabled) != 1 || cfg.Enabled[0].Skill != "@local/foo" {
+		t.Fatalf("want one @local/foo entry, got %+v", cfg.Enabled)
+	}
+	if backfillAdoptedEnabled(cfg, m, store) {
+		t.Error("second run must be a no-op (idempotent)")
 	}
 }
 

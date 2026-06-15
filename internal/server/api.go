@@ -398,14 +398,14 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	mgr := linker.NewManager(s.reposRoot, s.personalStore)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	allowed := false
+	canonical := ""
 	for _, t := range s.targetsLocked() {
 		if harness.Expand(t.Dir) == wantRoot {
-			allowed = true
+			canonical = t.Dir // keep the user-facing form (~) for the enabled entry
 			break
 		}
 	}
-	if !allowed {
+	if canonical == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown adopt root"})
 		return
 	}
@@ -418,11 +418,34 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, adoptStatus(code), map[string]string{"error_code": code, "error": err.Error()})
 		return
 	}
+	// Record the in-place link as a first-class mapping (@local/<id> → root) so
+	// reconcile keeps it. Without this the link is manifest-only and reconcile's
+	// orphan pass (no matching enabled entry) tears it down on the next sync —
+	// silently un-doing "收编后默认软链回去".
+	s.cfg.Enabled = ensureEnabled(s.cfg.Enabled, config.EnabledEntry{
+		Skill: reconcile.LocalNamespace + "/" + req.ID, Target: canonical, Mode: config.ModeSnapshot,
+	})
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error_code": "save_failed", "error": err.Error()})
 		return
 	}
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ensureEnabled appends e unless an entry with the same Skill and an
+// equivalent (expanded) Target already exists. Returns the (possibly unchanged)
+// slice.
+func ensureEnabled(list []config.EnabledEntry, e config.EnabledEntry) []config.EnabledEntry {
+	want := harness.Expand(e.Target)
+	for _, x := range list {
+		if x.Skill == e.Skill && harness.Expand(x.Target) == want {
+			return list
+		}
+	}
+	return append(list, e)
 }
 
 func adoptStatus(code string) int {

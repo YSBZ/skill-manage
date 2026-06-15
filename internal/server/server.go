@@ -17,6 +17,7 @@ import (
 
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
+	"skillmanage/internal/harness"
 	"skillmanage/internal/reconcile"
 )
 
@@ -118,6 +119,16 @@ func New(centralDir string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	reposRoot := filepath.Join(centralDir, "repos")
+	personalStore := config.PersonalStorePath(centralDir)
+	// Heal adopt links written before adoption recorded an enabled entry, so the
+	// reconcile orphan pass does not delete them on the next sync (data stays in
+	// the store, but the in-place symlink would otherwise vanish).
+	if backfillAdoptedEnabled(&cfg, &manifest, personalStore) {
+		if err := config.SaveConfig(centralDir, cfg); err != nil {
+			return nil, fmt.Errorf("persist adopted-skill backfill: %w", err)
+		}
+	}
 	uiFS, err := UIFS()
 	if err != nil {
 		return nil, err
@@ -130,8 +141,6 @@ func New(centralDir string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	reposRoot := filepath.Join(centralDir, "repos")
-	personalStore := config.PersonalStorePath(centralDir)
 	return &Server{
 		centralDir:    centralDir,
 		reposRoot:     reposRoot,
@@ -146,6 +155,34 @@ func New(centralDir string) (*Server, error) {
 		firstRun:      firstRun,
 		repoStatus:    map[string]RepoStatus{},
 	}, nil
+}
+
+// backfillAdoptedEnabled protects already-adopted skills written before adoption
+// recorded an enabled entry. Every manifest link whose source sits directly in
+// the personal store is an in-place adopt link; if no enabled entry maps it,
+// reconcile's orphan pass deletes it on the next sync. Add the missing
+// @local/<name> → <target> mapping. Returns true if cfg was modified.
+func backfillAdoptedEnabled(cfg *config.Config, manifest *config.Manifest, personalStore string) bool {
+	storeAbs := harness.Expand(personalStore)
+	have := map[string]bool{}
+	for _, e := range cfg.Enabled {
+		have[e.Skill+"\x00"+harness.Expand(e.Target)] = true
+	}
+	changed := false
+	for _, l := range manifest.Links {
+		if filepath.Dir(harness.Expand(l.Source)) != storeAbs {
+			continue // not an adopted (store-sourced) link
+		}
+		skill := reconcile.LocalNamespace + "/" + l.Name
+		key := skill + "\x00" + harness.Expand(l.Target)
+		if have[key] {
+			continue
+		}
+		cfg.Enabled = append(cfg.Enabled, config.EnabledEntry{Skill: skill, Target: l.Target, Mode: config.ModeSnapshot})
+		have[key] = true
+		changed = true
+	}
+	return changed
 }
 
 // Close releases resources.
