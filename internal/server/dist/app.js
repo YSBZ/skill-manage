@@ -47,9 +47,22 @@ async function api(method, path, body) {
 const state = {
   status: null,
   targets: [],
+  adoptable: [],
+  adoptError: false,
   skillsByRepo: {},
   collapsed: new Set(),
   search: "",
+};
+
+// error_code → 用户文案（KTD7/U6：不同失败点处置不同）
+const ADOPT_ERR = {
+  copy_failed: "原 skill 未动，请检查磁盘空间或权限",
+  verify_failed: "原 skill 未动，复制不完整",
+  link_failed: "已自动回滚，原 skill 完好",
+  rollback_partial: "复制已入库但建链失败，请重试收编",
+  invalid: "非法 skill 名",
+  guarded: "受保护目录，不可收编",
+  not_found: "skill 不存在",
 };
 
 function banner(msg, isErr) {
@@ -118,13 +131,15 @@ async function load() {
   catch (e) { banner("加载失败：" + e.message, true); return; }
   try { state.targets = (await api("GET", "/api/targets")) || []; }
   catch { state.targets = []; }
+  try { state.adoptable = ((await api("GET", "/api/adoptable")) || {}).skills || []; state.adoptError = false; }
+  catch { state.adoptable = []; state.adoptError = true; }
   const repos = state.status.repos || [];
   const entries = await Promise.all(repos.map(async (r) => {
     try { return [r.name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(r.name))) || []]; }
     catch { return [r.name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
-  renderStats(); renderRepos(); renderTarget(); renderProjects(); renderSkills(); renderSummary(); loadAutostart();
+  renderStats(); renderRepos(); renderTarget(); renderProjects(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
   banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
 }
 
@@ -184,6 +199,48 @@ function renderProjects() {
     rm.onclick = async () => { await api("DELETE", "/api/projects", { path: p }); await apply(); };
     li.append(rm); ul.append(li);
   });
+}
+
+function renderAdoptable() {
+  const ul = $("#adopt-list"); ul.innerHTML = "";
+  if (state.adoptError) {
+    ul.append(ce("li", { className: "muted", style: "color:var(--err)", textContent: "加载失败，请刷新" }));
+    return;
+  }
+  if (state.adoptable.length === 0) {
+    ul.append(ce("li", { className: "muted", textContent: "~/.claude/skills/ 下无本地真身 skill（已全部收编或均为软链）" }));
+    return;
+  }
+  state.adoptable.forEach((a) => {
+    const li = ce("li");
+    li.append(ce("span", { className: "path", textContent: a.name }));
+    const btn = ce("button", { className: "small", textContent: "收编" });
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "收编中…";
+      try {
+        await doAdopt(a.id);
+        banner("已收编 " + a.name + "（原位已软链）");
+        await load();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "收编";
+        banner("收编 " + a.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
+      }
+    };
+    li.append(btn); ul.append(li);
+  });
+}
+
+// doAdopt posts to /api/adopt and surfaces the error_code so the caller can map
+// it to a specific message (generic api() would drop the code).
+async function doAdopt(id) {
+  const r = await fetch("/api/adopt", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(data.error || r.statusText); e.code = data.error_code; throw e; }
+  return data;
 }
 
 function renderSkills() {
