@@ -175,8 +175,10 @@ function renderTabs() {
   if (state.targets.length === 0) {
     bar.append(ce("span", { className: "muted", style: "align-self:center", textContent: "还没有同步目录 →" }));
   }
+  let activeEl = null;
   state.targets.forEach((t) => {
     const tab = ce("div", { className: "tab" + (t.dir === active ? " active" : ""), title: t.dir });
+    if (t.dir === active) activeEl = tab;
     tab.append(ce("span", { className: "badge " + harnessClass(t.harness), textContent: t.harness }));
     tab.append(ce("span", { className: "tab-dir", textContent: t.alias || t.dir }));
     const rm = ce("button", { className: "tab-x", textContent: "×", title: "移除此同步目录" });
@@ -191,9 +193,15 @@ function renderTabs() {
     tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); };
     bar.append(tab);
   });
-  const add = ce("button", { className: "tab-add", textContent: "+", title: "添加同步目录" });
-  add.onclick = openTargetModal;
-  bar.append(add);
+  // The "+" lives outside the scroll container (#tab-add in the markup) so it
+  // stays pinned to the right instead of scrolling away with the tabs.
+  // Bring the selected tab to the center of the scroll row.
+  if (activeEl) {
+    const cRect = bar.getBoundingClientRect();
+    const tRect = activeEl.getBoundingClientRect();
+    const delta = (tRect.left - cRect.left) - (bar.clientWidth - activeEl.offsetWidth) / 2;
+    bar.scrollTo({ left: bar.scrollLeft + delta, behavior: "smooth" });
+  }
 }
 
 function openTargetModal() {
@@ -457,6 +465,7 @@ $("#target-path").onkeydown = (e) => {
 $("#target-path").onpaste = () => {
   setTimeout(() => browseTo($("#target-path").value.trim()), 0);
 };
+$("#tab-add").onclick = openTargetModal;
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
