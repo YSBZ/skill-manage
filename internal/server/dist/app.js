@@ -529,6 +529,17 @@ $("#add-repo").onsubmit = async (e) => {
     await api("POST", "/api/repos", { url, branch });
     $("#repo-url").value = ""; $("#repo-branch").value = "";
     await updateNow(false);
+    // If the first sync failed auth (private HTTPS repo without usable
+    // credentials), prompt for credentials right away instead of leaving a
+    // cryptic clone error.
+    const host = httpsHost(url);
+    if (host) {
+      const repo = (state.status.repos || []).find((r) => r.url === url);
+      if (repo && repo.authHint) {
+        banner("该仓库需要凭据才能访问，请填写。", true);
+        openCredModal(host, state.credHosts[host] || "");
+      }
+    }
   } catch (err) { banner("添加失败：" + err.message, true); }
 };
 async function addTarget(dir, alias) {
