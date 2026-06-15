@@ -50,7 +50,7 @@ const state = {
   adoptable: [],
   adoptError: false,
   skillsByRepo: {},
-  collapsed: new Set(),
+  expanded: null, // accordion: only one source group open at a time
   search: "",
 };
 
@@ -280,6 +280,9 @@ function renderSkills() {
   if ((state.skillsByRepo[LOCAL_NS] || []).length) sources.push(LOCAL_NS);
   if (sources.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
 
+  // accordion: keep exactly one group open; default to the first source.
+  if (!sources.includes(state.expanded)) state.expanded = sources[0] || null;
+
   let anyShown = false;
   sources.forEach((name) => {
     const isLocal = name === LOCAL_NS;
@@ -288,7 +291,7 @@ function renderSkills() {
     if (term && skills.length === 0) return;
     anyShown = true;
 
-    const collapsed = state.collapsed.has(name);
+    const collapsed = name !== state.expanded;
     const group = ce("div", { className: "group" + (collapsed ? " collapsed" : "") });
 
     const head = ce("div", { className: "group-head" });
@@ -310,8 +313,8 @@ function renderSkills() {
       if (dt) head.append(dt);
     }
     head.onclick = () => {
-      if (collapsed) state.collapsed.delete(name); else state.collapsed.add(name);
-      group.classList.toggle("collapsed");
+      state.expanded = (state.expanded === name) ? null : name; // toggle; others close
+      renderSkills();
     };
     group.append(head);
 
