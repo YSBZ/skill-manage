@@ -17,7 +17,7 @@ func TestConfigRoundTrip(t *testing.T) {
 			{Skill: "backend-skills/*", Target: "~/.claude/skills/", Mode: ModeFollow},
 			{Skill: "frontend-skills/foo", Target: "/proj/.claude/skills/", Mode: ModeSnapshot},
 		},
-		Projects: []string{"/proj"},
+		Targets:  []string{"~/.claude/skills/", "/proj/.codex/skills/"},
 		Schedule: Schedule{DailyAt: "09:00"},
 	}
 	if err := SaveConfig(dir, want); err != nil {
@@ -38,6 +38,35 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 	if got.Schedule.DailyAt != "09:00" {
 		t.Errorf("schedule round-trip mismatch: %+v", got.Schedule)
+	}
+	if len(got.Targets) != 2 || got.Targets[1] != "/proj/.codex/skills/" {
+		t.Errorf("targets round-trip mismatch: %+v", got.Targets)
+	}
+}
+
+func TestLoadConfigSeedsTargetsWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	// a config that predates the Targets field (key absent) must seed defaults
+	if err := os.WriteFile(ConfigPath(dir), []byte("repos: []\nschedule:\n  daily_at: \"09:00\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Targets) != 2 {
+		t.Errorf("absent targets should seed personal defaults, got %+v", cfg.Targets)
+	}
+	// an explicitly-empty (non-nil) list is respected, not re-seeded
+	if err := os.WriteFile(ConfigPath(dir), []byte("repos: []\ntargets: []\nschedule:\n  daily_at: \"09:00\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Targets) != 0 {
+		t.Errorf("explicitly-cleared targets must stay empty, got %+v", cfg.Targets)
 	}
 }
 

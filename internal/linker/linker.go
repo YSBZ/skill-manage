@@ -298,7 +298,7 @@ func harnessOf(target string) string {
 	if harness.IsCodexTarget(target) {
 		return "codex"
 	}
-	return "claude-code"
+	return "cc"
 }
 
 func sortedKeys(m map[string]bool) []string {

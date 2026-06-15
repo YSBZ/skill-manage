@@ -80,7 +80,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .repo-name { font-weight: 600; flex: 1; }
 .repo-url { color: var(--muted); font-size: 11px; word-break: break-all; margin-top: 3px; }
 .repo-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-#project-list li, #adopt-list li { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#target-list li, #adopt-list li { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #adopt-list li.muted { display: block; border-style: dashed; font-size: 12px; }
 .path { font-size: 12px; word-break: break-all; }
 

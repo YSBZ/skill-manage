@@ -21,55 +21,42 @@ import (
 type Harness string
 
 const (
-	HarnessClaudeCode Harness = "claude-code"
+	HarnessClaudeCode Harness = "cc"
 	HarnessCodex      Harness = "codex"
-)
-
-// Scope distinguishes a personal (user-wide) target from a project-local one.
-type Scope string
-
-const (
-	ScopePersonal Scope = "personal"
-	ScopeProject  Scope = "project"
 )
 
 // Target is one linkable skill directory. Dir is the canonical string stored in
 // EnabledEntry.Target and resolvable by reconcile.expandTarget (a leading "~"
 // is kept for portability; an absolute path is used when an env override like
-// CODEX_HOME forces one). Guarded directories are never returned as Targets —
-// use Guarded() to test an arbitrary path on a write path.
+// CODEX_HOME forces one). There is no personal/project taxonomy — a target is
+// just a directory the user chose. Harness (cc vs codex) is inferred from the
+// path. Guarded directories are never returned as Targets — use Guarded() to
+// test an arbitrary path on a write path.
 type Target struct {
-	Harness   Harness `json:"harness"`
-	Scope     Scope   `json:"scope"`
-	Dir       string  `json:"dir"`
-	Label     string  `json:"label"`
-	Ambiguous bool    `json:"ambiguous,omitempty"` // Codex project path .codex/skills vs .agents/skills
+	Harness Harness `json:"harness"`
+	Dir     string  `json:"dir"`
+	Label   string  `json:"label"`
 }
 
-// PersonalTargets returns the user-wide targets: Claude Code and Codex.
-func PersonalTargets() []Target {
-	return []Target{
-		{Harness: HarnessClaudeCode, Scope: ScopePersonal, Dir: ccPersonalDir, Label: "Claude Code · 个人"},
-		{Harness: HarnessCodex, Scope: ScopePersonal, Dir: codexPersonalDir(), Label: "Codex · 个人"},
+// Targets classifies each user-provided sync directory by the agent that
+// consumes it — cc when the path is a Claude Code skills dir, codex when it is a
+// .codex/.agents skills dir — and drops any blank or guarded entry. The order of
+// dirs is preserved. cc and codex skills share one SKILL.md format, so the same
+// source maps into either kind of target unchanged; the classification only
+// drives the nested-SKILL.md guard (codex-only) and UI labeling.
+func Targets(dirs []string) []Target {
+	var out []Target
+	for _, d := range dirs {
+		if strings.TrimSpace(d) == "" || Guarded(d) {
+			continue
+		}
+		h := HarnessClaudeCode
+		if IsCodexTarget(d) {
+			h = HarnessCodex
+		}
+		out = append(out, Target{Harness: h, Dir: d, Label: string(h)})
 	}
-}
-
-// ProjectTargets derives the per-harness project-level targets for one
-// registered project path. Claude Code is always <proj>/.claude/skills. Codex
-// is <proj>/.codex/skills (the openai/codex repo's own practice), falling back
-// to <proj>/.agents/skills (the official docs path) only when that exists and
-// .codex/skills does not. When both exist the choice is .codex/skills and the
-// target is flagged Ambiguous so the UI can surface the chosen path.
-func ProjectTargets(projectPath string) []Target {
-	proj := strings.TrimRight(strings.TrimSpace(projectPath), "/")
-	if proj == "" {
-		return nil
-	}
-	codexDir, ambiguous := codexProjectDir(proj)
-	return []Target{
-		{Harness: HarnessClaudeCode, Scope: ScopeProject, Dir: proj + "/.claude/skills", Label: "Claude Code · " + filepath.Base(proj)},
-		{Harness: HarnessCodex, Scope: ScopeProject, Dir: codexDir, Label: "Codex · " + filepath.Base(proj), Ambiguous: ambiguous},
-	}
+	return out
 }
 
 // Guarded reports whether dir is a Codex-owned directory the daemon must never
@@ -105,34 +92,6 @@ func Expand(p string) string { return expand(p) }
 
 // --- internal helpers ---
 
-// ccPersonalDir keeps the tilde form Phase 1 already stored so existing enabled
-// entries and links continue to match (no churn on upgrade).
-const ccPersonalDir = "~/.claude/skills/"
-
-func codexPersonalDir() string {
-	// With CODEX_HOME set the path is not under ~, so store the absolute form;
-	// otherwise keep the portable tilde form.
-	if os.Getenv("CODEX_HOME") != "" {
-		return codexSkillsRoot()
-	}
-	return "~/.codex/skills/"
-}
-
-func codexProjectDir(proj string) (dir string, ambiguous bool) {
-	codex := proj + "/.codex/skills"
-	agents := proj + "/.agents/skills"
-	codexExists := isDir(expand(codex))
-	agentsExists := isDir(expand(agents))
-	switch {
-	case codexExists && agentsExists:
-		return codex, true // both present → prefer repo practice, flag ambiguity
-	case agentsExists && !codexExists:
-		return agents, false
-	default:
-		return codex, false // neither (or only .codex) → default; linker MkdirAll's on link
-	}
-}
-
 func codexHome() string {
 	if h := os.Getenv("CODEX_HOME"); h != "" {
 		return expand(h)
@@ -165,9 +124,4 @@ func expand(p string) string {
 // "/a/skills-x" vs "/a/skills".
 func underOrEqual(path, root string) bool {
 	return path == root || strings.HasPrefix(path, root+string(os.PathSeparator))
-}
-
-func isDir(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.IsDir()
 }

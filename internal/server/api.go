@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"skillmanage/internal/adopt"
 	"skillmanage/internal/config"
@@ -35,8 +36,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
 	mux.HandleFunc("POST /api/enabled/disable", s.requireAuth(s.handleSetEnabledDisabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
-	mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleAddProject))
-	mux.HandleFunc("DELETE /api/projects", s.requireAuth(s.handleRemoveProject))
+	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
+	mux.HandleFunc("DELETE /api/targets", s.requireAuth(s.handleRemoveTarget))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 	mux.HandleFunc("GET /api/autostart", s.requireAuth(s.handleAutostartStatus))
@@ -99,7 +100,7 @@ type statusResp struct {
 	FirstRun    bool                  `json:"firstRun"`
 	Repos       []RepoStatus          `json:"repos"`
 	Enabled     []config.EnabledEntry `json:"enabled"`
-	Projects    []string              `json:"projects"`
+	Targets     []string              `json:"targets"`
 	Links       []config.LinkRecord   `json:"links"`
 	LastSummary reconcile.Summary     `json:"lastSummary"`
 }
@@ -110,7 +111,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := statusResp{
 		FirstRun:    s.firstRun,
 		Enabled:     s.cfg.Enabled,
-		Projects:    s.cfg.Projects,
+		Targets:     s.cfg.Targets,
 		Links:       s.manifest.Links,
 		LastSummary: s.lastSummary,
 	}
@@ -274,17 +275,22 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 
 // --- targets ---
 
-// handleTargets returns every linkable skill target: the personal CC/Codex
-// dirs plus each registered project's per-harness dirs (U1/U2).
+// handleTargets returns the user's sync directories, each classified by the
+// agent that consumes it (cc vs codex). No personal/project split — the list is
+// exactly what the user configured.
 func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	projects := append([]string(nil), s.cfg.Projects...)
+	targets := s.targetsLocked()
 	s.mu.Unlock()
-	targets := harness.PersonalTargets()
-	for _, p := range projects {
-		targets = append(targets, harness.ProjectTargets(p)...)
+	if targets == nil {
+		targets = []harness.Target{}
 	}
 	writeJSON(w, http.StatusOK, targets)
+}
+
+// targetsLocked classifies the configured sync dirs. Caller must hold s.mu.
+func (s *Server) targetsLocked() []harness.Target {
+	return harness.Targets(s.cfg.Targets)
 }
 
 // --- skills ---
@@ -338,18 +344,18 @@ func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "skill not found", http.StatusNotFound)
 }
 
-// --- adopt (U5) ---
-
-// adoptRoots is the set of source roots adoption may scan and relocate from:
-// every personal target (CC + Codex), since each is a bidirectional dir where
-// the user can hand-author skills (KTD1). Project-level roots are out of scope.
-func adoptRoots() []harness.Target { return harness.PersonalTargets() }
+// --- adopt (个人 skill 反向管理 / 收编) ---
+//
+// Adoption scans and relocates from every configured sync directory — each is a
+// bidirectional dir where the user can hand-author skills (KTD1). No
+// personal/project split: the source roots are exactly the user's targets.
 
 func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	snapshot := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
+	roots := s.targetsLocked()
 	s.mu.Unlock()
-	list, err := adopt.ListAdoptable(adoptRoots(), &snapshot)
+	list, err := adopt.ListAdoptable(roots, &snapshot)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -371,12 +377,15 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// The root must be one of the known personal target dirs — never an
-	// arbitrary client-supplied path. This bounds adoption to the directories
+	// The root must be one of the configured sync dirs — never an arbitrary
+	// client-supplied path. This bounds adoption to the directories
 	// /api/adoptable is allowed to expose.
 	wantRoot := harness.Expand(req.Root)
+	mgr := linker.NewManager(s.reposRoot, s.personalStore)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	allowed := false
-	for _, t := range adoptRoots() {
+	for _, t := range s.targetsLocked() {
 		if harness.Expand(t.Dir) == wantRoot {
 			allowed = true
 			break
@@ -386,9 +395,6 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown adopt root"})
 		return
 	}
-	mgr := linker.NewManager(s.reposRoot, s.personalStore)
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := adopt.Adopt(req.ID, wantRoot, s.personalStore, mgr, &s.manifest); err != nil {
 		code := "error"
 		var ae *adopt.Error
@@ -502,48 +508,68 @@ func (s *Server) handleRemoveEnabled(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// --- projects ---
+// --- sync directories (targets) ---
 
-type projectReq struct {
-	Path string `json:"path"`
+type targetReq struct {
+	Dir string `json:"dir"`
 }
 
-func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
-	var req projectReq
-	if err := readJSON(r, &req); err != nil || req.Path == "" {
+func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
+	var req targetReq
+	dir := ""
+	if err := readJSON(r, &req); err == nil {
+		dir = strings.TrimSpace(req.Dir)
+	}
+	if dir == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// A guarded directory (Codex .system / vendor_imports) must never become a
+	// sync target — the guard holds on the write path, not just in listings.
+	if harness.Guarded(dir) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "directory is guarded"})
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, p := range s.cfg.Projects {
-		if p == req.Path {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "already registered"})
+	for _, d := range s.cfg.Targets {
+		if d == dir {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "already a sync directory"})
 			return
 		}
 	}
-	s.cfg.Projects = append(s.cfg.Projects, req.Path)
+	s.cfg.Targets = append(s.cfg.Targets, dir)
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]bool{"ok": true})
 }
 
-func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
-	var req projectReq
+func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
+	var req targetReq
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	dir := strings.TrimSpace(req.Dir)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.cfg.Projects[:0]
-	for _, p := range s.cfg.Projects {
-		if p != req.Path {
-			out = append(out, p)
+	// Drop the directory and any enabled selection that pointed at it, so its
+	// links are reconciled away on the next cycle (no dangling selections).
+	out := s.cfg.Targets[:0]
+	for _, d := range s.cfg.Targets {
+		if d != dir {
+			out = append(out, d)
 		}
 	}
-	s.cfg.Projects = out
+	s.cfg.Targets = out
+	kept := s.cfg.Enabled[:0]
+	for _, e := range s.cfg.Enabled {
+		if e.Target != dir {
+			kept = append(kept, e)
+		}
+	}
+	s.cfg.Enabled = kept
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}

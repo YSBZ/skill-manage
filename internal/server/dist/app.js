@@ -66,7 +66,7 @@ const ADOPT_ERR = {
   name_taken: "受管存储已有同名 skill（另一 agent 收编过），请先改名",
 };
 
-const HARNESS_LABEL = { "claude-code": "CC", codex: "Codex" };
+const HARNESS_LABEL = { cc: "cc", codex: "codex" };
 
 function banner(msg, isErr) {
   const b = $("#banner");
@@ -105,10 +105,10 @@ function disableToggle(skill) {
 }
 
 // harnessOfDir classifies a target directory by agent (mirrors the backend's
-// harness.IsCodexTarget): Codex when the path is a .codex/skills or
-// .agents/skills directory, otherwise Claude Code.
+// harness.IsCodexTarget): codex when the path is a .codex/skills or
+// .agents/skills directory, otherwise cc.
 function harnessOfDir(dir) {
-  return /(\/|^)\.codex\/skills(\/|$)|(\/|^)\.agents\/skills(\/|$)/.test(dir || "") ? "Codex" : "CC";
+  return /(\/|^)\.codex\/skills(\/|$)|(\/|^)\.agents\/skills(\/|$)/.test(dir || "") ? "codex" : "cc";
 }
 
 // skillBadges returns the status badges for a skill across all harnesses: a
@@ -120,8 +120,8 @@ function skillBadges(linkName) {
   const confs = (state.status.lastSummary && state.status.lastSummary.conflicts) || [];
   const harnesses = new Set();
   (state.status.links || []).forEach((l) => { if (l.name === linkName) harnesses.add(harnessOfDir(l.target)); });
-  if (harnesses.has("CC")) out.push({ cls: "st-linked", text: "CC ✓" });
-  if (harnesses.has("Codex")) out.push({ cls: "st-linked-codex", text: "Codex ✓" });
+  if (harnesses.has("cc")) out.push({ cls: "st-linked", text: "cc ✓" });
+  if (harnesses.has("codex")) out.push({ cls: "st-linked-codex", text: "codex ✓" });
   if (out.length === 0) out.push({ cls: "", text: "未链接" });
   if (confs.some((c) => c.kind === "collision" && c.linkName === linkName)) out.push({ cls: "st-conflict", text: "撞名" });
   if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "被遮蔽" });
@@ -142,7 +142,7 @@ async function load() {
     catch { return [r.name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
-  renderStats(); renderRepos(); renderTarget(); renderProjects(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
+  renderStats(); renderRepos(); renderTarget(); renderTargetList(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
   banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
 }
 
@@ -188,18 +188,32 @@ function renderRepos() {
 
 function renderTarget() {
   const sel = $("#target"); const prev = sel.value; sel.innerHTML = "";
-  state.targets.forEach((t) => sel.append(ce("option", { value: t.dir, textContent: t.label + (t.ambiguous ? " ⚠" : "") + " — " + t.dir })));
+  state.targets.forEach((t) => sel.append(ce("option", { value: t.dir, textContent: t.label + " — " + t.dir })));
   if (prev && targetDirs().includes(prev)) sel.value = prev;
   sel.onchange = () => { renderSkills(); };
 }
 
-function renderProjects() {
-  const ul = $("#project-list"); ul.innerHTML = "";
-  (state.status.projects || []).forEach((p) => {
+// renderTargetList manages the sync-directory list (add/remove). Each entry is
+// prefixed with its inferred agent (cc/codex), since cc and codex share one
+// skill format and the directory alone decides which agent loads it.
+function renderTargetList() {
+  const ul = $("#target-list"); ul.innerHTML = "";
+  if (state.targets.length === 0) {
+    ul.append(ce("li", { className: "muted", textContent: "无同步目录，添加一个开始同步" }));
+    return;
+  }
+  state.targets.forEach((t) => {
     const li = ce("li");
-    li.append(ce("span", { className: "path", textContent: p }));
+    const label = ce("span", { className: "path" });
+    label.append(ce("span", { className: "badge" + (t.harness === "codex" ? " st-linked-codex" : ""), textContent: t.harness, style: "margin-right:6px" }));
+    label.append(document.createTextNode(t.dir));
+    li.append(label);
     const rm = ce("button", { className: "danger small", textContent: "移除" });
-    rm.onclick = async () => { await api("DELETE", "/api/projects", { path: p }); await apply(); };
+    rm.onclick = async () => {
+      if (!confirm("移除同步目录 " + t.dir + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
+      await api("DELETE", "/api/targets", { dir: t.dir });
+      await apply();
+    };
     li.append(rm); ul.append(li);
   });
 }
@@ -396,12 +410,19 @@ $("#add-repo").onsubmit = async (e) => {
     await updateNow(false);
   } catch (err) { banner("添加失败：" + err.message, true); }
 };
-$("#add-project").onsubmit = async (e) => {
+async function addTarget(dir) {
+  try { await api("POST", "/api/targets", { dir }); await load(); }
+  catch (err) { banner("添加同步目录失败：" + err.message, true); }
+}
+$("#add-target").onsubmit = async (e) => {
   e.preventDefault();
-  const path = $("#project-path").value.trim();
-  try { await api("POST", "/api/projects", { path }); $("#project-path").value = ""; await load(); }
-  catch (err) { banner("登记失败：" + err.message, true); }
+  const dir = $("#target-path").value.trim();
+  if (!dir) return;
+  $("#target-path").value = "";
+  await addTarget(dir);
 };
+$("#add-cc").onclick = () => addTarget("~/.claude/skills/");
+$("#add-codex").onclick = () => addTarget("~/.codex/skills/");
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = () => { if (confirm("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#autostart").onchange = async (e) => {

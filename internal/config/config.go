@@ -49,9 +49,9 @@ type RepoConfig struct {
 // EnabledEntry maps a skill selection to a link target.
 //
 // Skill is either "<repo>/*" (follow the whole repo) or "<repo>/<skill-dir>"
-// (a single skill). Target is the global skills root or a registered project
-// path. Mode disambiguates follow vs snapshot for the "*" form; for a single
-// skill it is implicitly snapshot.
+// (a single skill). Target is one of the user's sync directories (config.Targets).
+// Mode disambiguates follow vs snapshot for the "*" form; for a single skill it
+// is implicitly snapshot.
 type EnabledEntry struct {
 	Skill  string `yaml:"skill" json:"skill"`
 	Target string `yaml:"target" json:"target"`
@@ -70,10 +70,15 @@ type Schedule struct {
 }
 
 // Config is the user-facing, portable configuration (config.yaml).
+//
+// The user provides exactly two things: tracked repos (skill sources) and
+// Targets (the directories to sync skills into). Targets are plain directories
+// with no personal/project taxonomy — the consuming agent (cc vs codex) is
+// inferred from each path by the harness package, not stored here.
 type Config struct {
 	Repos    []RepoConfig   `yaml:"repos"`
 	Enabled  []EnabledEntry `yaml:"enabled"`
-	Projects []string       `yaml:"projects"`
+	Targets  []string       `yaml:"targets"`
 	Schedule Schedule       `yaml:"schedule"`
 }
 
@@ -102,8 +107,17 @@ const (
 // DefaultConfig is what a brand-new install starts from.
 func DefaultConfig() Config {
 	return Config{
+		Targets:  DefaultTargetDirs(),
 		Schedule: Schedule{DailyAt: "09:00"},
 	}
+}
+
+// DefaultTargetDirs are the sync directories seeded for a fresh install (and for
+// an older config that predates the Targets field): the personal Claude Code and
+// Codex skill dirs. The user manages this list freely afterward; clearing it to
+// an empty (non-nil) list is respected and not re-seeded.
+func DefaultTargetDirs() []string {
+	return []string{"~/.claude/skills/", "~/.codex/skills/"}
 }
 
 // ConfigPath returns the config.yaml path for a central folder.
@@ -139,6 +153,12 @@ func LoadConfig(centralDir string) (cfg Config, firstRun bool, err error) {
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, false, fmt.Errorf("parse config %s: %w", ConfigPath(centralDir), err)
+	}
+	// A config written before the Targets field existed (or any config missing
+	// the key) seeds the personal defaults. A deliberately-cleared empty list is
+	// non-nil and left as-is.
+	if cfg.Targets == nil {
+		cfg.Targets = DefaultTargetDirs()
 	}
 	return cfg, false, nil
 }

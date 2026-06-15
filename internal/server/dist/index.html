@@ -39,19 +39,24 @@
         </form>
         <ul id="repo-list"></ul>
 
-        <div class="pane-head"><h2>链接目标</h2></div>
-        <select id="target" class="target"></select>
-
-        <div class="pane-head"><h2>项目</h2></div>
-        <form id="add-project">
-          <input id="project-path" placeholder="项目路径" required />
-          <button type="submit">登记</button>
+        <div class="pane-head">
+          <h2>同步目录</h2>
+          <span class="muted" style="font-size:11px">cc / codex 自动识别</span>
+        </div>
+        <select id="target" class="target" title="当前操作目标（勾选 skill 时同步到此目录）"></select>
+        <form id="add-target">
+          <input id="target-path" placeholder="同步目录路径（如 ~/.claude/skills/）" required />
+          <button type="submit">添加</button>
         </form>
-        <ul id="project-list"></ul>
+        <div class="row" style="gap:6px;margin:-2px 0 8px">
+          <button id="add-cc" class="ghost small" type="button">+ cc 个人</button>
+          <button id="add-codex" class="ghost small" type="button">+ codex 个人</button>
+        </div>
+        <ul id="target-list"></ul>
 
         <div class="pane-head">
-          <h2>本地收编</h2>
-          <span class="muted" style="font-size:11px">移入受管存储 + 原位软链</span>
+          <h2>未备份 skill</h2>
+          <span class="muted" style="font-size:11px">反向收编：移入受管存储 + 原位软链</span>
         </div>
         <ul id="adopt-list"></ul>
       </aside>

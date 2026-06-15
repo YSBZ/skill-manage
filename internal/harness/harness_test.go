@@ -6,42 +6,41 @@ import (
 	"testing"
 )
 
-func TestPersonalTargets(t *testing.T) {
-	t.Setenv("CODEX_HOME", "") // force tilde form
-	ts := PersonalTargets()
-	if len(ts) != 2 {
-		t.Fatalf("want 2 personal targets, got %d", len(ts))
+func TestTargets(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	home, _ := os.UserHomeDir()
+	dirs := []string{
+		"~/.claude/skills/",         // cc
+		"~/.codex/skills/",          // codex
+		"/work/proj/.codex/skills",  // codex (project path, no taxonomy)
+		"/work/proj/.claude/skills", // cc
+		"  ",                        // blank → dropped
+		filepath.Join(home, ".codex", "skills", ".system"), // guarded → dropped
 	}
-	var cc, codex *Target
-	for i := range ts {
-		switch ts[i].Harness {
-		case HarnessClaudeCode:
-			cc = &ts[i]
-		case HarnessCodex:
-			codex = &ts[i]
+	ts := Targets(dirs)
+	if len(ts) != 4 {
+		t.Fatalf("want 4 targets (blank + guarded dropped), got %d: %+v", len(ts), ts)
+	}
+	// order preserved, harness inferred from path, label == harness
+	want := []struct {
+		dir string
+		h   Harness
+	}{
+		{"~/.claude/skills/", HarnessClaudeCode},
+		{"~/.codex/skills/", HarnessCodex},
+		{"/work/proj/.codex/skills", HarnessCodex},
+		{"/work/proj/.claude/skills", HarnessClaudeCode},
+	}
+	for i, w := range want {
+		if ts[i].Dir != w.dir || ts[i].Harness != w.h || ts[i].Label != string(w.h) {
+			t.Errorf("target[%d] = %+v, want dir=%q harness=%q", i, ts[i], w.dir, w.h)
 		}
-	}
-	if cc == nil || cc.Dir != "~/.claude/skills/" || cc.Scope != ScopePersonal {
-		t.Errorf("CC personal target wrong: %+v", cc)
-	}
-	if codex == nil || codex.Dir != "~/.codex/skills/" || codex.Scope != ScopePersonal {
-		t.Errorf("Codex personal target wrong: %+v", codex)
 	}
 }
 
-func TestCodexHomeOverride(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CODEX_HOME", dir)
-	ts := PersonalTargets()
-	want := filepath.Join(dir, "skills")
-	found := false
-	for _, x := range ts {
-		if x.Harness == HarnessCodex && x.Dir == want {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("CODEX_HOME override should make Codex target %q, got %+v", want, ts)
+func TestTargetsEmpty(t *testing.T) {
+	if ts := Targets(nil); ts != nil {
+		t.Errorf("Targets(nil) should be nil, got %+v", ts)
 	}
 }
 
@@ -74,6 +73,17 @@ func TestGuarded(t *testing.T) {
 	}
 }
 
+func TestGuardedCodexHomeOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	if !Guarded(filepath.Join(dir, "skills", ".system")) {
+		t.Errorf("CODEX_HOME .system should be guarded")
+	}
+	if Guarded(filepath.Join(dir, "skills", "my-skill")) {
+		t.Errorf("a normal skill under CODEX_HOME must not be guarded")
+	}
+}
+
 func TestIsCodexTarget(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	codex := []string{"~/.codex/skills/", "~/.codex/skills/foo", "/home/u/proj/.codex/skills", "/home/u/proj/.agents/skills"}
@@ -90,59 +100,9 @@ func TestIsCodexTarget(t *testing.T) {
 	}
 }
 
-func TestProjectTargets(t *testing.T) {
-	proj := t.TempDir()
-	// neither .codex/skills nor .agents/skills exists → default .codex/skills
-	ts := ProjectTargets(proj)
-	if len(ts) != 2 {
-		t.Fatalf("want 2 project targets, got %d", len(ts))
-	}
-	var cc, codex *Target
-	for i := range ts {
-		switch ts[i].Harness {
-		case HarnessClaudeCode:
-			cc = &ts[i]
-		case HarnessCodex:
-			codex = &ts[i]
-		}
-	}
-	if cc.Dir != proj+"/.claude/skills" {
-		t.Errorf("CC project dir = %q", cc.Dir)
-	}
-	if codex.Dir != proj+"/.codex/skills" || codex.Ambiguous {
-		t.Errorf("default Codex project should be .codex/skills, not ambiguous: %+v", codex)
-	}
-}
-
-func TestProjectTargetsAgentsFallback(t *testing.T) {
-	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, ".agents", "skills"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ts := ProjectTargets(proj)
-	for _, x := range ts {
-		if x.Harness == HarnessCodex {
-			if x.Dir != proj+"/.agents/skills" || x.Ambiguous {
-				t.Errorf("only .agents/skills exists → expect it, not ambiguous: %+v", x)
-			}
-		}
-	}
-}
-
-func TestProjectTargetsBothExistAmbiguous(t *testing.T) {
-	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, ".agents", "skills"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(proj, ".codex", "skills"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ts := ProjectTargets(proj)
-	for _, x := range ts {
-		if x.Harness == HarnessCodex {
-			if x.Dir != proj+"/.codex/skills" || !x.Ambiguous {
-				t.Errorf("both exist → prefer .codex/skills AND flag ambiguous: %+v", x)
-			}
-		}
+func TestExpandTilde(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	if got := Expand("~/.claude/skills/"); got != filepath.Join(home, ".claude", "skills") {
+		t.Errorf("Expand tilde = %q", got)
 	}
 }

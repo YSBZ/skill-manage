@@ -229,6 +229,52 @@ func TestAddEnabledRejectsGuardedTarget(t *testing.T) {
 	}
 }
 
+func TestAddRemoveTarget(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	// add a new sync dir
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": "/work/proj/.claude/skills"}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add target: got %d, want 201", w.Code)
+	}
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	if len(cfg.Targets) != 3 { // 2 seeded defaults + 1 added
+		t.Fatalf("target not persisted: %+v", cfg.Targets)
+	}
+	// guarded dir rejected
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": "~/.codex/skills/.system"}))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("guarded target add: got %d, want 400", w.Code)
+	}
+	// duplicate rejected
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": "/work/proj/.claude/skills"}))
+	if w.Code != http.StatusConflict {
+		t.Errorf("duplicate target add: got %d, want 409", w.Code)
+	}
+	// remove it, and any enabled entry pointing at it
+	s.mu.Lock()
+	s.cfg.Enabled = append(s.cfg.Enabled, config.EnabledEntry{Skill: "r/foo", Target: "/work/proj/.claude/skills"})
+	s.mu.Unlock()
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("DELETE", "/api/targets", s.token, map[string]string{"dir": "/work/proj/.claude/skills"}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("remove target: got %d, want 200", w.Code)
+	}
+	cfg, _, _ = config.LoadConfig(s.centralDir)
+	if len(cfg.Targets) != 2 {
+		t.Errorf("target not removed: %+v", cfg.Targets)
+	}
+	for _, e := range cfg.Enabled {
+		if e.Target == "/work/proj/.claude/skills" {
+			t.Errorf("enabled entry for removed target should be dropped: %+v", cfg.Enabled)
+		}
+	}
+}
+
 func TestAdoptRejectsUnknownRoot(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	s := newTestServer(t)

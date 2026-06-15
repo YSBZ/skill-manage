@@ -110,7 +110,7 @@ func TestListAdoptableSpansMultipleRoots(t *testing.T) {
 			t.Errorf("adoptable %q missing Root", a.ID)
 		}
 	}
-	if got["alpha"] != "claude-code" || got["beta"] != "codex" {
+	if got["alpha"] != "cc" || got["beta"] != "codex" {
 		t.Fatalf("expected alpha→cc and beta→codex, got %+v", list)
 	}
 }
