@@ -1,7 +1,7 @@
 ---
 title: "feat: SkillManage 二期 — 跨 harness 统一映射层 + 本地 skill 收编"
 type: feat
-status: active
+status: completed
 date: 2026-06-14
 origin: docs/phase2-notes.md
 ---
