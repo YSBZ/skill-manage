@@ -37,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
 	mux.HandleFunc("DELETE /api/targets", s.requireAuth(s.handleRemoveTarget))
+	mux.HandleFunc("GET /api/browse", s.requireAuth(s.handleBrowse))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 	mux.HandleFunc("GET /api/autostart", s.requireAuth(s.handleAutostartStatus))
@@ -293,6 +294,66 @@ func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 // targetsLocked classifies the configured sync dirs. Caller must hold s.mu.
 func (s *Server) targetsLocked() []harness.Target {
 	return harness.Targets(s.cfg.Targets)
+}
+
+type browseEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type browseResp struct {
+	Path   string        `json:"path"`   // resolved absolute directory
+	Parent string        `json:"parent"` // parent dir, "" when at filesystem root
+	Dirs   []browseEntry `json:"dirs"`   // immediate subdirectories
+}
+
+// handleBrowse lets the add-target modal pick a directory from the real
+// filesystem instead of typing the path blind. Browsers can't read absolute
+// paths from a native folder picker, so the daemon walks the tree on the
+// server side. Listing is directory-only and gated behind token auth on a
+// localhost-bound daemon — it exposes folder names, never file contents.
+func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("path"))
+	if raw == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			raw = home
+		} else {
+			raw = string(filepath.Separator)
+		}
+	}
+	p := harness.Expand(raw)
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+	}
+	p = filepath.Clean(p)
+	info, err := os.Stat(p)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不存在或无法访问"})
+		return
+	}
+	if !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是目录"})
+		return
+	}
+	entries, err := os.ReadDir(p) // already sorted by filename
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无法读取目录（权限不足？）"})
+		return
+	}
+	dirs := []browseEntry{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dirs = append(dirs, browseEntry{Name: e.Name(), Path: filepath.Join(p, e.Name())})
+	}
+	parent := filepath.Dir(p)
+	if parent == p { // at filesystem root
+		parent = ""
+	}
+	writeJSON(w, http.StatusOK, browseResp{Path: p, Parent: parent, Dirs: dirs})
 }
 
 // --- skills ---

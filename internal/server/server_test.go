@@ -409,3 +409,49 @@ func TestBindFallback(t *testing.T) {
 		t.Errorf("Bind should have fallen back to a different port, got same %d", got)
 	}
 }
+
+func TestBrowseEndpoint(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// lists subdirectories only, with the resolved absolute path + a parent
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/browse?path="+root, s.token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("browse: got %d, want 200", w.Code)
+	}
+	var resp browseResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Path != root {
+		t.Errorf("path = %q, want %q", resp.Path, root)
+	}
+	if resp.Parent == "" {
+		t.Errorf("parent should be non-empty for a tempdir")
+	}
+	if len(resp.Dirs) != 1 || resp.Dirs[0].Name != "skills" {
+		t.Errorf("dirs should be just [skills], got %+v", resp.Dirs)
+	}
+
+	// a file path (not a dir) → 400
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/browse?path="+filepath.Join(root, "note.txt"), s.token, nil))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("browse on a file: got %d, want 400", w.Code)
+	}
+
+	// missing token → 401
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/browse?path="+root, "", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("browse without token: got %d, want 401", w.Code)
+	}
+}

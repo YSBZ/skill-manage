@@ -201,8 +201,41 @@ function openTargetModal() {
   $("#target-alias").value = "";
   $("#target-modal").classList.remove("hidden");
   $("#target-path").focus();
+  browseTo(""); // "" → daemon starts at the user's home dir
 }
 function closeTargetModal() { $("#target-modal").classList.add("hidden"); }
+
+// Server-side directory browser: the daemon walks the real filesystem (a web
+// page can't read absolute paths from a native folder picker). Drilling into a
+// dir also makes it the current path, so the active path IS the selection.
+async function browseTo(path) {
+  const box = $("#target-browser");
+  box.innerHTML = "";
+  let resp;
+  try {
+    resp = await api("GET", "/api/browse?path=" + encodeURIComponent(path));
+  } catch (err) {
+    box.append(ce("div", { className: "dir-empty err", textContent: err.message }));
+    return;
+  }
+  $("#target-path").value = resp.path; // current dir = selection
+  if (resp.parent) {
+    const up = ce("div", { className: "dir-row up" });
+    up.append(ce("span", { className: "ic", textContent: "⬆" }), ce("span", { textContent: "上级目录" }));
+    up.onclick = () => browseTo(resp.parent);
+    box.append(up);
+  }
+  if (resp.dirs.length === 0) {
+    box.append(ce("div", { className: "dir-empty", textContent: "（无子目录）" }));
+    return;
+  }
+  resp.dirs.forEach((d) => {
+    const row = ce("div", { className: "dir-row" });
+    row.append(ce("span", { className: "ic", textContent: "📁" }), ce("span", { textContent: d.name }));
+    row.onclick = () => browseTo(d.path);
+    box.append(row);
+  });
+}
 
 function renderAdoptable() {
   const ul = $("#adopt-list"); ul.innerHTML = "";
@@ -408,6 +441,11 @@ $("#add-target").onsubmit = async (e) => {
   const alias = $("#target-alias").value.trim();
   closeTargetModal();
   await addTarget(dir, alias);
+};
+// Enter in the path field navigates (validate + list), it does not commit —
+// the explicit 添加 button commits. Lets you paste a path and drill in.
+$("#target-path").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); browseTo($("#target-path").value.trim()); }
 };
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;

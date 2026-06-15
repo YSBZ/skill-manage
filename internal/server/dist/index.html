@@ -66,8 +66,9 @@
           <button id="target-modal-close" class="ghost small">关闭</button>
         </div>
         <form id="add-target" style="display:block;padding:16px 18px">
-          <label class="tm-label">目录路径</label>
+          <label class="tm-label">目录路径（可手输 / 粘贴，或在下方点选）</label>
           <input id="target-path" placeholder="如 ~/.claude/skills/" required style="width:100%" />
+          <div id="target-browser" class="dir-browser"></div>
           <label class="tm-label" style="margin-top:14px">别名（可选）</label>
           <input id="target-alias" placeholder="如 我的CC技能" style="width:100%" />
           <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">

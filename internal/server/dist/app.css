@@ -116,6 +116,16 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 }
 .tab-add:hover { border-color: var(--accent); color: var(--accent); }
 .tm-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+
+/* directory browser inside the add-target modal */
+.dir-browser { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); max-height: 240px; overflow-y: auto; }
+.dir-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 13px; }
+.dir-row:last-child { border-bottom: 0; }
+.dir-row:hover { background: var(--panel-2); }
+.dir-row .ic { width: 16px; text-align: center; color: var(--muted); flex-shrink: 0; }
+.dir-row.up { color: var(--muted); }
+.dir-empty { padding: 12px 11px; color: var(--muted); font-size: 12.5px; }
+.dir-empty.err { color: var(--err); }
 .tab {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 10px; border-radius: 10px; cursor: pointer;
