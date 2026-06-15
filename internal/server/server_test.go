@@ -529,6 +529,48 @@ func TestIsAuthError(t *testing.T) {
 	}
 }
 
+func TestRemoveRepoDropsCredentialWhenHostUnused(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	add := func(u string) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("POST", "/api/repos", s.token, repoReq{URL: u}))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("add %s: %d", u, w.Code)
+		}
+	}
+	hasCred := func(host string) bool {
+		c, _ := config.LoadCredentials(s.centralDir)
+		_, ok := c.Hosts[host]
+		return ok
+	}
+	rm := func(u string) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("DELETE", "/api/repos", s.token, repoReq{URL: u}))
+		if w.Code != http.StatusOK {
+			t.Fatalf("remove %s: %d", u, w.Code)
+		}
+	}
+	// two repos on the same host + a credential for that host
+	add("https://git.a.com/team/one.git")
+	add("https://git.a.com/team/two.git")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/credentials", s.token, credReq{Host: "git.a.com", Token: "pat"}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("set cred: %d", w.Code)
+	}
+	// removing one repo must KEEP the cred (other repo still uses the host)
+	rm("https://git.a.com/team/one.git")
+	if !hasCred("git.a.com") {
+		t.Error("credential should survive while another repo uses the host")
+	}
+	// removing the last repo on that host must drop the cred
+	rm("https://git.a.com/team/two.git")
+	if hasCred("git.a.com") {
+		t.Error("credential should be dropped once no repo uses the host")
+	}
+}
+
 func TestServerStartsWithoutGit(t *testing.T) {
 	t.Setenv("PATH", "") // git not resolvable → must not crash startup
 	s, err := New(t.TempDir())

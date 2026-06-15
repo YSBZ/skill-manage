@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,6 +204,26 @@ func (s *Server) handleRemoveRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfg.Enabled = kept
 	delete(s.repoStatus, req.URL)
+	// Drop the stored HTTPS credential for this repo's host — but only if no
+	// remaining repo still uses that host (credentials are keyed per host, and
+	// several repos can share one server).
+	if host := httpsHostOf(req.URL); host != "" {
+		stillUsed := false
+		for _, repo := range s.cfg.Repos {
+			if httpsHostOf(repo.URL) == host {
+				stillUsed = true
+				break
+			}
+		}
+		if !stillUsed {
+			if creds, err := config.LoadCredentials(s.centralDir); err == nil {
+				if _, ok := creds.Hosts[host]; ok {
+					delete(creds.Hosts, host)
+					_ = config.SaveCredentials(s.centralDir, creds)
+				}
+			}
+		}
+	}
 	if err := s.persistConfigLocked(w); err != nil {
 		s.mu.Unlock()
 		return
@@ -828,6 +849,20 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 	// now, instead of relying on a separate apply round-trip from the client.
 	sum := s.ReconcileOnly()
 	writeJSON(w, http.StatusOK, sum)
+}
+
+// httpsHostOf returns the host of an http(s) URL, or "" for ssh/scp remotes
+// (credentials only apply to HTTPS).
+func httpsHostOf(raw string) string {
+	l := strings.ToLower(strings.TrimSpace(raw))
+	if !strings.HasPrefix(l, "https://") && !strings.HasPrefix(l, "http://") {
+		return ""
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // --- credentials (HTTPS PAT per host) ---
