@@ -107,10 +107,10 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 
 /* 同步目录 tabs (top of main) */
 .targets-bar { margin-bottom: 12px; }
-/* single scrollable row — tabs never wrap, overflow scrolls horizontally */
-.tabs { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; scrollbar-width: thin; }
-.tabs::-webkit-scrollbar { height: 6px; }
-.tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+/* single scrollable row — tabs never wrap, overflow scrolls horizontally with
+   no visible scrollbar */
+.tabs { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab, .tab-add { flex: 0 0 auto; }
 .tab-add {
   width: 36px; height: 36px; flex: 0 0 auto; padding: 0;
