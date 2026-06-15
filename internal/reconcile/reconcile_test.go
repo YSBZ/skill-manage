@@ -128,6 +128,41 @@ func TestDeselectRemovesLink(t *testing.T) {
 	}
 }
 
+// TestMultiTargetFollowSyncsAddAndDelete locks the multi-tab sync behavior:
+// when two directories (tabs) both follow the same repo, an upstream add lands
+// in both, and an upstream delete clears the link from every tab.
+func TestMultiTargetFollowSyncsAddAndDelete(t *testing.T) {
+	f := newFix(t)
+	t2 := filepath.Join(filepath.Dir(f.target), "skills2")
+	f.mkSkill(t, "alpha", "a1")
+	cfg := config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "alpha/*", Target: f.target, Mode: config.ModeFollow},
+		{Skill: "alpha/*", Target: t2, Mode: config.ModeFollow},
+	}}
+	linkIn := func(dir, skill string) bool {
+		_, err := os.Stat(filepath.Join(dir, skill, "SKILL.md"))
+		return err == nil
+	}
+	f.rec.Apply(cfg, f.man)
+	if !linkIn(f.target, "a1") || !linkIn(t2, "a1") {
+		t.Fatal("a1 should link into both target tabs")
+	}
+	// upstream adds a2 → both following tabs pick it up
+	f.mkSkill(t, "alpha", "a2")
+	f.rec.Apply(cfg, f.man)
+	if !linkIn(f.target, "a2") || !linkIn(t2, "a2") {
+		t.Errorf("new upstream a2 should appear in both tabs")
+	}
+	// upstream deletes a1 → cleared from every tab
+	if err := os.RemoveAll(filepath.Join(f.reposRoot, "alpha", "a1")); err != nil {
+		t.Fatal(err)
+	}
+	f.rec.Apply(cfg, f.man)
+	if linkIn(f.target, "a1") || linkIn(t2, "a1") {
+		t.Errorf("deleted upstream a1 must be cleared from every tab")
+	}
+}
+
 func TestUpstreamDeletePruned(t *testing.T) {
 	f := newFix(t)
 	f.mkSkill(t, "alpha", "a1")
