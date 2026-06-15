@@ -421,8 +421,6 @@ $("#add-target").onsubmit = async (e) => {
   $("#target-path").value = "";
   await addTarget(dir);
 };
-$("#add-cc").onclick = () => addTarget("~/.claude/skills/");
-$("#add-codex").onclick = () => addTarget("~/.codex/skills/");
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = () => { if (confirm("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#autostart").onchange = async (e) => {
