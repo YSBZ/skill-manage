@@ -93,6 +93,12 @@
         <div class="help-body">
           <p class="lead">一个「同步 skill」的工具，刻意减少定制。你只需要提供两样东西：<b>① git 远程仓（skill 来源）</b> 和 <b>② 要同步进去的目录</b>。其余都是工具的活：自动更新、选择性 / 整仓同步、把本地手写 skill 反向收编。</p>
 
+          <h4>git 仓与鉴权</h4>
+          <p>仓库 URL 支持 <code>https://…</code>、<code>ssh://…</code>，以及 scp 式 <code>git@host:org/repo.git</code>；不支持明文 <code>http://</code>、本地 <code>file://</code> 和 <code>ext::</code>。</p>
+          <p><b>公开仓</b>用 https 直接添加，无需任何配置。<b>私有仓的自动更新需要你先配好「免交互」鉴权</b>——守护进程在后台拉取，<b>不会弹窗让你输密码</b>，配不好就只在该仓上报错（不会卡住）：</p>
+          <p>· <b>SSH（私有仓推荐）</b>：配好该 git 主机的 SSH key 并加入 <code>ssh-agent</code>（带 passphrase 的 key 要先解锁，因为工具以 <code>BatchMode</code> 运行、不会提示输入），公钥登记到 git 服务器。</p>
+          <p>· <b>HTTPS</b>：需要系统凭据助手已缓存凭据（macOS 钥匙串 / Git Credential Manager），或使用个人访问令牌（PAT）。也可把 token 写进 URL（<code>https://&lt;token&gt;@host/…</code>），但会明文存进配置，不推荐。</p>
+
           <h4>同步目录（顶部 tab）</h4>
           <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>
 

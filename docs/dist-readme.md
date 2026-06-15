@@ -37,7 +37,9 @@ chmod +x skillmanage
 
 在浏览器 UI 里：
 
-1. **加 git skill 仓**：左上角填你的 git 仓 URL（https / ssh / git@…），可选分支。
+1. **加 git skill 仓**：左上角填你的 git 仓 URL，支持 `https://`、`ssh://`、`git@host:org/repo.git`，可选分支。
+   - 公开仓直接加，无需配置。
+   - **私有仓**的自动更新是后台非交互拉取（不会弹窗输密码），需你先配好免交互鉴权：**SSH** 把 key 加入 `ssh-agent`（推荐），或 **HTTPS** 用系统凭据助手/个人令牌（PAT）。没配好该仓会报错但不影响工具运行。
 2. **加同步目录**：顶部 `+` 选/粘贴要同步进去的目录。选项目根（含 `.claude` / `.codex`）会自动识别成 cc / codex 两个 tab。
 3. 在每个 tab 里**勾选要同步的 skill**，或对仓库点「全选并跟随」整仓同步。
 

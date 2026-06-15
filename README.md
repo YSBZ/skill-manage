@@ -26,6 +26,16 @@ make build          # 构建 host 二进制 ./skillmanage
 - **开机自启**：登录时自动拉起 daemon。
 - **导入 / 导出**：导出 / 导入仓库列表，便于换机重建（manifest 不随导出，避免误删别机链接）。
 
+## git 仓与鉴权
+
+仓库 URL 支持 `https://…`、`ssh://…`，以及 scp 式 `git@host:org/repo.git`；出于安全拒绝明文 `http://`、本地 `file://` 和 `ext::`（git 的任意命令传输）。
+
+机器上必须装有 **git 且在 PATH 中**（缺失时 UI 顶部会红条提示、无法同步）。自动更新（每天 `fetch + reset --hard`）在后台**非交互**运行——设了 `GIT_TERMINAL_PROMPT=0`、`ssh -o BatchMode=yes`、`GCM_INTERACTIVE=never`，**绝不弹窗或卡住**；因此私有仓必须预先配好免交互鉴权，否则只会在该仓上报错。
+
+- **公开仓**：用 `https` 直接添加，无需任何配置。
+- **私有仓 · SSH（推荐）**：配好该 git 主机的 SSH key 并加入 `ssh-agent`（带 passphrase 的 key 需先解锁，因为以 `BatchMode` 运行不会提示输入），公钥登记到 git 服务器。
+- **私有仓 · HTTPS**：需系统凭据助手已缓存凭据（macOS 钥匙串 / Git Credential Manager），或使用个人访问令牌（PAT）；也可把 token 写进 URL（`https://<token>@host/…`，会明文存进配置，不推荐）。
+
 ## 跨平台分发
 
 ```sh
