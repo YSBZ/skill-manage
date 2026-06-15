@@ -448,7 +448,7 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 		}
 		roots = scoped
 	}
-	list, err := adopt.ListAdoptable(roots, &snapshot, includePlugins)
+	list, err := adopt.ListAdoptable(roots, &snapshot, includePlugins, s.personalStore)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -482,13 +482,24 @@ func (s *Server) handleSetIgnorePlugins(w http.ResponseWriter, r *http.Request) 
 }
 
 type adoptReq struct {
-	ID   string `json:"id"`
-	Root string `json:"root"` // absolute source root from /api/adoptable
+	ID     string `json:"id"`
+	Root   string `json:"root"`   // absolute source root from /api/adoptable (relocate path)
+	Src    string `json:"src"`    // plugin skill source dir (import path)
+	Target string `json:"target"` // sync dir to map an imported plugin skill into
+	Plugin bool   `json:"plugin"` // true → import-copy from a plugin tree, don't relocate
 }
 
 func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	var req adoptReq
-	if err := readJSON(r, &req); err != nil || req.ID == "" || req.Root == "" {
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Plugin {
+		s.handleAdoptPlugin(w, req)
+		return
+	}
+	if req.ID == "" || req.Root == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -533,6 +544,67 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAdoptPlugin imports a plugin skill (copy into the personal store, NOT
+// relocate — the plugin cache is owned by the agent's plugin system) and maps
+// the resulting @local/<id> into the chosen sync dir. Gated on the
+// IncludePluginSkills opt-in; the source must live under a configured target's
+// plugin tree (so this can't import arbitrary client paths).
+func (s *Server) handleAdoptPlugin(w http.ResponseWriter, req adoptReq) {
+	if req.ID == "" || req.Src == "" || req.Target == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	src := harness.Expand(req.Src)
+	wantTarget := harness.Expand(req.Target)
+	s.mu.Lock()
+	if !s.cfg.IncludePluginSkills {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "plugin import is disabled"})
+		return
+	}
+	canonical, srcAllowed := "", false
+	for _, t := range s.targetsLocked() {
+		if harness.Expand(t.Dir) == wantTarget {
+			canonical = t.Dir // keep the user-facing form for the enabled entry
+		}
+		pr := harness.PluginRootFor(t.Dir)
+		if src == pr || strings.HasPrefix(src, pr+string(os.PathSeparator)) {
+			srcAllowed = true
+		}
+	}
+	if canonical == "" {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown target"})
+		return
+	}
+	if !srcAllowed {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "source is not under a known plugin tree"})
+		return
+	}
+	if err := adopt.Import(src, req.ID, s.personalStore); err != nil {
+		s.mu.Unlock()
+		code := "error"
+		var ae *adopt.Error
+		if errors.As(err, &ae) {
+			code = ae.Code
+		}
+		writeJSON(w, adoptStatus(code), map[string]string{"error_code": code, "error": err.Error()})
+		return
+	}
+	s.cfg.Enabled = ensureEnabled(s.cfg.Enabled, config.EnabledEntry{
+		Skill: reconcile.LocalNamespace + "/" + req.ID, Target: canonical, Mode: config.ModeSnapshot,
+	})
+	if err := s.persistConfigLocked(w); err != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	// Materialize the symlink into the tab now (ReconcileOnly re-locks).
+	s.ReconcileOnly()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

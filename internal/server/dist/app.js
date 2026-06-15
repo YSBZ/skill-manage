@@ -277,13 +277,14 @@ function renderAdoptable() {
     const name = ce("span", { className: "path", textContent: a.name });
     const tag = HARNESS_LABEL[a.harness];
     if (tag) name.append(ce("span", { className: "badge " + harnessClass(a.harness), textContent: tag, style: "margin-left:6px" }));
+    if (a.plugin) name.append(ce("span", { className: "badge st-plugin", textContent: "plugin", style: "margin-left:6px", title: "来自插件目录：收编=复制进受管存储并映射进当前目录，不改动插件原件" }));
     li.append(name);
     const btn = ce("button", { className: "small", textContent: "收编" });
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "收编中…";
       try {
-        await doAdopt(a.id, a.root);
-        banner("已收编 " + a.name + "（原位已软链）");
+        await doAdopt(a);
+        banner(a.plugin ? "已导入 " + a.name + " 并映射进当前目录" : "已收编 " + a.name + "（原位已软链）");
         await load();
       } catch (e) {
         btn.disabled = false; btn.textContent = "收编";
@@ -297,11 +298,16 @@ function renderAdoptable() {
 // doAdopt posts to /api/adopt and surfaces the error_code so the caller can map
 // it to a specific message (generic api() would drop the code). root addresses
 // which personal source dir the skill lives under (CC vs Codex).
-async function doAdopt(id, root) {
+async function doAdopt(a) {
+  // Plugin skills are import-copied into the store and mapped into the active
+  // tab (the plugin original is left untouched); real skills relocate in place.
+  const body = a.plugin
+    ? { id: a.id, src: a.dir, target: currentTarget(), plugin: true }
+    : { id: a.id, root: a.root };
   const r = await fetch("/api/adopt", {
     method: "POST",
     headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
-    body: JSON.stringify({ id, root }),
+    body: JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.error || r.statusText); e.code = data.error_code; throw e; }
@@ -499,7 +505,7 @@ $("#adopt-all").onclick = async () => {
   const btn = $("#adopt-all"); btn.disabled = true; btn.textContent = "收编中…";
   let ok = 0; const errs = [];
   for (const a of items) {
-    try { await doAdopt(a.id, a.root); ok++; }
+    try { await doAdopt(a); ok++; }
     catch (e) { errs.push(a.name + "：" + (ADOPT_ERR[e.code] || e.message)); }
   }
   btn.disabled = false; btn.textContent = "全选收编";

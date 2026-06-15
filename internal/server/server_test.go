@@ -335,6 +335,60 @@ func TestRemoveTargetTearsDownLinks(t *testing.T) {
 	}
 }
 
+func TestAdoptPluginImportsAndMaps(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	// Lay out a project: <proj>/.claude/skills (the tab) + a plugin skill under
+	// the sibling <proj>/.claude/plugins/... tree.
+	proj := t.TempDir()
+	tab := filepath.Join(proj, ".claude", "skills")
+	pskill := filepath.Join(proj, ".claude", "plugins", "cache", "p", "skills", "pdemo")
+	for _, d := range []string{tab, pskill} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(pskill, "SKILL.md"), []byte("---\nname: pdemo\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, body any) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("POST", path, s.token, body))
+		return w
+	}
+	if w := post("/api/targets", map[string]string{"dir": tab}); w.Code != http.StatusCreated {
+		t.Fatalf("add target: %d", w.Code)
+	}
+	// opt in to plugin skills
+	if w := post("/api/ignore-plugins", map[string]bool{"ignore": false}); w.Code != http.StatusOK {
+		t.Fatalf("opt-in: %d", w.Code)
+	}
+	// import the plugin skill into the tab
+	w := post("/api/adopt", map[string]any{"id": "pdemo", "src": pskill, "target": tab, "plugin": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("plugin adopt: %d body=%s", w.Code, w.Body.String())
+	}
+	// store gets a COPY; the plugin original stays a real dir (not relocated)
+	if _, err := os.Stat(filepath.Join(s.personalStore, "pdemo", "SKILL.md")); err != nil {
+		t.Errorf("store copy missing: %v", err)
+	}
+	if fi, _ := os.Lstat(pskill); fi == nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("plugin original must stay a real dir, not be relocated/symlinked")
+	}
+	// the skill is now symlinked into the tab (reconcile ran)
+	if fi, _ := os.Lstat(filepath.Join(tab, "pdemo")); fi == nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("plugin skill should be symlinked into the tab after import")
+	}
+	// guard: import is refused when not opted in
+	if w := post("/api/ignore-plugins", map[string]bool{"ignore": true}); w.Code != http.StatusOK {
+		t.Fatalf("opt-out: %d", w.Code)
+	}
+	if w := post("/api/adopt", map[string]any{"id": "pdemo2", "src": pskill, "target": tab, "plugin": true}); w.Code != http.StatusBadRequest {
+		t.Errorf("plugin import should be refused when disabled, got %d", w.Code)
+	}
+}
+
 func TestAdoptAddsEnabledMapping(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	s := newTestServer(t)

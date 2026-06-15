@@ -174,6 +174,16 @@ func SkillDirsFor(dir string) []string {
 	return out
 }
 
+// PluginRootFor returns the agent plugin tree associated with a skills dir: the
+// sibling "plugins" dir of the skills dir's parent (e.g. ~/.claude/skills →
+// ~/.claude/plugins, /work/.codex/skills → /work/.codex/plugins). Plugin skills
+// live nested under here, managed by the agent's plugin system rather than
+// hand-authored, so the adopt scan only walks this tree when the user opts in.
+func PluginRootFor(skillsDir string) string {
+	d := expand(skillsDir)
+	return filepath.Join(filepath.Dir(d), "plugins")
+}
+
 // Expand resolves a leading "~" and returns a cleaned absolute path. It is the
 // single canonical resolver for target Dirs (which keep the portable "~" form):
 // callers outside this package — adopt's scan/relocate paths, the server's

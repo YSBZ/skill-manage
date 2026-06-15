@@ -71,11 +71,11 @@ func TestListAdoptablePluginToggle(t *testing.T) {
 	roots := []harness.Target{{Harness: harness.HarnessClaudeCode, Dir: pluginSkills}}
 
 	// ignored by default (includePlugins=false)
-	if list, err := ListAdoptable(roots, e.man, false); err != nil || len(list) != 0 {
+	if list, err := ListAdoptable(roots, e.man, false, e.store); err != nil || len(list) != 0 {
 		t.Errorf("plugin skill should be ignored by default, got %+v (err %v)", list, err)
 	}
 	// shown when opted in
-	if list, err := ListAdoptable(roots, e.man, true); err != nil || len(list) != 1 || list[0].ID != "pskill" {
+	if list, err := ListAdoptable(roots, e.man, true, e.store); err != nil || len(list) != 1 || list[0].ID != "pskill" {
 		t.Errorf("plugin skill should appear when included, got %+v (err %v)", list, err)
 	}
 }
@@ -90,7 +90,7 @@ func TestListAdoptableExcludesSymlinksAndOwned(t *testing.T) {
 	}
 	e.man.Links = append(e.man.Links, config.LinkRecord{Name: "owned", Target: e.cc, Source: filepath.Join(e.store, "owned"), LinkType: config.LinkCopy})
 
-	list, err := ListAdoptable(ccRoot(e.cc), e.man, false)
+	list, err := ListAdoptable(ccRoot(e.cc), e.man, false, e.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestListAdoptableSpansMultipleRoots(t *testing.T) {
 	list, err := ListAdoptable([]harness.Target{
 		{Harness: harness.HarnessClaudeCode, Dir: e.cc},
 		{Harness: harness.HarnessCodex, Dir: codex},
-	}, e.man, false)
+	}, e.man, false, e.store)
 	if err != nil {
 		t.Fatal(err)
 	}

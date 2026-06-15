@@ -44,6 +44,7 @@ type Adoptable struct {
 	Dir     string `json:"dir"`               // absolute source directory
 	Root    string `json:"root"`              // absolute source root the skill lives under; addresses Adopt across roots
 	Harness string `json:"harness,omitempty"` // owning agent, for UI labeling
+	Plugin  bool   `json:"plugin,omitempty"`  // true when sourced from a plugin tree (import-copy, not relocate)
 }
 
 // ListAdoptable returns the real (non-symlink) skills under each personal target
@@ -55,7 +56,11 @@ type Adoptable struct {
 // naturally excluded and a broad dir doesn't surface nested plugin skills; the
 // manifest check additionally excludes copy-fallback entries we own, and guarded
 // dirs (Codex .system / vendor_imports/skills) are never listed.
-func ListAdoptable(roots []harness.Target, manifest *config.Manifest, includePlugins bool) ([]Adoptable, error) {
+func ListAdoptable(roots []harness.Target, manifest *config.Manifest, includePlugins bool, personalStore string) ([]Adoptable, error) {
+	storeAbs := ""
+	if strings.TrimSpace(personalStore) != "" {
+		storeAbs = harness.Expand(personalStore)
+	}
 	var out []Adoptable
 	seenRoot := map[string]bool{}
 	for _, t := range roots {
@@ -89,8 +94,82 @@ func ListAdoptable(roots []harness.Target, manifest *config.Manifest, includePlu
 			}
 			out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir, Root: abs, Harness: string(t.Harness)})
 		}
+
+		// When opted in, also surface skills from this target's agent plugin tree
+		// (deep walk, since plugin skills are nested). They are import-copied, not
+		// relocated, so the plugin cache is left untouched.
+		if includePlugins {
+			pluginRoot := harness.PluginRootFor(t.Dir)
+			if _, statErr := os.Stat(pluginRoot); statErr == nil {
+				pskills, perr := scanner.Scan(pluginRoot)
+				if perr != nil {
+					return nil, perr
+				}
+				for _, sk := range pskills {
+					if harness.Guarded(sk.Dir) {
+						continue
+					}
+					// Skip ones already imported into the store (an @local copy
+					// exists) so a 收编'd plugin skill doesn't linger as adoptable.
+					if storeAbs != "" {
+						if _, err := os.Stat(filepath.Join(storeAbs, sk.LinkName)); err == nil {
+							continue
+						}
+					}
+					out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir, Root: pluginRoot, Harness: string(t.Harness), Plugin: true})
+				}
+			}
+		}
 	}
 	return out, nil
+}
+
+// Import copies a skill directory into personalStore under id WITHOUT removing
+// the original — used for plugin skills, whose source is owned by the agent's
+// plugin system and must stay put. It reuses the same copy→verify→atomic-rename
+// safety as Adopt and is idempotent: an identical store entry is a no-op, a
+// different skill of the same name is refused (name_taken). The caller maps the
+// resulting @local/<id> into a real sync target via an enabled entry.
+func Import(srcDir, id, personalStore string) error {
+	if !validID(id) {
+		return codeErr("invalid", "illegal skill id %q", id)
+	}
+	src := harness.Expand(srcDir)
+	if harness.Guarded(src) {
+		return codeErr("guarded", "refusing to import from a guarded directory: %s", src)
+	}
+	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+		return codeErr("invalid", "source has no SKILL.md: %s", src)
+	}
+	storeAbs := harness.Expand(personalStore)
+	dst := filepath.Join(storeAbs, id)
+	tmp := filepath.Join(storeAbs, ".tmp-"+id)
+	if err := os.MkdirAll(storeAbs, 0o755); err != nil {
+		return codeErr("copy_failed", "create personal store: %w", err)
+	}
+	switch _, statErr := os.Stat(dst); {
+	case errors.Is(statErr, os.ErrNotExist):
+		_ = os.RemoveAll(tmp)
+		if err := linker.CopyTree(src, tmp); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("copy_failed", "copy into store: %w", err)
+		}
+		if err := verifyTreeMatch(src, tmp); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("verify_failed", "incomplete copy: %w", err)
+		}
+		if err := os.Rename(tmp, dst); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("copy_failed", "finalize store copy: %w", err)
+		}
+	case statErr != nil:
+		return codeErr("copy_failed", "stat store destination: %w", statErr)
+	default:
+		if err := verifyTreeMatch(src, dst); err != nil {
+			return codeErr("name_taken", "a different skill named %q already exists in the personal store; rename one before importing: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // underPlugins reports whether p has a path component named "plugins" — the
