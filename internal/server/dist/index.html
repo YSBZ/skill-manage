@@ -40,17 +40,6 @@
         <ul id="repo-list"></ul>
 
         <div class="pane-head">
-          <h2>同步目录</h2>
-          <span class="muted" style="font-size:11px">cc / codex 自动识别</span>
-        </div>
-        <select id="target" class="target" title="当前操作目标（勾选 skill 时同步到此目录）"></select>
-        <form id="add-target">
-          <input id="target-path" placeholder="同步目录路径（如 ~/.claude/skills/）" required />
-          <button type="submit">添加</button>
-        </form>
-        <ul id="target-list"></ul>
-
-        <div class="pane-head">
           <h2>未备份 skill</h2>
           <button id="adopt-all" class="ghost small hidden" title="把列出的真身 skill 全部移入受管存储并原位软链">全选收编</button>
         </div>
@@ -58,6 +47,13 @@
       </aside>
 
       <main>
+        <div class="targets-bar">
+          <form id="add-target">
+            <input id="target-path" placeholder="添加同步目录（如 ~/.claude/skills/）" required />
+            <button type="submit">添加目录</button>
+          </form>
+          <div id="target-tabs" class="tabs"></div>
+        </div>
         <div class="main-head">
           <input id="search" type="search" placeholder="搜索 skill（名称 / 描述）…" />
         </div>

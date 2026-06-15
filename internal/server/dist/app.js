@@ -51,6 +51,7 @@ const state = {
   adoptError: false,
   skillsByRepo: {},
   expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
+  activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
 };
 
@@ -79,7 +80,13 @@ function banner(msg, isErr) {
 }
 
 const targetDirs = () => state.targets.map((t) => t.dir);
-const currentTarget = () => { const s = $("#target"); return s && s.value ? s.value : "~/.claude/skills/"; };
+// currentTarget = the active tab's directory (each tab is one sync dir and keeps
+// its own skill→dir mapping). Falls back to the first directory.
+const currentTarget = () => {
+  const dirs = targetDirs();
+  if (state.activeTarget && dirs.includes(state.activeTarget)) return state.activeTarget;
+  return dirs[0] || "~/.claude/skills/";
+};
 
 const enabledFollow = (repo) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === currentTarget());
@@ -126,7 +133,7 @@ async function load() {
     catch { return [name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
-  renderStats(); renderRepos(); renderTarget(); renderTargetList(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
+  renderStats(); renderRepos(); renderTabs(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
   banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
 }
 
@@ -170,35 +177,31 @@ function renderRepos() {
   });
 }
 
-function renderTarget() {
-  const sel = $("#target"); const prev = sel.value; sel.innerHTML = "";
-  state.targets.forEach((t) => sel.append(ce("option", { value: t.dir, textContent: t.label + " — " + t.dir })));
-  if (prev && targetDirs().includes(prev)) sel.value = prev;
-  sel.onchange = () => { renderSkills(); };
-}
-
-// renderTargetList manages the sync-directory list (add/remove). Each entry is
-// prefixed with its inferred agent (cc/codex), since cc and codex share one
-// skill format and the directory alone decides which agent loads it.
-function renderTargetList() {
-  const ul = $("#target-list"); ul.innerHTML = "";
+// renderTabs draws one tab per sync directory. The active tab is the current
+// target: the skill list below reflects (and edits) that directory's own
+// skill→dir mapping. Each tab carries a cc/codex badge and a remove ×.
+function renderTabs() {
+  const bar = $("#target-tabs"); bar.innerHTML = "";
   if (state.targets.length === 0) {
-    ul.append(ce("li", { className: "muted", textContent: "无同步目录，添加一个开始同步" }));
+    bar.append(ce("div", { className: "muted", textContent: "还没有同步目录，先在上方添加一个" }));
     return;
   }
+  const active = currentTarget();
   state.targets.forEach((t) => {
-    const li = ce("li");
-    const label = ce("span", { className: "path" });
-    label.append(ce("span", { className: "badge " + (t.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: t.harness, style: "margin-right:6px" }));
-    label.append(document.createTextNode(t.dir));
-    li.append(label);
-    const rm = ce("button", { className: "danger small", textContent: "移除" });
-    rm.onclick = async () => {
+    const tab = ce("div", { className: "tab" + (t.dir === active ? " active" : "") });
+    tab.append(ce("span", { className: "badge " + (t.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: t.harness }));
+    tab.append(ce("span", { className: "tab-dir", textContent: t.dir }));
+    const rm = ce("button", { className: "tab-x", textContent: "×", title: "移除此同步目录" });
+    rm.onclick = async (e) => {
+      e.stopPropagation();
       if (!confirm("移除同步目录 " + t.dir + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
+      if (state.activeTarget === t.dir) state.activeTarget = undefined;
       await api("DELETE", "/api/targets", { dir: t.dir });
       await apply();
     };
-    li.append(rm); ul.append(li);
+    tab.append(rm);
+    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); };
+    bar.append(tab);
   });
 }
 
@@ -396,7 +399,7 @@ $("#add-repo").onsubmit = async (e) => {
   } catch (err) { banner("添加失败：" + err.message, true); }
 };
 async function addTarget(dir) {
-  try { await api("POST", "/api/targets", { dir }); await load(); }
+  try { await api("POST", "/api/targets", { dir }); state.activeTarget = dir; await load(); }
   catch (err) { banner("添加同步目录失败：" + err.message, true); }
 }
 $("#add-target").onsubmit = async (e) => {
