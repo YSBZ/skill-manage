@@ -429,11 +429,25 @@ func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 // personal/project split: the source roots are exactly the user's targets.
 
 func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
 	s.mu.Lock()
 	snapshot := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
 	roots := s.targetsLocked()
 	includePlugins := s.cfg.IncludePluginSkills
 	s.mu.Unlock()
+	// Scope to one tab (sync dir) when ?target= is given, so the "未备份 skill"
+	// list matches the active tab instead of merging every directory together.
+	if target != "" {
+		want := harness.Expand(target)
+		scoped := roots[:0:0]
+		for _, t := range roots {
+			if harness.Expand(t.Dir) == want {
+				scoped = append(scoped, t)
+				break
+			}
+		}
+		roots = scoped
+	}
 	list, err := adopt.ListAdoptable(roots, &snapshot, includePlugins)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

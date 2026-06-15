@@ -108,13 +108,25 @@ function skillBadges(linkName) {
   return out;
 }
 
+// Fetch the adoptable ("未备份 skill") list scoped to the active tab, so it
+// always matches the currently selected sync directory.
+async function fetchAdoptable() {
+  const t = currentTarget();
+  const q = t ? "?target=" + encodeURIComponent(t) : "";
+  try {
+    const a = (await api("GET", "/api/adoptable" + q)) || {};
+    state.adoptable = a.skills || [];
+    state.ignorePlugins = a.includePlugins === false;
+    state.adoptError = false;
+  } catch { state.adoptable = []; state.adoptError = true; }
+}
+
 async function load() {
   try { state.status = await api("GET", "/api/status"); }
   catch (e) { banner("加载失败：" + e.message, true); return; }
   try { state.targets = (await api("GET", "/api/targets")) || []; }
   catch { state.targets = []; }
-  try { const a = (await api("GET", "/api/adoptable")) || {}; state.adoptable = a.skills || []; state.ignorePlugins = a.includePlugins === false; state.adoptError = false; }
-  catch { state.adoptable = []; state.adoptError = true; }
+  await fetchAdoptable();
   const repos = state.status.repos || [];
   // Fetch tracked-repo skills plus the @local store (adopted skills).
   const names = repos.map((r) => r.name).concat(LOCAL_NS);
@@ -192,7 +204,7 @@ function renderTabs() {
       await load();
     };
     tab.append(rm);
-    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); };
+    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); fetchAdoptable().then(renderAdoptable); };
     bar.append(tab);
   });
   // The "+" lives outside the scroll container (#tab-add in the markup) so it
