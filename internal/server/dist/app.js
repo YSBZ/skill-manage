@@ -50,7 +50,7 @@ const state = {
   adoptable: [],
   adoptError: false,
   skillsByRepo: {},
-  expanded: null, // accordion: only one source group open at a time
+  expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
   search: "",
 };
 
@@ -259,8 +259,9 @@ function renderSkills() {
   if ((state.skillsByRepo[LOCAL_NS] || []).length) sources.push(LOCAL_NS);
   if (sources.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
 
-  // accordion: keep exactly one group open; default to the first source.
-  if (!sources.includes(state.expanded)) state.expanded = sources[0] || null;
+  // accordion: default to the first source only on first render (undefined).
+  // A user collapse sets null and must be respected (not re-expanded).
+  if (state.expanded === undefined) state.expanded = sources[0] || null;
 
   let anyShown = false;
   sources.forEach((name) => {
