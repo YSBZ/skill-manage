@@ -249,7 +249,30 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 		desired = append(desired, linker.DesiredLink{LinkName: matched.LinkName, Target: target, Source: matched.Dir})
 		noteNested(*matched, target)
 	}
+
+	// Precedence: a git-repo skill wins over an @local (personal/adopted) skill
+	// of the same name on the same target. Drop the @local link so reconcile
+	// links the git version, not a collision-skip of both.
+	repoKeys := map[linkKey]bool{}
+	for _, d := range desired {
+		if !underDir(d.Source, r.personalStore) {
+			repoKeys[linkKey{d.Target, d.LinkName}] = true
+		}
+	}
+	kept := desired[:0]
+	for _, d := range desired {
+		if underDir(d.Source, r.personalStore) && repoKeys[linkKey{d.Target, d.LinkName}] {
+			continue // @local shadowed by a same-named git skill → git wins
+		}
+		kept = append(kept, d)
+	}
+	desired = kept
 	return desired, nested, errs
+}
+
+// underDir reports whether path is root or a descendant of it.
+func underDir(path, root string) bool {
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // splitSkill splits "repo/sel" into ("repo", "sel"). sel may be "*".

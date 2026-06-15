@@ -3,16 +3,18 @@ package reconcile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"skillmanage/internal/config"
 )
 
 type fix struct {
-	reposRoot string
-	target    string
-	rec       *Reconciler
-	man       *config.Manifest
+	reposRoot     string
+	personalStore string
+	target        string
+	rec           *Reconciler
+	man           *config.Manifest
 }
 
 func newFix(t *testing.T) fix {
@@ -24,7 +26,19 @@ func newFix(t *testing.T) fix {
 		t.Fatal(err)
 	}
 	personalStore := filepath.Join(root, "local")
-	return fix{reposRoot: reposRoot, target: target, rec: New(reposRoot, personalStore), man: &config.Manifest{}}
+	return fix{reposRoot: reposRoot, personalStore: personalStore, target: target, rec: New(reposRoot, personalStore), man: &config.Manifest{}}
+}
+
+// mkLocalSkill creates a skill in the @local personal store.
+func (f fix) mkLocalSkill(t *testing.T, skill string) {
+	t.Helper()
+	dir := filepath.Join(f.personalStore, skill)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+skill+"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f fix) mkSkill(t *testing.T, repo, skill string) {
@@ -41,6 +55,29 @@ func (f fix) mkSkill(t *testing.T, repo, skill string) {
 func (f fix) linkExists(skill string) bool {
 	_, err := os.Stat(filepath.Join(f.target, skill, "SKILL.md"))
 	return err == nil
+}
+
+func TestRepoWinsOverLocalSameName(t *testing.T) {
+	f := newFix(t)
+	f.mkSkill(t, "alpha", "foo") // git repo alpha has foo
+	f.mkLocalSkill(t, "foo")     // @local also has a foo
+	cfg := config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "alpha/foo", Target: f.target, Mode: config.ModeSnapshot},
+		{Skill: "@local/foo", Target: f.target, Mode: config.ModeSnapshot},
+	}}
+	sum := f.rec.Apply(cfg, f.man)
+	if len(f.man.Links) != 1 {
+		t.Fatalf("expected exactly 1 link (git wins over @local), got %d: %+v", len(f.man.Links), f.man.Links)
+	}
+	tgt, _ := os.Readlink(filepath.Join(f.target, "foo"))
+	if !strings.Contains(tgt, filepath.Join("repos", "alpha", "foo")) {
+		t.Errorf("link should point at the git repo source, got %q", tgt)
+	}
+	for _, c := range sum.Conflicts {
+		if c.Kind == "collision" {
+			t.Errorf("same-name git/@local should resolve by precedence, not raise a collision: %+v", c)
+		}
+	}
 }
 
 func TestApplyFollowAndSnapshot(t *testing.T) {
