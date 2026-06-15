@@ -447,6 +447,11 @@ $("#add-target").onsubmit = async (e) => {
 $("#target-path").onkeydown = (e) => {
   if (e.key === "Enter") { e.preventDefault(); browseTo($("#target-path").value.trim()); }
 };
+// Pasting a path should refresh the list too — defer one tick so the input
+// value reflects the pasted text before we navigate.
+$("#target-path").onpaste = () => {
+  setTimeout(() => browseTo($("#target-path").value.trim()), 0);
+};
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
