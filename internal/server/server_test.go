@@ -229,6 +229,25 @@ func TestAddEnabledRejectsGuardedTarget(t *testing.T) {
 	}
 }
 
+func TestAdoptRejectsUnknownRoot(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	// an arbitrary root that is not one of the personal targets → 400, never an
+	// attempt to relocate from a client-chosen path.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/adopt", s.token, map[string]string{"id": "foo", "root": t.TempDir()}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown adopt root should be 400, got %d", w.Code)
+	}
+	// missing root → 400 as well
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/adopt", s.token, map[string]string{"id": "foo"}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing adopt root should be 400, got %d", w.Code)
+	}
+}
+
 func TestDisableEnabledInPlace(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()

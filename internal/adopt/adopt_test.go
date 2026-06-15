@@ -6,8 +6,13 @@ import (
 	"testing"
 
 	"skillmanage/internal/config"
+	"skillmanage/internal/harness"
 	"skillmanage/internal/linker"
 )
+
+func ccRoot(dir string) []harness.Target {
+	return []harness.Target{{Harness: harness.HarnessClaudeCode, Dir: dir}}
+}
 
 type env struct {
 	root  string
@@ -63,12 +68,76 @@ func TestListAdoptableExcludesSymlinksAndOwned(t *testing.T) {
 	}
 	e.man.Links = append(e.man.Links, config.LinkRecord{Name: "owned", Target: e.cc, Source: filepath.Join(e.store, "owned"), LinkType: config.LinkCopy})
 
-	list, err := ListAdoptable(e.cc, e.man)
+	list, err := ListAdoptable(ccRoot(e.cc), e.man)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list) != 1 || list[0].ID != "alpha" {
 		t.Fatalf("expected only 'alpha' adoptable, got %+v", list)
+	}
+}
+
+// mkRealSkillIn creates a real skill dir (SKILL.md + extra file) under an
+// arbitrary root, so multi-root scenarios can be exercised without ~/.codex.
+func mkRealSkillIn(t *testing.T, root, name, body string) {
+	t.Helper()
+	d := filepath.Join(root, name)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte("---\nname: "+name+"\n---\n"+body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListAdoptableSpansMultipleRoots(t *testing.T) {
+	e := newEnv(t)
+	e.mkRealSkill(t, "alpha") // under CC
+	codex := filepath.Join(e.root, "codex", "skills")
+	mkRealSkillIn(t, codex, "beta", "")
+
+	list, err := ListAdoptable([]harness.Target{
+		{Harness: harness.HarnessClaudeCode, Dir: e.cc},
+		{Harness: harness.HarnessCodex, Dir: codex},
+	}, e.man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{} // id → harness
+	for _, a := range list {
+		got[a.ID] = a.Harness
+		if a.Root == "" {
+			t.Errorf("adoptable %q missing Root", a.ID)
+		}
+	}
+	if got["alpha"] != "claude-code" || got["beta"] != "codex" {
+		t.Fatalf("expected alpha→cc and beta→codex, got %+v", list)
+	}
+}
+
+// TestAdoptCrossRootNameCollisionRefuses guards the flat-store hazard: CC/foo and
+// Codex/foo both map to store/foo. The second adopt must refuse rather than link
+// Codex's foo to CC's already-stored content (data loss).
+func TestAdoptCrossRootNameCollisionRefuses(t *testing.T) {
+	e := newEnv(t)
+	mkRealSkillIn(t, e.cc, "foo", "claude body")
+	if err := Adopt("foo", e.cc, e.store, e.mgr, e.man); err != nil {
+		t.Fatalf("first adopt: %v", err)
+	}
+	codex := filepath.Join(e.root, "codex", "skills")
+	mkRealSkillIn(t, codex, "foo", "codex body DIFFERENT length") // differs in size
+
+	err := Adopt("foo", codex, e.store, e.mgr, e.man)
+	var ae *Error
+	if !asErr(err, &ae) || ae.Code != "name_taken" {
+		t.Fatalf("cross-root same-name should be name_taken, got %v", err)
+	}
+	// Codex original must be left untouched (still a real dir, not a symlink).
+	if isSymlink(t, filepath.Join(codex, "foo")) {
+		t.Errorf("refused adopt must not have replaced the Codex original")
+	}
+	if _, err := os.Stat(filepath.Join(codex, "foo", "SKILL.md")); err != nil {
+		t.Errorf("Codex original content must survive a refused adopt: %v", err)
 	}
 }
 

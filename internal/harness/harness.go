@@ -96,6 +96,13 @@ func IsCodexTarget(dir string) bool {
 		strings.HasSuffix(r, filepath.FromSlash("/.agents/skills"))
 }
 
+// Expand resolves a leading "~" and returns a cleaned absolute path. It is the
+// single canonical resolver for target Dirs (which keep the portable "~" form):
+// callers outside this package — adopt's scan/relocate paths, the server's
+// adopt-root validation — must resolve a Target.Dir through this, never through
+// filepath.Abs (which does not expand "~").
+func Expand(p string) string { return expand(p) }
+
 // --- internal helpers ---
 
 // ccPersonalDir keeps the tilde form Phase 1 already stored so existing enabled

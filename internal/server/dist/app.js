@@ -63,7 +63,10 @@ const ADOPT_ERR = {
   invalid: "非法 skill 名",
   guarded: "受保护目录，不可收编",
   not_found: "skill 不存在",
+  name_taken: "受管存储已有同名 skill（另一 agent 收编过），请先改名",
 };
+
+const HARNESS_LABEL = { "claude-code": "CC", codex: "Codex" };
 
 function banner(msg, isErr) {
   const b = $("#banner");
@@ -208,17 +211,20 @@ function renderAdoptable() {
     return;
   }
   if (state.adoptable.length === 0) {
-    ul.append(ce("li", { className: "muted", textContent: "~/.claude/skills/ 下无本地真身 skill（已全部收编或均为软链）" }));
+    ul.append(ce("li", { className: "muted", textContent: "个人目录（CC / Codex）下无本地真身 skill（已全部收编或均为软链）" }));
     return;
   }
   state.adoptable.forEach((a) => {
     const li = ce("li");
-    li.append(ce("span", { className: "path", textContent: a.name }));
+    const name = ce("span", { className: "path", textContent: a.name });
+    const tag = HARNESS_LABEL[a.harness];
+    if (tag) name.append(ce("span", { className: "badge", textContent: tag, style: "margin-left:6px" }));
+    li.append(name);
     const btn = ce("button", { className: "small", textContent: "收编" });
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = "收编中…";
       try {
-        await doAdopt(a.id);
+        await doAdopt(a.id, a.root);
         banner("已收编 " + a.name + "（原位已软链）");
         await load();
       } catch (e) {
@@ -231,12 +237,13 @@ function renderAdoptable() {
 }
 
 // doAdopt posts to /api/adopt and surfaces the error_code so the caller can map
-// it to a specific message (generic api() would drop the code).
-async function doAdopt(id) {
+// it to a specific message (generic api() would drop the code). root addresses
+// which personal source dir the skill lives under (CC vs Codex).
+async function doAdopt(id, root) {
   const r = await fetch("/api/adopt", {
     method: "POST",
     headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, root }),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.error || r.statusText); e.code = data.error_code; throw e; }

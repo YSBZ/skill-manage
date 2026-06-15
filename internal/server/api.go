@@ -340,20 +340,16 @@ func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 
 // --- adopt (U5) ---
 
-// ccSkillsDir resolves the Claude Code personal skills directory absolutely.
-func ccSkillsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "~/.claude/skills"
-	}
-	return filepath.Join(home, ".claude", "skills")
-}
+// adoptRoots is the set of source roots adoption may scan and relocate from:
+// every personal target (CC + Codex), since each is a bidirectional dir where
+// the user can hand-author skills (KTD1). Project-level roots are out of scope.
+func adoptRoots() []harness.Target { return harness.PersonalTargets() }
 
 func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	snapshot := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
 	s.mu.Unlock()
-	list, err := adopt.ListAdoptable(ccSkillsDir(), &snapshot)
+	list, err := adopt.ListAdoptable(adoptRoots(), &snapshot)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -365,19 +361,35 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 }
 
 type adoptReq struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Root string `json:"root"` // absolute source root from /api/adoptable
 }
 
 func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	var req adoptReq
-	if err := readJSON(r, &req); err != nil || req.ID == "" {
+	if err := readJSON(r, &req); err != nil || req.ID == "" || req.Root == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// The root must be one of the known personal target dirs — never an
+	// arbitrary client-supplied path. This bounds adoption to the directories
+	// /api/adoptable is allowed to expose.
+	wantRoot := harness.Expand(req.Root)
+	allowed := false
+	for _, t := range adoptRoots() {
+		if harness.Expand(t.Dir) == wantRoot {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown adopt root"})
 		return
 	}
 	mgr := linker.NewManager(s.reposRoot, s.personalStore)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := adopt.Adopt(req.ID, ccSkillsDir(), s.personalStore, mgr, &s.manifest); err != nil {
+	if err := adopt.Adopt(req.ID, wantRoot, s.personalStore, mgr, &s.manifest); err != nil {
 		code := "error"
 		var ae *adopt.Error
 		if errors.As(err, &ae) {
@@ -397,6 +409,8 @@ func adoptStatus(code string) int {
 	switch code {
 	case "invalid", "guarded", "not_found":
 		return http.StatusBadRequest
+	case "name_taken":
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}

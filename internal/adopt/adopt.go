@@ -39,73 +39,88 @@ func codeErr(code, format string, a ...any) *Error {
 
 // Adoptable is one local skill eligible for adoption.
 type Adoptable struct {
-	ID   string `json:"id"`   // sanitized link name; the stable handle the API takes
-	Name string `json:"name"` // logical (source dir) name
-	Dir  string `json:"dir"`  // absolute source directory
+	ID      string `json:"id"`                // sanitized link name; the stable handle the API takes
+	Name    string `json:"name"`              // logical (source dir) name
+	Dir     string `json:"dir"`               // absolute source directory
+	Root    string `json:"root"`              // absolute source root the skill lives under; addresses Adopt across roots
+	Harness string `json:"harness,omitempty"` // owning agent, for UI labeling
 }
 
-// ListAdoptable returns the real (non-symlink) skills under ccSkillsDir that the
-// daemon does not already own. scanner.Scan skips symlinks (WalkDir lstat's), so
-// links we created are naturally excluded; the manifest check additionally
-// excludes copy-fallback entries we own, and guarded dirs are never listed.
-func ListAdoptable(ccSkillsDir string, manifest *config.Manifest) ([]Adoptable, error) {
-	abs := mustAbs(ccSkillsDir)
-	if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
-		return nil, nil // no CC skills dir yet → nothing to adopt
-	}
-	skills, err := scanner.Scan(abs)
-	if err != nil {
-		return nil, err
-	}
-	owned := map[string]bool{}
-	for _, l := range manifest.Links {
-		if mustAbs(l.Target) == abs {
-			owned[l.Name] = true
-		}
-	}
+// ListAdoptable returns the real (non-symlink) skills under each personal target
+// root that the daemon does not already own. Every personal target is a
+// "bidirectional" directory (KTD1): the same dir is where the agent loads skills
+// from, where we drop our symlinks, and where the user hand-authors skills — so
+// the adopt scan root IS the link target, derived from harness.PersonalTargets()
+// rather than a separately hardcoded path. scanner.Scan skips symlinks (WalkDir
+// lstat's) so links we created are naturally excluded; the manifest check
+// additionally excludes copy-fallback entries we own, and guarded dirs (Codex
+// .system / vendor_imports/skills) are never listed.
+func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptable, error) {
 	var out []Adoptable
-	for _, sk := range skills {
-		if owned[sk.LinkName] || harness.Guarded(sk.Dir) {
-			continue
+	seenRoot := map[string]bool{}
+	for _, t := range roots {
+		abs := harness.Expand(t.Dir)
+		if seenRoot[abs] {
+			continue // CC and Codex differ, but guard against duplicate targets
 		}
-		out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir})
+		seenRoot[abs] = true
+		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
+			continue // this agent has no skills dir yet → nothing to adopt here
+		}
+		skills, err := scanner.Scan(abs)
+		if err != nil {
+			return nil, err
+		}
+		owned := map[string]bool{}
+		for _, l := range manifest.Links {
+			if harness.Expand(l.Target) == abs {
+				owned[l.Name] = true
+			}
+		}
+		for _, sk := range skills {
+			if owned[sk.LinkName] || harness.Guarded(sk.Dir) {
+				continue
+			}
+			out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir, Root: abs, Harness: string(t.Harness)})
+		}
 	}
 	return out, nil
 }
 
 // Adopt relocates the skill identified by id (a ListAdoptable ID, never a raw
-// caller path) from ccSkillsDir into personalStore and links it back in place.
-// mgr must be constructed with the same personalStore so the in-place link is
-// recognized as owned. It is idempotent: an already-adopted skill is a no-op.
-func Adopt(id, ccSkillsDir, personalStore string, mgr *linker.Manager, manifest *config.Manifest) error {
+// caller path) from sourceRoot — one of the personal target dirs, e.g. CC's or
+// Codex's — into personalStore and links it back in place. mgr must be
+// constructed with the same personalStore so the in-place link is recognized as
+// owned. It is idempotent: an already-adopted skill is a no-op.
+func Adopt(id, sourceRoot, personalStore string, mgr *linker.Manager, manifest *config.Manifest) error {
 	if !validID(id) {
 		return codeErr("invalid", "illegal skill id %q", id)
 	}
-	ccAbs := mustAbs(ccSkillsDir)
-	storeAbs := mustAbs(personalStore)
-	src := filepath.Join(ccAbs, id)
+	rootAbs := harness.Expand(sourceRoot)
+	storeAbs := harness.Expand(personalStore)
+	src := filepath.Join(rootAbs, id)
 	dst := filepath.Join(storeAbs, id)
 	tmp := filepath.Join(storeAbs, ".tmp-"+id)
 
-	// Containment + guard (KTD7): src must be a direct child of the CC skills
-	// dir and never a Codex-guarded path, regardless of how id was obtained.
-	if filepath.Dir(src) != ccAbs {
+	// Containment + guard (KTD7): src must be a direct child of the source root
+	// and never a Codex-guarded path, regardless of how id was obtained.
+	if filepath.Dir(src) != rootAbs {
 		return codeErr("invalid", "source escapes the skills dir: %s", src)
 	}
-	if harness.Guarded(src) || harness.Guarded(ccAbs) {
+	if harness.Guarded(src) || harness.Guarded(rootAbs) {
 		return codeErr("guarded", "refusing to adopt from a guarded directory: %s", src)
 	}
 
 	lst, err := os.Lstat(src)
 	if errors.Is(err, os.ErrNotExist) {
-		return codeErr("not_found", "no skill %q under %s", id, ccAbs)
+		return codeErr("not_found", "no skill %q under %s", id, rootAbs)
 	}
 	if err != nil {
 		return codeErr("not_found", "stat source: %w", err)
 	}
 	// Idempotent re-entry: source is already a symlink. If it's ours, done.
 	if lst.Mode()&os.ModeSymlink != 0 {
-		if isOwnedLink(manifest, ccAbs, id) {
+		if isOwnedLink(manifest, rootAbs, id) {
 			return nil
 		}
 		return codeErr("invalid", "source is a symlink we do not own: %s", src)
@@ -121,10 +136,16 @@ func Adopt(id, ccSkillsDir, personalStore string, mgr *linker.Manager, manifest 
 		return codeErr("copy_failed", "create personal store: %w", err)
 	}
 
-	// If a complete copy already exists from a prior interrupted run (rename is
-	// atomic, so dst existing ⇒ a complete verified copy), skip straight to the
-	// in-place relink. Otherwise copy → verify → atomic rename.
-	if _, err := os.Stat(dst); errors.Is(err, os.ErrNotExist) {
+	// Decide what an existing dst means. The personal store is flat, so two
+	// roots can carry the same name (e.g. CC/foo and Codex/foo both → store/foo).
+	// verifyTreeMatch discriminates the two cases an existing dst can be:
+	//   - legit re-entry after a crash post-rename (rename is atomic ⇒ dst is a
+	//     complete copy of THIS src) → contents match → resume the relink;
+	//   - a DIFFERENT skill of the same name already adopted from another root →
+	//     contents differ → refuse rather than silently clobber/lose data.
+	// When dst is absent, do the normal copy → verify → atomic rename.
+	switch _, statErr := os.Stat(dst); {
+	case errors.Is(statErr, os.ErrNotExist):
 		_ = os.RemoveAll(tmp) // clear any leftover temp from a prior crash
 		if err := linker.CopyTree(src, tmp); err != nil {
 			_ = os.RemoveAll(tmp)
@@ -138,6 +159,12 @@ func Adopt(id, ccSkillsDir, personalStore string, mgr *linker.Manager, manifest 
 			_ = os.RemoveAll(tmp)
 			return codeErr("copy_failed", "finalize store copy: %w", err)
 		}
+	case statErr != nil:
+		return codeErr("copy_failed", "stat store destination: %w", statErr)
+	default:
+		if err := verifyTreeMatch(src, dst); err != nil {
+			return codeErr("name_taken", "a different skill named %q already exists in the personal store; rename one before adopting (original left untouched): %w", id, err)
+		}
 	}
 
 	// Data now safely lives in dst. Replace the original real dir with a symlink
@@ -145,7 +172,7 @@ func Adopt(id, ccSkillsDir, personalStore string, mgr *linker.Manager, manifest 
 	if err := os.RemoveAll(src); err != nil {
 		return codeErr("link_failed", "remove original after copy (copy safe in store): %w", err)
 	}
-	if _, err := mgr.Link(linker.DesiredLink{LinkName: id, Target: ccAbs, Source: dst}, manifest); err != nil {
+	if _, err := mgr.Link(linker.DesiredLink{LinkName: id, Target: rootAbs, Source: dst}, manifest); err != nil {
 		// Original already gone; data is intact in the store. Surface that the
 		// in-place link must be retried rather than implying data loss.
 		return codeErr("rollback_partial", "skill copied to store but relink failed; re-run adopt to restore the link: %w", err)
@@ -167,7 +194,7 @@ func validID(id string) bool {
 
 func isOwnedLink(m *config.Manifest, targetAbs, name string) bool {
 	for _, l := range m.Links {
-		if l.Name == name && mustAbs(l.Target) == targetAbs {
+		if l.Name == name && harness.Expand(l.Target) == targetAbs {
 			return true
 		}
 	}
@@ -223,11 +250,4 @@ func fileSizes(root string) (map[string]int64, error) {
 		return nil
 	})
 	return out, err
-}
-
-func mustAbs(p string) string {
-	if abs, err := filepath.Abs(p); err == nil {
-		return filepath.Clean(abs)
-	}
-	return filepath.Clean(p)
 }
