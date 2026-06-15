@@ -349,11 +349,8 @@ function skillCard(repo, sk, follow) {
   const detail = ce("button", { className: "skill-detail-btn", textContent: "详情" });
   detail.onclick = () => openDetail(repo, sk.linkName);
   r1.append(detail);
-  // snapshot-level disable toggle (follow-level lives on the group head)
-  if (!follow) {
-    const dt = disableToggle(repo + "/" + sk.linkName);
-    if (dt) r1.append(dt);
-  }
+  // No per-card 停用: for a single-selected skill it is redundant with the
+  // checkbox (both withhold the link). Group-level 停用 (follow) stays on the head.
   main.append(r1);
   if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
   row.append(main);
