@@ -36,6 +36,7 @@ type Target struct {
 	Harness Harness `json:"harness"`
 	Dir     string  `json:"dir"`
 	Label   string  `json:"label"`
+	Alias   string  `json:"alias,omitempty"` // optional user display name (cosmetic)
 }
 
 // Targets classifies each user-provided sync directory by the agent that

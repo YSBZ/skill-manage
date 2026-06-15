@@ -108,9 +108,14 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 
 /* 同步目录 tabs (top of main) */
 .targets-bar { margin-bottom: 12px; }
-.targets-bar #add-target { margin-bottom: 10px; }
-.targets-bar #target-path { flex: 1; min-width: 0; }
-.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tab-add {
+  width: 32px; height: 32px; flex: 0 0 auto;
+  border: 1px dashed var(--line); background: transparent; color: var(--muted);
+  border-radius: 10px; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.tab-add:hover { border-color: var(--accent); color: var(--accent); }
+.tm-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
 .tab {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 10px; border-radius: 10px; cursor: pointer;

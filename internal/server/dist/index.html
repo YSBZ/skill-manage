@@ -48,10 +48,6 @@
 
       <main>
         <div class="targets-bar">
-          <form id="add-target">
-            <input id="target-path" placeholder="添加同步目录（如 ~/.claude/skills/）" required />
-            <button type="submit">添加目录</button>
-          </form>
           <div id="target-tabs" class="tabs"></div>
         </div>
         <div class="main-head">
@@ -62,6 +58,29 @@
     </div>
 
     <footer id="summary"></footer>
+
+    <div id="target-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>添加同步目录</h3>
+          <button id="target-modal-close" class="ghost small">关闭</button>
+        </div>
+        <form id="add-target" style="display:block;padding:16px 18px">
+          <label class="tm-label">目录路径</label>
+          <input id="target-path" placeholder="如 ~/.claude/skills/" required style="width:100%" />
+          <div class="row" style="gap:6px;margin:8px 0 0">
+            <button type="button" class="ghost small" data-fill="~/.claude/skills/">cc 个人</button>
+            <button type="button" class="ghost small" data-fill="~/.codex/skills/">codex 个人</button>
+          </div>
+          <label class="tm-label" style="margin-top:14px">别名（可选）</label>
+          <input id="target-alias" placeholder="如 我的CC技能" style="width:100%" />
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="target-modal-cancel" class="ghost">取消</button>
+            <button type="submit">添加</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div id="modal" class="modal hidden">
       <div class="modal-card">

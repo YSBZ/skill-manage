@@ -71,10 +71,13 @@ type Schedule struct {
 // with no personal/project taxonomy — the consuming agent (cc vs codex) is
 // inferred from each path by the harness package, not stored here.
 type Config struct {
-	Repos    []RepoConfig   `yaml:"repos"`
-	Enabled  []EnabledEntry `yaml:"enabled"`
-	Targets  []string       `yaml:"targets"`
-	Schedule Schedule       `yaml:"schedule"`
+	Repos   []RepoConfig   `yaml:"repos"`
+	Enabled []EnabledEntry `yaml:"enabled"`
+	Targets []string       `yaml:"targets"`
+	// TargetAliases is an optional display name per target dir (dir → alias),
+	// shown on the tab instead of the raw path. Purely cosmetic.
+	TargetAliases map[string]string `yaml:"target_aliases,omitempty"`
+	Schedule      Schedule          `yaml:"schedule"`
 }
 
 // LinkRecord is one daemon-owned link.

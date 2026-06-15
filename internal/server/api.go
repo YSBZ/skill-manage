@@ -280,6 +280,9 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	targets := s.targetsLocked()
+	for i := range targets {
+		targets[i].Alias = s.cfg.TargetAliases[targets[i].Dir]
+	}
 	s.mu.Unlock()
 	if targets == nil {
 		targets = []harness.Target{}
@@ -512,14 +515,16 @@ func (s *Server) handleRemoveEnabled(w http.ResponseWriter, r *http.Request) {
 // --- sync directories (targets) ---
 
 type targetReq struct {
-	Dir string `json:"dir"`
+	Dir   string `json:"dir"`
+	Alias string `json:"alias"`
 }
 
 func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 	var req targetReq
-	dir := ""
+	dir, alias := "", ""
 	if err := readJSON(r, &req); err == nil {
 		dir = strings.TrimSpace(req.Dir)
+		alias = strings.TrimSpace(req.Alias)
 	}
 	if dir == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -540,6 +545,12 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cfg.Targets = append(s.cfg.Targets, dir)
+	if alias != "" {
+		if s.cfg.TargetAliases == nil {
+			s.cfg.TargetAliases = map[string]string{}
+		}
+		s.cfg.TargetAliases[dir] = alias
+	}
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}
@@ -564,6 +575,7 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cfg.Targets = out
+	delete(s.cfg.TargetAliases, dir)
 	kept := s.cfg.Enabled[:0]
 	for _, e := range s.cfg.Enabled {
 		if e.Target != dir {

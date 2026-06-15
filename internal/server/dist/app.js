@@ -182,19 +182,18 @@ function renderRepos() {
 // skill→dir mapping. Each tab carries a cc/codex badge and a remove ×.
 function renderTabs() {
   const bar = $("#target-tabs"); bar.innerHTML = "";
-  if (state.targets.length === 0) {
-    bar.append(ce("div", { className: "muted", textContent: "还没有同步目录，先在上方添加一个" }));
-    return;
-  }
   const active = currentTarget();
+  if (state.targets.length === 0) {
+    bar.append(ce("span", { className: "muted", style: "align-self:center", textContent: "还没有同步目录 →" }));
+  }
   state.targets.forEach((t) => {
-    const tab = ce("div", { className: "tab" + (t.dir === active ? " active" : "") });
+    const tab = ce("div", { className: "tab" + (t.dir === active ? " active" : ""), title: t.dir });
     tab.append(ce("span", { className: "badge " + (t.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: t.harness }));
-    tab.append(ce("span", { className: "tab-dir", textContent: t.dir }));
+    tab.append(ce("span", { className: "tab-dir", textContent: t.alias || t.dir }));
     const rm = ce("button", { className: "tab-x", textContent: "×", title: "移除此同步目录" });
     rm.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm("移除同步目录 " + t.dir + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
+      if (!confirm("移除同步目录 " + (t.alias || t.dir) + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
       if (state.activeTarget === t.dir) state.activeTarget = undefined;
       await api("DELETE", "/api/targets", { dir: t.dir });
       await apply();
@@ -203,7 +202,18 @@ function renderTabs() {
     tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); };
     bar.append(tab);
   });
+  const add = ce("button", { className: "tab-add", textContent: "+", title: "添加同步目录" });
+  add.onclick = openTargetModal;
+  bar.append(add);
 }
+
+function openTargetModal() {
+  $("#target-path").value = "";
+  $("#target-alias").value = "";
+  $("#target-modal").classList.remove("hidden");
+  $("#target-path").focus();
+}
+function closeTargetModal() { $("#target-modal").classList.add("hidden"); }
 
 function renderAdoptable() {
   const ul = $("#adopt-list"); ul.innerHTML = "";
@@ -398,17 +408,24 @@ $("#add-repo").onsubmit = async (e) => {
     await updateNow(false);
   } catch (err) { banner("添加失败：" + err.message, true); }
 };
-async function addTarget(dir) {
-  try { await api("POST", "/api/targets", { dir }); state.activeTarget = dir; await load(); }
+async function addTarget(dir, alias) {
+  try { await api("POST", "/api/targets", { dir, alias }); state.activeTarget = dir; await load(); }
   catch (err) { banner("添加同步目录失败：" + err.message, true); }
 }
 $("#add-target").onsubmit = async (e) => {
   e.preventDefault();
   const dir = $("#target-path").value.trim();
   if (!dir) return;
-  $("#target-path").value = "";
-  await addTarget(dir);
+  const alias = $("#target-alias").value.trim();
+  closeTargetModal();
+  await addTarget(dir, alias);
 };
+$("#target-modal-close").onclick = closeTargetModal;
+$("#target-modal-cancel").onclick = closeTargetModal;
+$("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
+document.querySelectorAll("#add-target [data-fill]").forEach((b) => {
+  b.onclick = () => { $("#target-path").value = b.getAttribute("data-fill"); $("#target-alias").focus(); };
+});
 $("#adopt-all").onclick = async () => {
   const items = state.adoptable.slice();
   if (!items.length) return;
