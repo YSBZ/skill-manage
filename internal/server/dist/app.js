@@ -67,6 +67,7 @@ const state = {
   adoptError: false,
   ignorePlugins: true, // hide plugin skills from the adoptable list by default
   credHosts: {}, // host → username for hosts with a stored HTTPS credential
+  credPending: null, // {url, branch} when filling creds before adding a repo
   skillsByRepo: {},
   expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
@@ -198,15 +199,23 @@ function httpsHost(u) {
   } catch { return ""; }
 }
 
-function openCredModal(host, username) {
+// openCredModal opens the credential dialog. pending = {url, branch} marks the
+// "filling creds before adding a repo" flow (shows a skip-for-public button).
+function openCredModal(host, username, pending) {
   $("#cred-host").textContent = host;
   $("#cred-host").dataset.host = host;
   $("#cred-user").value = username || "";
   $("#cred-token").value = "";
+  state.credPending = pending || null;
+  $("#cred-skip").classList.toggle("hidden", !pending);
   $("#cred-modal").classList.remove("hidden");
   $("#cred-token").focus();
 }
-function closeCredModal() { $("#cred-modal").classList.add("hidden"); }
+function closeCredModal() {
+  state.credPending = null;
+  $("#cred-skip").classList.add("hidden");
+  $("#cred-modal").classList.add("hidden");
+}
 
 function renderRepos() {
   const ul = $("#repo-list"); ul.innerHTML = "";
@@ -525,23 +534,35 @@ $("#search").oninput = (e) => { state.search = e.target.value; renderSkills(); }
 $("#add-repo").onsubmit = async (e) => {
   e.preventDefault();
   const url = $("#repo-url").value.trim(), branch = $("#repo-branch").value.trim();
+  if (!url) return;
+  $("#repo-url").value = ""; $("#repo-branch").value = "";
+  // For a private-looking HTTPS repo on a host with no stored credential, ask
+  // for credentials FIRST (with a skip-for-public option) instead of cloning,
+  // failing on auth, then prompting.
+  const host = httpsHost(url);
+  if (host && !Object.prototype.hasOwnProperty.call(state.credHosts, host)) {
+    openCredModal(host, "", { url, branch });
+    return;
+  }
+  await addRepoAndSync(url, branch);
+};
+
+async function addRepoAndSync(url, branch) {
   try {
     await api("POST", "/api/repos", { url, branch });
-    $("#repo-url").value = ""; $("#repo-branch").value = "";
     await updateNow(false);
-    // If the first sync failed auth (private HTTPS repo without usable
-    // credentials), prompt for credentials right away instead of leaving a
-    // cryptic clone error.
+    // Fallback: if it still failed auth (wrong creds, or a "public" repo that
+    // turned out private and was skipped), prompt to (re)enter credentials.
     const host = httpsHost(url);
     if (host) {
       const repo = (state.status.repos || []).find((r) => r.url === url);
       if (repo && repo.authHint) {
-        banner("该仓库需要凭据才能访问，请填写。", true);
+        banner("该仓库需要有效凭据，请填写。", true);
         openCredModal(host, state.credHosts[host] || "");
       }
     }
   } catch (err) { banner("添加失败：" + err.message, true); }
-};
+}
 async function addTarget(dir, alias) {
   try {
     // The selection may fan out into several real skill dirs (a project root
@@ -574,14 +595,25 @@ $("#cred-form").onsubmit = async (e) => {
   const host = $("#cred-host").dataset.host;
   const username = $("#cred-user").value.trim();
   const token = $("#cred-token").value;
-  if (!host || !token) { banner("令牌不能为空", true); return; }
+  if (!host || !token) { banner("密码 / 令牌不能为空（公开仓可点「跳过」）", true); return; }
+  const pending = state.credPending;
   try {
     await api("POST", "/api/credentials", { host, username, token });
-    closeCredModal();
+  } catch (err) { banner("保存凭据失败：" + err.message, true); return; }
+  closeCredModal();
+  if (pending) {
+    await addRepoAndSync(pending.url, pending.branch); // creds saved → now clone
+  } else {
     banner("凭据已保存，正在重试更新…");
     await api("POST", "/api/update-now", {});
     await load();
-  } catch (err) { banner("保存凭据失败：" + err.message, true); }
+  }
+};
+// Skip (public repo): add without storing any credential.
+$("#cred-skip").onclick = async () => {
+  const pending = state.credPending;
+  closeCredModal();
+  if (pending) await addRepoAndSync(pending.url, pending.branch);
 };
 $("#cred-close").onclick = closeCredModal;
 $("#cred-cancel").onclick = closeCredModal;
