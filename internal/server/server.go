@@ -121,12 +121,24 @@ func New(centralDir string) (*Server, error) {
 	}
 	reposRoot := filepath.Join(centralDir, "repos")
 	personalStore := config.PersonalStorePath(centralDir)
+	// Seed sync targets by DISCOVERY, never hardcoded: on a config that has never
+	// configured targets (nil), probe the default agent install dirs and add only
+	// the ones that actually exist. If none exist, leave it unset so the user
+	// adds dirs manually (and a later start can still discover newly-installed
+	// agents).
+	seeded := false
+	if cfg.Targets == nil {
+		if dirs := harness.DiscoverDefaultTargets(); len(dirs) > 0 {
+			cfg.Targets = dirs
+			seeded = true
+		}
+	}
 	// Heal adopt links written before adoption recorded an enabled entry, so the
 	// reconcile orphan pass does not delete them on the next sync (data stays in
 	// the store, but the in-place symlink would otherwise vanish).
-	if backfillAdoptedEnabled(&cfg, &manifest, personalStore) {
+	if backfillAdoptedEnabled(&cfg, &manifest, personalStore) || seeded {
 		if err := config.SaveConfig(centralDir, cfg); err != nil {
-			return nil, fmt.Errorf("persist adopted-skill backfill: %w", err)
+			return nil, fmt.Errorf("persist target seed / adopted-skill backfill: %w", err)
 		}
 	}
 	uiFS, err := UIFS()

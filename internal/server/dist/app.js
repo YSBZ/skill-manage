@@ -67,7 +67,8 @@ const ADOPT_ERR = {
   name_taken: "受管存储已有同名 skill（另一 agent 收编过），请先改名",
 };
 
-const HARNESS_LABEL = { cc: "cc", codex: "codex" };
+const HARNESS_LABEL = { cc: "cc", codex: "codex", unknown: "unknown" };
+const harnessClass = (h) => (h === "codex" ? "st-linked-codex" : h === "cc" ? "st-cc" : "st-unknown");
 // Reserved source namespace for adopted (收编) skills living in the personal
 // store; surfaced in the main list alongside tracked repos so收编 is visible.
 const LOCAL_NS = "@local";
@@ -176,7 +177,7 @@ function renderTabs() {
   }
   state.targets.forEach((t) => {
     const tab = ce("div", { className: "tab" + (t.dir === active ? " active" : ""), title: t.dir });
-    tab.append(ce("span", { className: "badge " + (t.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: t.harness }));
+    tab.append(ce("span", { className: "badge " + harnessClass(t.harness), textContent: t.harness }));
     tab.append(ce("span", { className: "tab-dir", textContent: t.alias || t.dir }));
     const rm = ce("button", { className: "tab-x", textContent: "×", title: "移除此同步目录" });
     rm.onclick = async (e) => {
@@ -219,7 +220,7 @@ function renderAdoptable() {
     const li = ce("li");
     const name = ce("span", { className: "path", textContent: a.name });
     const tag = HARNESS_LABEL[a.harness];
-    if (tag) name.append(ce("span", { className: "badge " + (a.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: tag, style: "margin-left:6px" }));
+    if (tag) name.append(ce("span", { className: "badge " + harnessClass(a.harness), textContent: tag, style: "margin-left:6px" }));
     li.append(name);
     const btn = ce("button", { className: "small", textContent: "收编" });
     btn.onclick = async () => {

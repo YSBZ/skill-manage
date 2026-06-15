@@ -322,8 +322,8 @@ func TestDetectConflicts(t *testing.T) {
 		// collision: same target+name, two sources
 		{LinkName: "dup", Target: "/skills", Source: "/repos/a/dup"},
 		{LinkName: "dup", Target: "/skills", Source: "/repos/b/dup"},
-		// shadow: same name under two targets
-		{LinkName: "shadowed", Target: "/skills", Source: "/repos/a/shadowed"},
+		// shadow: same name under two targets of the same harness (both cc)
+		{LinkName: "shadowed", Target: "/work/.claude/skills", Source: "/repos/a/shadowed"},
 		{LinkName: "shadowed", Target: "/proj/.claude/skills", Source: "/repos/a/shadowed"},
 		// clean
 		{LinkName: "fine", Target: "/skills", Source: "/repos/a/fine"},

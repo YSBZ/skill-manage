@@ -44,9 +44,10 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadConfigSeedsTargetsWhenAbsent(t *testing.T) {
+func TestLoadConfigDoesNotSeedTargets(t *testing.T) {
 	dir := t.TempDir()
-	// a config that predates the Targets field (key absent) must seed defaults
+	// LoadConfig must NOT inject hardcoded targets — discovery/seeding happens in
+	// the server layer by probing actual install dirs, not here.
 	if err := os.WriteFile(ConfigPath(dir), []byte("repos: []\nschedule:\n  daily_at: \"09:00\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -54,19 +55,12 @@ func TestLoadConfigSeedsTargetsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Targets) != 2 {
-		t.Errorf("absent targets should seed personal defaults, got %+v", cfg.Targets)
-	}
-	// an explicitly-empty (non-nil) list is respected, not re-seeded
-	if err := os.WriteFile(ConfigPath(dir), []byte("repos: []\ntargets: []\nschedule:\n  daily_at: \"09:00\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err = LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(cfg.Targets) != 0 {
-		t.Errorf("explicitly-cleared targets must stay empty, got %+v", cfg.Targets)
+		t.Errorf("LoadConfig must not seed targets, got %+v", cfg.Targets)
+	}
+	// DefaultConfig (fresh install) also carries no hardcoded targets
+	if len(DefaultConfig().Targets) != 0 {
+		t.Errorf("DefaultConfig must not seed targets, got %+v", DefaultConfig().Targets)
 	}
 }
 

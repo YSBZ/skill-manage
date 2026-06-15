@@ -44,6 +44,53 @@ func TestTargetsEmpty(t *testing.T) {
 	}
 }
 
+func TestClassify(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	codex := []string{"~/.codex/skills/", "/work/proj/.codex/skills", "/work/proj/.agents/skills"}
+	for _, d := range codex {
+		if Classify(d) != HarnessCodex {
+			t.Errorf("Classify(%q) = %q, want codex", d, Classify(d))
+		}
+	}
+	cc := []string{"~/.claude/skills/", "/work/proj/.claude/skills"}
+	for _, d := range cc {
+		if Classify(d) != HarnessClaudeCode {
+			t.Errorf("Classify(%q) = %q, want cc", d, Classify(d))
+		}
+	}
+	// neither cc nor codex → unknown, NOT defaulted to cc
+	for _, d := range []string{"/tmp/whatever", "/opt/skills", "~/random/dir"} {
+		if Classify(d) != HarnessUnknown {
+			t.Errorf("Classify(%q) = %q, want unknown", d, Classify(d))
+		}
+	}
+}
+
+func TestDiscoverDefaultTargets(t *testing.T) {
+	ch := filepath.Join(t.TempDir(), "codex")
+	t.Setenv("CODEX_HOME", ch)
+	has := func(list []string, v string) bool {
+		for _, x := range list {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	want := filepath.Join(ch, "skills")
+	// absent → not discovered
+	if has(DiscoverDefaultTargets(), want) {
+		t.Fatal("absent codex skills dir must not be discovered")
+	}
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// present → discovered (abs form under CODEX_HOME)
+	if !has(DiscoverDefaultTargets(), want) {
+		t.Errorf("existing codex skills dir should be discovered, got %v", DiscoverDefaultTargets())
+	}
+}
+
 func TestGuarded(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	codexSkills := filepath.Join(home, ".codex", "skills")

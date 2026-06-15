@@ -103,6 +103,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .st-linked { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .st-linked-codex { color: #c98bff; border-color: color-mix(in srgb, #c98bff 50%, transparent); }
 .st-cc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.st-unknown { color: var(--muted); border-color: var(--line); }
 .st-conflict { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .st-shadowed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 
@@ -110,9 +111,10 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .targets-bar { margin-bottom: 12px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tab-add {
-  width: 32px; height: 32px; flex: 0 0 auto;
+  width: 36px; height: 36px; flex: 0 0 auto; padding: 0;
+  display: flex; align-items: center; justify-content: center;
   border: 1px dashed var(--line); background: transparent; color: var(--muted);
-  border-radius: 10px; font-size: 18px; line-height: 1; cursor: pointer;
+  border-radius: 10px; font-size: 20px; line-height: 1; cursor: pointer;
 }
 .tab-add:hover { border-color: var(--accent); color: var(--accent); }
 .tm-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }

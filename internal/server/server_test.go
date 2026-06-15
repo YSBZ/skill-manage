@@ -195,17 +195,27 @@ func TestWaitForSyncsDrains(t *testing.T) {
 }
 
 func TestTargetsEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // isolate from real install dirs (discovery)
 	t.Setenv("CODEX_HOME", "")
 	s := newTestServer(t)
 	h := s.Handler()
+	// add a cc and a codex directory explicitly (no reliance on discovery)
+	for _, d := range []string{"~/.claude/skills/", "~/.codex/skills/"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": d}))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("add %s: got %d", d, w.Code)
+		}
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req("GET", "/api/targets", s.token, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("targets: got %d, want 200", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "~/.claude/skills/") || !strings.Contains(body, "~/.codex/skills/") {
-		t.Errorf("targets should list CC + Codex personal dirs, got %s", body)
+	if !strings.Contains(body, "~/.claude/skills/") || !strings.Contains(body, `"cc"`) ||
+		!strings.Contains(body, "~/.codex/skills/") || !strings.Contains(body, `"codex"`) {
+		t.Errorf("targets should list both dirs with cc/codex labels, got %s", body)
 	}
 	// missing token → 401
 	w = httptest.NewRecorder()
@@ -233,6 +243,7 @@ func TestAddEnabledRejectsGuardedTarget(t *testing.T) {
 }
 
 func TestAddRemoveTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // isolate from discovery → start with 0 targets
 	t.Setenv("CODEX_HOME", "")
 	s := newTestServer(t)
 	h := s.Handler()
@@ -243,7 +254,7 @@ func TestAddRemoveTarget(t *testing.T) {
 		t.Fatalf("add target: got %d, want 201", w.Code)
 	}
 	cfg, _, _ := config.LoadConfig(s.centralDir)
-	if len(cfg.Targets) != 3 { // 2 seeded defaults + 1 added
+	if len(cfg.Targets) != 1 {
 		t.Fatalf("target not persisted: %+v", cfg.Targets)
 	}
 	// guarded dir rejected
@@ -268,7 +279,7 @@ func TestAddRemoveTarget(t *testing.T) {
 		t.Fatalf("remove target: got %d, want 200", w.Code)
 	}
 	cfg, _, _ = config.LoadConfig(s.centralDir)
-	if len(cfg.Targets) != 2 {
+	if len(cfg.Targets) != 0 {
 		t.Errorf("target not removed: %+v", cfg.Targets)
 	}
 	for _, e := range cfg.Enabled {

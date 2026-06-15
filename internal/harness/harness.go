@@ -23,7 +23,64 @@ type Harness string
 const (
 	HarnessClaudeCode Harness = "cc"
 	HarnessCodex      Harness = "codex"
+	// HarnessUnknown is a directory we cannot tie to a known agent by its path.
+	// It is NOT defaulted to cc — the label stays "unknown" so the user is not
+	// misled into thinking an arbitrary directory is a Claude Code dir.
+	HarnessUnknown Harness = "unknown"
 )
+
+// Classify infers the consuming agent from a directory path: codex for
+// .codex/.agents skill dirs (or under $CODEX_HOME/skills), cc for .claude skill
+// dirs, otherwise unknown. cc is NOT the catch-all default.
+func Classify(dir string) Harness {
+	switch {
+	case IsCodexTarget(dir):
+		return HarnessCodex
+	case isCCTarget(dir):
+		return HarnessClaudeCode
+	default:
+		return HarnessUnknown
+	}
+}
+
+// isCCTarget reports whether dir is a Claude Code skills directory: the personal
+// ~/.claude/skills, or any */.claude/skills (project-level).
+func isCCTarget(dir string) bool {
+	r := expand(dir)
+	if home, err := os.UserHomeDir(); err == nil {
+		if underOrEqual(r, filepath.Join(home, ".claude", "skills")) {
+			return true
+		}
+	}
+	return strings.HasSuffix(r, filepath.FromSlash("/.claude/skills"))
+}
+
+// DiscoverDefaultTargets returns the conventional agent skill directories that
+// actually exist on this machine, in canonical form. It probes the default
+// install locations (Claude Code's ~/.claude/skills and Codex's
+// $CODEX_HOME|~/.codex /skills) by existence — nothing is hardcoded into config,
+// and a location that isn't present is simply left for the user to add manually.
+func DiscoverDefaultTargets() []string {
+	var out []string
+	if home, err := os.UserHomeDir(); err == nil {
+		if dirExists(filepath.Join(home, ".claude", "skills")) {
+			out = append(out, "~/.claude/skills/")
+		}
+	}
+	if dirExists(codexSkillsRoot()) {
+		if os.Getenv("CODEX_HOME") != "" {
+			out = append(out, codexSkillsRoot()) // abs form when overridden
+		} else {
+			out = append(out, "~/.codex/skills/")
+		}
+	}
+	return out
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
 
 // Target is one linkable skill directory. Dir is the canonical string stored in
 // EnabledEntry.Target and resolvable by reconcile.expandTarget (a leading "~"
@@ -51,10 +108,7 @@ func Targets(dirs []string) []Target {
 		if strings.TrimSpace(d) == "" || Guarded(d) {
 			continue
 		}
-		h := HarnessClaudeCode
-		if IsCodexTarget(d) {
-			h = HarnessCodex
-		}
+		h := Classify(d)
 		out = append(out, Target{Harness: h, Dir: d, Label: string(h)})
 	}
 	return out

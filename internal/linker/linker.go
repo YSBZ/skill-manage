@@ -295,10 +295,7 @@ func DetectConflicts(desired []DesiredLink) []Conflict {
 // harnessOf classifies a target directory by the agent that consumes it, so
 // shadow detection only fires within a single harness (KTD1).
 func harnessOf(target string) string {
-	if harness.IsCodexTarget(target) {
-		return "codex"
-	}
-	return "cc"
+	return string(harness.Classify(target))
 }
 
 func sortedKeys(m map[string]bool) []string {
