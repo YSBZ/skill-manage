@@ -43,15 +43,25 @@ type Manager struct {
 	// reposRoot is where tracked repos are cloned; a link pointing under it is
 	// recognizable as one the tool plausibly created (signature for adoption).
 	reposRoot string
+	// personalStore is the managed adopted-skill root (U5). Links pointing under
+	// it are equally ours — adopted skills live here, and the in-place symlink
+	// left behind by adoption points into it, so ownership detection must accept
+	// both roots or re-adoption would mistake our own link for a foreign one.
+	personalStore string
 }
 
-// NewManager returns a Manager. reposRoot is the central repos directory.
-func NewManager(reposRoot string) *Manager {
-	abs, err := filepath.Abs(reposRoot)
-	if err == nil {
+// NewManager returns a Manager. reposRoot is the central repos directory;
+// personalStore is the adopted-skill store (may be empty when not configured).
+func NewManager(reposRoot, personalStore string) *Manager {
+	if abs, err := filepath.Abs(reposRoot); err == nil {
 		reposRoot = abs
 	}
-	return &Manager{reposRoot: reposRoot}
+	if personalStore != "" {
+		if abs, err := filepath.Abs(personalStore); err == nil {
+			personalStore = abs
+		}
+	}
+	return &Manager{reposRoot: reposRoot, personalStore: personalStore}
 }
 
 func targetPath(d DesiredLink) string { return filepath.Join(d.Target, d.LinkName) }
@@ -297,7 +307,12 @@ func (mgr *Manager) looksOurs(path string) bool {
 		target = filepath.Join(filepath.Dir(path), target)
 	}
 	target = filepath.Clean(target)
-	rel, err := filepath.Rel(mgr.reposRoot, target)
+	return underRoot(mgr.reposRoot, target) || (mgr.personalStore != "" && underRoot(mgr.personalStore, target))
+}
+
+// underRoot reports whether target is root or a descendant of root.
+func underRoot(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return false
 	}
@@ -327,9 +342,10 @@ func removePrimitive(path string, lt config.LinkType) error {
 	return os.Remove(path)
 }
 
-// copyTree copies the directory src to dst, preserving file modes. Used as the
-// Windows cross-volume fallback and the platform-spike fallback (KTD12).
-func copyTree(src, dst string) error {
+// CopyTree copies the directory src to dst, preserving file modes and skipping
+// symlinks (never dereferenced). Used as the Windows cross-volume link fallback
+// (KTD12) and by the adopt package to duplicate a skill into the personal store.
+func CopyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err

@@ -23,7 +23,8 @@ func newFix(t *testing.T) fix {
 	if err := os.MkdirAll(reposRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return fix{reposRoot: reposRoot, target: target, rec: New(reposRoot), man: &config.Manifest{}}
+	personalStore := filepath.Join(root, "local")
+	return fix{reposRoot: reposRoot, target: target, rec: New(reposRoot, personalStore), man: &config.Manifest{}}
 }
 
 func (f fix) mkSkill(t *testing.T, repo, skill string) {
@@ -200,10 +201,32 @@ func TestValidRepoName(t *testing.T) {
 			t.Errorf("ValidRepoName(%q) = false, want true", ok)
 		}
 	}
-	for _, bad := range []string{"", ".", "..", "../etc", "a/b", `a\b`, "../../root"} {
+	for _, bad := range []string{"", ".", "..", "../etc", "a/b", `a\b`, "../../root", "@local", "@anything"} {
 		if ValidRepoName(bad) {
-			t.Errorf("ValidRepoName(%q) = true, want false (traversal guard)", bad)
+			t.Errorf("ValidRepoName(%q) = true, want false (traversal/reserved guard)", bad)
 		}
+	}
+}
+
+func TestLocalNamespaceResolves(t *testing.T) {
+	f := newFix(t)
+	// place a skill in the personal store (the @local root)
+	store := f.rec.personalStore
+	dir := filepath.Join(store, "mine")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: mine\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{
+		{Skill: "@local/mine", Target: f.target, Mode: config.ModeSnapshot},
+	}}, f.man)
+	if len(sum.Errors) != 0 {
+		t.Fatalf("@local selector should resolve, got errors %v", sum.Errors)
+	}
+	if !f.linkExists("mine") {
+		t.Errorf("@local/mine should link the personal-store skill")
 	}
 }
 

@@ -111,6 +111,14 @@ func ManifestPath(centralDir string) string {
 	return filepath.Join(centralDir, manifestFileName)
 }
 
+// PersonalStorePath returns the managed personal-skill store (`<central>/local`)
+// where adopted local skills are relocated (U5). It is a second source root
+// alongside the repos root; like repos it holds real skill directories the
+// daemon links from. It follows centralDir rather than being hardcoded.
+func PersonalStorePath(centralDir string) string {
+	return filepath.Join(centralDir, "local")
+}
+
 // LoadConfig reads config.yaml from centralDir.
 //
 // When the file does not exist it returns DefaultConfig with firstRun=true so

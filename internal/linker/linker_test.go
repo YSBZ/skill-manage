@@ -10,10 +10,11 @@ import (
 )
 
 type fixture struct {
-	reposRoot string
-	target    string
-	mgr       *Manager
-	man       *config.Manifest
+	reposRoot     string
+	target        string
+	personalStore string
+	mgr           *Manager
+	man           *config.Manifest
 }
 
 func newFixture(t *testing.T) fixture {
@@ -24,7 +25,8 @@ func newFixture(t *testing.T) fixture {
 	if err := os.MkdirAll(reposRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return fixture{reposRoot: reposRoot, target: target, mgr: NewManager(reposRoot), man: &config.Manifest{}}
+	personalStore := filepath.Join(root, "local")
+	return fixture{reposRoot: reposRoot, target: target, personalStore: personalStore, mgr: NewManager(reposRoot, personalStore), man: &config.Manifest{}}
 }
 
 // mkSource creates a skill dir under reposRoot and returns its abs path.
@@ -287,6 +289,31 @@ func TestPruneDanglingCopyDivergedNotClobbered(t *testing.T) {
 	}
 	if len(f.man.Links) != 1 {
 		t.Errorf("record should be kept so divergence stays visible, got %+v", f.man.Links)
+	}
+}
+
+// TestLooksOursPersonalStore guards the adopt re-entry path: an in-place link
+// pointing into the personal store must be recognized as ours even with an
+// empty manifest, so re-adoption does not mistake it for a foreign link.
+func TestLooksOursPersonalStore(t *testing.T) {
+	f := newFixture(t)
+	src := filepath.Join(f.personalStore, "adopted")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("---\nname: adopted\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// link with an empty manifest — must be adopted via the personalStore signature
+	created, err := f.mgr.Link(f.desired("adopted", src), &config.Manifest{})
+	if err != nil {
+		t.Fatalf("link into target from personalStore source should succeed: %v", err)
+	}
+	if !created {
+		t.Errorf("expected a link to be created")
+	}
+	if !f.mgr.looksOurs(filepath.Join(f.target, "adopted")) {
+		t.Errorf("a link pointing into personalStore must be recognized as ours")
 	}
 }
 

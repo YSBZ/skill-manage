@@ -2,14 +2,17 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 
+	"skillmanage/internal/adopt"
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
 	"skillmanage/internal/harness"
+	"skillmanage/internal/linker"
 	"skillmanage/internal/reconcile"
 	"skillmanage/internal/scanner"
 )
@@ -27,6 +30,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/targets", s.requireAuth(s.handleTargets))
 	mux.HandleFunc("GET /api/skills", s.requireAuth(s.handleListSkills))
 	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
+	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
+	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleAddProject))
@@ -136,6 +141,12 @@ func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if !reconcile.ValidRepoName(reconcile.RepoName(req.URL)) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("repo directory name %q is not allowed (reserved prefix or illegal characters)", reconcile.RepoName(req.URL)),
+		})
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	existingURLs := make([]string, 0, len(s.cfg.Repos))
@@ -202,6 +213,10 @@ func (s *Server) handleImportRepos(w http.ResponseWriter, r *http.Request) {
 	for _, rp := range req.Repos {
 		if err := gitsync.ValidateRepoURL(rp.URL); err != nil {
 			rejected = append(rejected, map[string]string{"url": rp.URL, "error": err.Error()})
+			continue
+		}
+		if !reconcile.ValidRepoName(reconcile.RepoName(rp.URL)) {
+			rejected = append(rejected, map[string]string{"url": rp.URL, "error": "illegal repo directory name (reserved prefix or characters)"})
 		}
 	}
 	if len(rejected) > 0 {
@@ -320,6 +335,70 @@ func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, "skill not found", http.StatusNotFound)
+}
+
+// --- adopt (U5) ---
+
+// ccSkillsDir resolves the Claude Code personal skills directory absolutely.
+func ccSkillsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "~/.claude/skills"
+	}
+	return filepath.Join(home, ".claude", "skills")
+}
+
+func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	snapshot := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
+	s.mu.Unlock()
+	list, err := adopt.ListAdoptable(ccSkillsDir(), &snapshot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if list == nil {
+		list = []adopt.Adoptable{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"skills": list})
+}
+
+type adoptReq struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
+	var req adoptReq
+	if err := readJSON(r, &req); err != nil || req.ID == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	mgr := linker.NewManager(s.reposRoot, s.personalStore)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := adopt.Adopt(req.ID, ccSkillsDir(), s.personalStore, mgr, &s.manifest); err != nil {
+		code := "error"
+		var ae *adopt.Error
+		if errors.As(err, &ae) {
+			code = ae.Code
+		}
+		writeJSON(w, adoptStatus(code), map[string]string{"error_code": code, "error": err.Error()})
+		return
+	}
+	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error_code": "save_failed", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func adoptStatus(code string) int {
+	switch code {
+	case "invalid", "guarded", "not_found":
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // --- enabled ---

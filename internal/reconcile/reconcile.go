@@ -27,15 +27,32 @@ type Summary struct {
 	Errors    []string            `json:"errors"`
 }
 
+// LocalNamespace is the reserved source-selector namespace for adopted skills
+// living in the personal store (U5). `@local/<skill>` resolves under the store
+// instead of the repos root. The leading `@` cannot collide with a real repo
+// name because ValidRepoName rejects any name starting with `@`.
+const LocalNamespace = "@local"
+
 // Reconciler applies enabled[] to the filesystem under a central repos root.
 type Reconciler struct {
-	reposRoot string
-	mgr       *linker.Manager
+	reposRoot     string
+	personalStore string
+	mgr           *linker.Manager
 }
 
-// New builds a Reconciler. reposRoot is where tracked repos are cloned.
-func New(reposRoot string) *Reconciler {
-	return &Reconciler{reposRoot: reposRoot, mgr: linker.NewManager(reposRoot)}
+// New builds a Reconciler. reposRoot is where tracked repos are cloned;
+// personalStore is the adopted-skill store (the `@local` namespace root).
+func New(reposRoot, personalStore string) *Reconciler {
+	return &Reconciler{reposRoot: reposRoot, personalStore: personalStore, mgr: linker.NewManager(reposRoot, personalStore)}
+}
+
+// sourceRoot resolves a selector namespace to its on-disk root: the reserved
+// `@local` maps to the personal store, every other name to reposRoot/<name>.
+func (r *Reconciler) sourceRoot(repo string) string {
+	if repo == LocalNamespace {
+		return r.personalStore
+	}
+	return filepath.Join(r.reposRoot, repo)
 }
 
 // ValidRepoName reports whether name is a safe single path segment for a repo
@@ -45,6 +62,9 @@ func New(reposRoot string) *Reconciler {
 func ValidRepoName(name string) bool {
 	if name == "" || name == "." || name == ".." {
 		return false
+	}
+	if strings.HasPrefix(name, "@") {
+		return false // leading '@' is reserved for source namespaces (e.g. @local)
 	}
 	return !strings.ContainsAny(name, `/\`)
 }
@@ -181,7 +201,7 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 		if s, ok := scanCache[repo]; ok {
 			return s
 		}
-		dir := filepath.Join(r.reposRoot, repo)
+		dir := r.sourceRoot(repo)
 		skills, err := scanner.Scan(dir)
 		if err != nil {
 			if !scanErr[repo] {
@@ -197,7 +217,7 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 
 	for _, e := range cfg.Enabled {
 		repo, sel := splitSkill(e.Skill)
-		if repo == "" || !ValidRepoName(repo) {
+		if repo == "" || (repo != LocalNamespace && !ValidRepoName(repo)) {
 			errs = append(errs, fmt.Sprintf("invalid enabled skill selector %q", e.Skill))
 			continue
 		}

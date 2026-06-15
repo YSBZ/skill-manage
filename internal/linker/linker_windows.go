@@ -22,7 +22,7 @@ import (
 // os.ModeIrregular (see isLinkMode), which does not require reading the target.
 func createPrimitive(source, target string) (config.LinkType, error) {
 	if filepath.VolumeName(source) != filepath.VolumeName(target) {
-		if err := copyTree(source, target); err != nil {
+		if err := CopyTree(source, target); err != nil {
 			return "", fmt.Errorf("copy fallback (cross-volume): %w", err)
 		}
 		return config.LinkCopy, nil

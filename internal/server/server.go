@@ -34,11 +34,12 @@ type RepoStatus struct {
 
 // Server is the daemon's HTTP surface and shared state.
 type Server struct {
-	centralDir string
-	reposRoot  string
-	token      string
-	uiFS       fs.FS
-	indexHTML  []byte // token already injected
+	centralDir    string
+	reposRoot     string
+	personalStore string
+	token         string
+	uiFS          fs.FS
+	indexHTML     []byte // token already injected
 
 	syncer     *gitsync.Syncer
 	reconciler *reconcile.Reconciler
@@ -130,18 +131,20 @@ func New(centralDir string) (*Server, error) {
 		return nil, err
 	}
 	reposRoot := filepath.Join(centralDir, "repos")
+	personalStore := config.PersonalStorePath(centralDir)
 	return &Server{
-		centralDir: centralDir,
-		reposRoot:  reposRoot,
-		token:      token,
-		uiFS:       uiFS,
-		indexHTML:  bytes.ReplaceAll(rawIndex, []byte(tokenPlaceholder), []byte(token)),
-		syncer:     syncer,
-		reconciler: reconcile.New(reposRoot),
-		cfg:        cfg,
-		manifest:   manifest,
-		firstRun:   firstRun,
-		repoStatus: map[string]RepoStatus{},
+		centralDir:    centralDir,
+		reposRoot:     reposRoot,
+		personalStore: personalStore,
+		token:         token,
+		uiFS:          uiFS,
+		indexHTML:     bytes.ReplaceAll(rawIndex, []byte(tokenPlaceholder), []byte(token)),
+		syncer:        syncer,
+		reconciler:    reconcile.New(reposRoot, personalStore),
+		cfg:           cfg,
+		manifest:      manifest,
+		firstRun:      firstRun,
+		repoStatus:    map[string]RepoStatus{},
 	}, nil
 }
 
