@@ -62,6 +62,16 @@ type Syncer struct {
 	git        string
 	hooksDir   string
 	cmdTimeout time.Duration // per-command wall-clock bound; <=0 disables
+	askpassExe string        // this binary, used as GIT_ASKPASS for HTTPS creds
+	centralDir string        // where the credential file lives (passed to askpass)
+}
+
+// SetAskpass wires the daemon's own binary as git's credential helper so a fetch
+// needing HTTPS credentials reads them from the stored per-host credentials
+// instead of failing. No-op fields leave auth unchanged (SSH / system helper).
+func (s *Syncer) SetAskpass(exe, centralDir string) {
+	s.askpassExe = exe
+	s.centralDir = centralDir
 }
 
 // NewSyncer resolves the system git and creates the empty hooks directory.
@@ -171,6 +181,15 @@ func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, s
 		"GCM_INTERACTIVE=never",                // Git Credential Manager: no popups
 		"GIT_CONFIG_NOSYSTEM=1",                // ignore /etc system config (keeps global helper)
 	)
+	// Feed stored HTTPS credentials via our own binary as GIT_ASKPASS. Unset
+	// fields (SSH-only setups) leave git auth untouched.
+	if s.askpassExe != "" && s.centralDir != "" {
+		cmd.Env = append(cmd.Env,
+			"GIT_ASKPASS="+s.askpassExe,
+			"SKILLMANAGE_ASKPASS=1",
+			"SKILLMANAGE_CENTRAL="+s.centralDir,
+		)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

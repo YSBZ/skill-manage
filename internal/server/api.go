@@ -39,6 +39,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
 	mux.HandleFunc("DELETE /api/targets", s.requireAuth(s.handleRemoveTarget))
 	mux.HandleFunc("GET /api/browse", s.requireAuth(s.handleBrowse))
+	mux.HandleFunc("GET /api/credentials", s.requireAuth(s.handleListCredentials))
+	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
+	mux.HandleFunc("DELETE /api/credentials", s.requireAuth(s.handleDeleteCredential))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 	mux.HandleFunc("GET /api/autostart", s.requireAuth(s.handleAutostartStatus))
@@ -809,6 +812,74 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 	// now, instead of relying on a separate apply round-trip from the client.
 	sum := s.ReconcileOnly()
 	writeJSON(w, http.StatusOK, sum)
+}
+
+// --- credentials (HTTPS PAT per host) ---
+
+type credReq struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Token    string `json:"token"`
+}
+
+// handleListCredentials returns the hosts that have a stored credential plus the
+// username — NEVER the token. The UI uses it to show which repos are configured.
+func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
+	creds, err := config.LoadCredentials(s.centralDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	out := []map[string]string{}
+	for host, c := range creds.Hosts {
+		out = append(out, map[string]string{"host": host, "username": c.Username})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSetCredential stores (or replaces) the HTTPS credential for a host. The
+// token is required; username may be empty (some hosts accept any/token-as-pass).
+func (s *Server) handleSetCredential(w http.ResponseWriter, r *http.Request) {
+	var req credReq
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.Token) == "" {
+		http.Error(w, "bad request (host and token required)", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	creds, err := config.LoadCredentials(s.centralDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	creds.Hosts[strings.TrimSpace(req.Host)] = config.Credential{Username: strings.TrimSpace(req.Username), Token: req.Token}
+	if err := config.SaveCredentials(s.centralDir, creds); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDeleteCredential removes a host's stored credential.
+func (s *Server) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
+	var req credReq
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Host) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	creds, err := config.LoadCredentials(s.centralDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	delete(creds.Hosts, strings.TrimSpace(req.Host))
+	if err := config.SaveCredentials(s.centralDir, creds); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- update-now ---

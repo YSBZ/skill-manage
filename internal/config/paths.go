@@ -34,6 +34,12 @@ func TokenPath(centralDir string) string {
 	return filepath.Join(centralDir, "token")
 }
 
+// CredentialsPath is where per-host HTTPS credentials are stored (0600),
+// machine-local and NEVER part of export/import (like the manifest and token).
+func CredentialsPath(centralDir string) string {
+	return filepath.Join(centralDir, "credentials.yaml")
+}
+
 // LastSyncPath records the timestamp of the last successful sync, so the
 // scheduler's startup missed-run check has a real value to compare against
 // (KTD7) instead of assuming "just ran".

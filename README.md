@@ -34,7 +34,7 @@ make build          # 构建 host 二进制 ./skillmanage
 
 - **公开仓**：用 `https` 直接添加，无需任何配置。
 - **私有仓 · SSH（推荐）**：配好该 git 主机的 SSH key 并加入 `ssh-agent`（带 passphrase 的 key 需先解锁，因为以 `BatchMode` 运行不会提示输入），公钥登记到 git 服务器。
-- **私有仓 · HTTPS**：需系统凭据助手已缓存凭据（macOS 钥匙串 / Git Credential Manager），或使用个人访问令牌（PAT）；也可把 token 写进 URL（`https://<token>@host/…`，会明文存进配置，不推荐）。
+- **私有仓 · HTTPS**：点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 `~/.skillmanage/credentials.yaml`（0600，不随导出离开本机），拉取时经 `GIT_ASKPASS` 自动注入；也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。
 
 ## 跨平台分发
 

@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+func TestCredentialsRoundTripAndPerms(t *testing.T) {
+	dir := t.TempDir()
+	c, err := LoadCredentials(dir) // missing file → empty, no error
+	if err != nil || len(c.Hosts) != 0 {
+		t.Fatalf("empty load: %+v err=%v", c, err)
+	}
+	c.Hosts["git.example.com"] = Credential{Username: "alice", Token: "pat_123"}
+	if err := SaveCredentials(dir, c); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(CredentialsPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("credentials perms = %o, want 600", fi.Mode().Perm())
+	}
+	got, _ := LoadCredentials(dir)
+	if got.Hosts["git.example.com"].Token != "pat_123" || got.Hosts["git.example.com"].Username != "alice" {
+		t.Errorf("round-trip mismatch: %+v", got.Hosts)
+	}
+}
+
 func TestConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	want := Config{

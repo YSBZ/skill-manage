@@ -189,6 +189,10 @@ func New(centralDir string) (*Server, error) {
 	if gitErr != nil {
 		gitErrMsg = gitErr.Error()
 		syncer = nil
+	} else if exe, e := os.Executable(); e == nil {
+		// Wire the daemon's own binary as git's credential helper so stored
+		// HTTPS PATs feed auto-update fetches (GIT_ASKPASS).
+		syncer.SetAskpass(exe, centralDir)
 	}
 	return &Server{
 		centralDir:    centralDir,

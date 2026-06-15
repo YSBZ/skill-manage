@@ -85,6 +85,26 @@
       </div>
     </div>
 
+    <div id="cred-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(460px,100%)">
+        <div class="modal-head">
+          <h3>填写 HTTPS 凭据</h3>
+          <button id="cred-close" class="ghost small">关闭</button>
+        </div>
+        <form id="cred-form" style="display:block;padding:16px 18px">
+          <p class="muted" style="margin:0 0 12px;font-size:12.5px">为 <b id="cred-host"></b> 配置个人访问令牌(PAT)，用于私有仓自动更新。仅存于本机 <code>~/.skillmanage/credentials.yaml</code>（权限 0600），不会随导出离开本机。</p>
+          <label class="tm-label">用户名（可选，部分平台需要）</label>
+          <input id="cred-user" placeholder="如 your-name" style="width:100%" />
+          <label class="tm-label" style="margin-top:12px">个人访问令牌 (PAT)</label>
+          <input id="cred-token" type="password" placeholder="粘贴令牌" style="width:100%" autocomplete="off" />
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="cred-cancel" class="ghost">取消</button>
+            <button type="submit">保存并重试</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div id="help-modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
@@ -98,7 +118,7 @@
           <p>仓库 URL 支持 <code>https://…</code>、<code>ssh://…</code>，以及 scp 式 <code>git@host:org/repo.git</code>；不支持明文 <code>http://</code>、本地 <code>file://</code> 和 <code>ext::</code>。</p>
           <p><b>公开仓</b>用 https 直接添加，无需任何配置。<b>私有仓的自动更新需要你先配好「免交互」鉴权</b>——守护进程在后台拉取，<b>不会弹窗让你输密码</b>，配不好就只在该仓上报错（不会卡住）：</p>
           <p>· <b>SSH（私有仓推荐）</b>：配好该 git 主机的 SSH key 并加入 <code>ssh-agent</code>（带 passphrase 的 key 要先解锁，因为工具以 <code>BatchMode</code> 运行、不会提示输入），公钥登记到 git 服务器。</p>
-          <p>· <b>HTTPS</b>：需要系统凭据助手已缓存凭据（macOS 钥匙串 / Git Credential Manager），或使用个人访问令牌（PAT）。也可把 token 写进 URL（<code>https://&lt;token&gt;@host/…</code>），但会明文存进配置，不推荐。</p>
+          <p>· <b>HTTPS（最简单）</b>：直接点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。</p>
 
           <h4>同步目录（顶部 tab）</h4>
           <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>

@@ -50,6 +50,7 @@ const state = {
   adoptable: [],
   adoptError: false,
   ignorePlugins: true, // hide plugin skills from the adoptable list by default
+  credHosts: {}, // host → username for hosts with a stored HTTPS credential
   skillsByRepo: {},
   expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
@@ -127,6 +128,11 @@ async function load() {
   try { state.targets = (await api("GET", "/api/targets")) || []; }
   catch { state.targets = []; }
   await fetchAdoptable();
+  try {
+    const list = (await api("GET", "/api/credentials")) || [];
+    state.credHosts = {};
+    list.forEach((c) => { state.credHosts[c.host] = c.username || ""; });
+  } catch { state.credHosts = {}; }
   const repos = state.status.repos || [];
   // Fetch tracked-repo skills plus the @local store (adopted skills).
   const names = repos.map((r) => r.name).concat(LOCAL_NS);
@@ -158,6 +164,25 @@ function renderStats() {
 
 function stateBadge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
 
+// httpsHost returns the host of an https repo URL, or "" for ssh/scp URLs
+// (credential entry only applies to HTTPS).
+function httpsHost(u) {
+  try {
+    if (!/^https?:\/\//i.test(u)) return "";
+    return new URL(u).hostname;
+  } catch { return ""; }
+}
+
+function openCredModal(host, username) {
+  $("#cred-host").textContent = host;
+  $("#cred-host").dataset.host = host;
+  $("#cred-user").value = username || "";
+  $("#cred-token").value = "";
+  $("#cred-modal").classList.remove("hidden");
+  $("#cred-token").focus();
+}
+function closeCredModal() { $("#cred-modal").classList.add("hidden"); }
+
 function renderRepos() {
   const ul = $("#repo-list"); ul.innerHTML = "";
   (state.status.repos || []).forEach((repo) => {
@@ -169,6 +194,13 @@ function renderRepos() {
     const meta = ce("div", { className: "repo-meta" });
     const n = (state.skillsByRepo[repo.name] || []).length;
     meta.append(ce("span", { className: "badge count", textContent: n + " skill" }));
+    const host = httpsHost(repo.url);
+    if (host) {
+      const has = Object.prototype.hasOwnProperty.call(state.credHosts, host);
+      const cb = ce("button", { className: "ghost small", textContent: has ? "凭据✓" : "填写凭据", title: has ? ("已为 " + host + " 配置凭据，点此重填") : ("为私有仓 " + host + " 填写 HTTPS 令牌") });
+      cb.onclick = () => openCredModal(host, state.credHosts[host] || "");
+      meta.append(cb);
+    }
     meta.append(ce("span", { className: "group-spacer" }));
     const rm = ce("button", { className: "danger small", textContent: "移除" });
     rm.onclick = async () => {
@@ -179,7 +211,7 @@ function renderRepos() {
     meta.append(rm);
     li.append(meta);
     if (repo.error) li.append(ce("div", { className: "muted", style: "color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap", textContent: repo.error }));
-    if (repo.authHint) li.append(ce("div", { className: "repo-authhint", textContent: "鉴权失败，无法自动更新：私有仓需先配置 git 凭据 —— SSH 把 key 加入 ssh-agent，或 HTTPS 用凭据助手 / 个人令牌(PAT)。详见标题旁 ? 指南。" }));
+    if (repo.authHint) li.append(ce("div", { className: "repo-authhint", textContent: host ? "鉴权失败，无法自动更新：点上方「填写凭据」填个人令牌(PAT)，或改用 SSH。" : "鉴权失败，无法自动更新：私有仓需配置 SSH key（加入 ssh-agent）。详见标题旁 ? 指南。" }));
     ul.append(li);
   });
 }
@@ -491,6 +523,23 @@ $("#target-path").onkeydown = (e) => {
 $("#target-path").onpaste = () => {
   setTimeout(() => browseTo($("#target-path").value.trim()), 0);
 };
+$("#cred-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const host = $("#cred-host").dataset.host;
+  const username = $("#cred-user").value.trim();
+  const token = $("#cred-token").value;
+  if (!host || !token) { banner("令牌不能为空", true); return; }
+  try {
+    await api("POST", "/api/credentials", { host, username, token });
+    closeCredModal();
+    banner("凭据已保存，正在重试更新…");
+    await api("POST", "/api/update-now", {});
+    await load();
+  } catch (err) { banner("保存凭据失败：" + err.message, true); }
+};
+$("#cred-close").onclick = closeCredModal;
+$("#cred-cancel").onclick = closeCredModal;
+$("#cred-modal").onclick = (e) => { if (e.target.id === "cred-modal") closeCredModal(); };
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
