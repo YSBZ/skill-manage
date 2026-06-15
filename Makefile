@@ -46,6 +46,7 @@ package: build-all
 	  (cd "$(DIST)/pkg" && zip -q -r "skillmanage-$$label.zip" "skillmanage-$$label"); \
 	  rm -rf "$$d"; \
 	done; \
+	rm -f $(DIST)/skillmanage-*; \
 	ls -lh $(DIST)/pkg/*.zip
 
 clean:

@@ -43,6 +43,7 @@ type Server struct {
 	indexHTML     []byte // token already injected
 
 	syncer     *gitsync.Syncer
+	gitErr     string // non-empty when git is unavailable; syncer is then nil
 	reconciler *reconcile.Reconciler
 
 	autostart AutostartManager
@@ -149,9 +150,14 @@ func New(centralDir string) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read embedded index.html: %w", err)
 	}
-	syncer, err := gitsync.NewSyncer()
-	if err != nil {
-		return nil, err
+	// git absence must NOT kill startup — otherwise the windowless Windows build
+	// just dies on a machine without Git installed ("闪一下就关了"). Bring the UI
+	// up regardless and surface the problem; syncs no-op until git is present.
+	syncer, gitErr := gitsync.NewSyncer()
+	gitErrMsg := ""
+	if gitErr != nil {
+		gitErrMsg = gitErr.Error()
+		syncer = nil
 	}
 	return &Server{
 		centralDir:    centralDir,
@@ -161,6 +167,7 @@ func New(centralDir string) (*Server, error) {
 		uiFS:          uiFS,
 		indexHTML:     bytes.ReplaceAll(rawIndex, []byte(tokenPlaceholder), []byte(token)),
 		syncer:        syncer,
+		gitErr:        gitErrMsg,
 		reconciler:    reconcile.New(reposRoot, personalStore),
 		cfg:           cfg,
 		manifest:      manifest,
@@ -239,10 +246,19 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 	// UNLOCKED so a slow/hung fetch never blocks the UI or other handlers.
 	s.mu.Lock()
 	repos := append([]config.RepoConfig(nil), s.cfg.Repos...)
+	noGit := s.syncer == nil
+	gitErr := s.gitErr
 	s.mu.Unlock()
 
 	statuses := make(map[string]RepoStatus, len(repos))
 	for _, repo := range repos {
+		// Without git we can't fetch; record the reason on each repo and skip the
+		// network step. Reconcile below still links any mirrors already on disk.
+		if noGit {
+			name := reconcile.RepoName(repo.URL)
+			statuses[repo.URL] = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: "failed", Error: gitErr}
+			continue
+		}
 		name := reconcile.RepoName(repo.URL)
 		dir := filepath.Join(s.reposRoot, name)
 		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})

@@ -104,6 +104,7 @@ type statusResp struct {
 	Targets     []string              `json:"targets"`
 	Links       []config.LinkRecord   `json:"links"`
 	LastSummary reconcile.Summary     `json:"lastSummary"`
+	GitError    string                `json:"gitError,omitempty"` // set when git is unavailable
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +116,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Targets:     s.cfg.Targets,
 		Links:       s.manifest.Links,
 		LastSummary: s.lastSummary,
+		GitError:    s.gitErr,
 	}
 	// repo status in config order
 	for _, repo := range s.cfg.Repos {

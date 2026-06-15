@@ -504,6 +504,27 @@ func TestBindFallback(t *testing.T) {
 	}
 }
 
+func TestServerStartsWithoutGit(t *testing.T) {
+	t.Setenv("PATH", "") // git not resolvable → must not crash startup
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New must succeed even without git, got %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := s.Handler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("GET", "/api/status", s.token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "gitError") {
+		t.Errorf("status should surface gitError when git is missing, got %s", w.Body.String())
+	}
+	// SyncAll must not panic with a nil syncer; it records the error instead.
+	sum := s.SyncAll(context.Background(), false)
+	_ = sum
+}
+
 func TestBrowseEndpoint(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()

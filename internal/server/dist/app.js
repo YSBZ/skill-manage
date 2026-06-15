@@ -136,7 +136,11 @@ async function load() {
   }));
   state.skillsByRepo = Object.fromEntries(entries);
   renderStats(); renderRepos(); renderTabs(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
-  banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
+  if (state.status.gitError) {
+    banner("未检测到 git：" + state.status.gitError + "。请安装 Git 并确保在 PATH 中，然后重启本工具——否则无法拉取/更新仓库。", true);
+  } else {
+    banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
+  }
 }
 
 function renderStats() {

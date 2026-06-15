@@ -2,6 +2,16 @@
 
 一个「同步 skill」的小工具：跟踪你的 git skill 仓、每天自动保持最新，并把选中的 skill 软链进 Claude Code / Codex 的 skill 目录。零安装、零更新动作——单个可执行文件，UI 内置。
 
+## 0. 前置：需要 git
+
+本工具靠 git 拉取/更新 skill 仓，所以机器上**必须装有 Git 且在 PATH 中**。
+
+- Windows：装 [Git for Windows](https://git-scm.com/download/win)，安装时选「Git from the command line…」让它进 PATH，装完**重开终端/重启工具**。
+- macOS：`git --version`（没有会提示装 Xcode Command Line Tools），或 `brew install git`。
+- Linux/WSL：`sudo apt install git` 等。
+
+没装 git 工具也能起来，但顶部会红条提示、且无法同步仓库。
+
 ## 1. 运行
 
 这个 zip 里有一个可执行文件（`skillmanage` 或 `skillmanage.exe`）。启动后会**自动在默认浏览器打开** UI（默认 `http://127.0.0.1:7799/`）；它是常驻后台进程，再次运行只会打开已在跑的那个实例的 UI，不会重复启动。
