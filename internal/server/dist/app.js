@@ -67,6 +67,9 @@ const ADOPT_ERR = {
 };
 
 const HARNESS_LABEL = { cc: "cc", codex: "codex" };
+// Reserved source namespace for adopted (收编) skills living in the personal
+// store; surfaced in the main list alongside tracked repos so收编 is visible.
+const LOCAL_NS = "@local";
 
 function banner(msg, isErr) {
   const b = $("#banner");
@@ -137,9 +140,11 @@ async function load() {
   try { state.adoptable = ((await api("GET", "/api/adoptable")) || {}).skills || []; state.adoptError = false; }
   catch { state.adoptable = []; state.adoptError = true; }
   const repos = state.status.repos || [];
-  const entries = await Promise.all(repos.map(async (r) => {
-    try { return [r.name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(r.name))) || []]; }
-    catch { return [r.name, []]; }
+  // Fetch tracked-repo skills plus the @local store (adopted skills).
+  const names = repos.map((r) => r.name).concat(LOCAL_NS);
+  const entries = await Promise.all(names.map(async (name) => {
+    try { return [name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(name))) || []]; }
+    catch { return [name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
   renderStats(); renderRepos(); renderTarget(); renderTargetList(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
@@ -270,45 +275,49 @@ function renderSkills() {
   const root = $("#skills"); root.innerHTML = "";
   const repos = state.status.repos || [];
   const term = state.search.trim().toLowerCase();
-  if (repos.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
+  // Sources = tracked repos, plus the @local store when it holds adopted skills.
+  const sources = repos.map((r) => r.name);
+  if ((state.skillsByRepo[LOCAL_NS] || []).length) sources.push(LOCAL_NS);
+  if (sources.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
 
   let anyShown = false;
-  repos.forEach((repo) => {
-    let skills = state.skillsByRepo[repo.name] || [];
+  sources.forEach((name) => {
+    const isLocal = name === LOCAL_NS;
+    let skills = state.skillsByRepo[name] || [];
     if (term) skills = skills.filter((s) => s.linkName.toLowerCase().includes(term) || (s.description || "").toLowerCase().includes(term));
     if (term && skills.length === 0) return;
     anyShown = true;
 
-    const collapsed = state.collapsed.has(repo.name);
+    const collapsed = state.collapsed.has(name);
     const group = ce("div", { className: "group" + (collapsed ? " collapsed" : "") });
 
     const head = ce("div", { className: "group-head" });
     head.append(ce("span", { className: "caret", textContent: "▾" }));
-    head.append(ce("span", { className: "group-title", textContent: repo.name }));
+    head.append(ce("span", { className: "group-title", textContent: isLocal ? "@local · 已收编" : name }));
     head.append(ce("span", { className: "badge count", textContent: skills.length + " skill" }));
     head.append(ce("span", { className: "group-spacer" }));
-    const follow = enabledFollow(repo.name);
+    const follow = enabledFollow(name);
     const fbtn = ce("button", { className: (follow ? "" : "ghost") + " small", textContent: follow ? "🔄 跟随中" : "全选并跟随" });
     fbtn.onclick = async (e) => {
       e.stopPropagation();
-      if (follow) await api("DELETE", "/api/enabled", { skill: repo.name + "/*", target: currentTarget() });
-      else await api("POST", "/api/enabled", { skill: repo.name + "/*", target: currentTarget(), mode: "follow" });
+      if (follow) await api("DELETE", "/api/enabled", { skill: name + "/*", target: currentTarget() });
+      else await api("POST", "/api/enabled", { skill: name + "/*", target: currentTarget(), mode: "follow" });
       await apply();
     };
     head.append(fbtn);
     if (follow) {
-      const dt = disableToggle(repo.name + "/*");
+      const dt = disableToggle(name + "/*");
       if (dt) head.append(dt);
     }
     head.onclick = () => {
-      if (collapsed) state.collapsed.delete(repo.name); else state.collapsed.add(repo.name);
+      if (collapsed) state.collapsed.delete(name); else state.collapsed.add(name);
       group.classList.toggle("collapsed");
     };
     group.append(head);
 
     const body = ce("div", { className: "group-body" });
-    if (skills.length === 0) body.append(ce("div", { className: "empty", textContent: "此仓暂无 skill（可能尚未同步，点“立即更新”）" }));
-    skills.forEach((sk) => body.append(skillCard(repo.name, sk, follow)));
+    if (skills.length === 0) body.append(ce("div", { className: "empty", textContent: isLocal ? "暂无已收编 skill" : "此仓暂无 skill（可能尚未同步，点“立即更新”）" }));
+    skills.forEach((sk) => body.append(skillCard(name, sk, follow)));
     group.append(body);
     root.append(group);
   });

@@ -296,17 +296,31 @@ func (s *Server) targetsLocked() []harness.Target {
 // --- skills ---
 
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
-	repo := r.URL.Query().Get("repo")
-	if !reconcile.ValidRepoName(repo) {
+	root, ok := s.sourceRoot(r.URL.Query().Get("repo"))
+	if !ok {
 		http.Error(w, "invalid repo", http.StatusBadRequest)
 		return
 	}
-	skills, err := scanner.Scan(filepath.Join(s.reposRoot, repo))
+	skills, err := scanner.Scan(root)
 	if err != nil {
 		writeJSON(w, http.StatusOK, []scanner.Skill{}) // not yet synced → empty
 		return
 	}
 	writeJSON(w, http.StatusOK, skills)
+}
+
+// sourceRoot resolves a source selector to its on-disk root: the reserved
+// "@local" namespace → the personal (adopted-skill) store; any other valid repo
+// name → reposRoot/<name>. Mirrors reconcile.sourceRoot so the UI can list both
+// tracked-repo skills and adopted @local skills through one endpoint.
+func (s *Server) sourceRoot(repo string) (string, bool) {
+	if repo == reconcile.LocalNamespace {
+		return s.personalStore, true
+	}
+	if reconcile.ValidRepoName(repo) {
+		return filepath.Join(s.reposRoot, repo), true
+	}
+	return "", false
 }
 
 // skillDetail is the full view of one skill (its SKILL.md content + metadata).
@@ -318,13 +332,13 @@ type skillDetail struct {
 }
 
 func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
-	repo := r.URL.Query().Get("repo")
 	name := r.URL.Query().Get("name")
-	if !reconcile.ValidRepoName(repo) || !reconcile.ValidRepoName(name) {
+	root, ok := s.sourceRoot(r.URL.Query().Get("repo"))
+	if !ok || !reconcile.ValidRepoName(name) {
 		http.Error(w, "invalid repo or name", http.StatusBadRequest)
 		return
 	}
-	skills, err := scanner.Scan(filepath.Join(s.reposRoot, repo))
+	skills, err := scanner.Scan(root)
 	if err != nil {
 		http.Error(w, "repo not found", http.StatusNotFound)
 		return

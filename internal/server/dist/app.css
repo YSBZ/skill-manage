@@ -60,6 +60,15 @@ input, select {
   border-radius: 8px; padding: 7px 10px; outline: none;
 }
 input:focus, select:focus { border-color: var(--accent); }
+/* native selects carry OS chrome that clashes with the dark rounded inputs;
+   strip it and draw our own chevron so the control matches the theme. */
+select {
+  appearance: none; -webkit-appearance: none;
+  cursor: pointer; padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' fill='none' stroke='%23939bac' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+select option { background: var(--panel); color: var(--text); }
 #repo-url, #target-path { flex: 1; min-width: 0; }
 .branch { width: 100px; }
 .target { width: 100%; margin-bottom: 8px; }
