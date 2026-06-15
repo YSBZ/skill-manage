@@ -186,8 +186,9 @@ function renderTabs() {
       e.stopPropagation();
       if (!confirm("移除同步目录 " + (t.alias || t.dir) + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
       if (state.activeTarget === t.dir) state.activeTarget = undefined;
+      // DELETE reconciles server-side, tearing down this tab's links on disk.
       await api("DELETE", "/api/targets", { dir: t.dir });
-      await apply();
+      await load();
     };
     tab.append(rm);
     tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); };

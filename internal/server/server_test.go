@@ -295,6 +295,46 @@ func TestAddRemoveTarget(t *testing.T) {
 	}
 }
 
+func TestRemoveTargetTearsDownLinks(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	// adopt a skill into a target so a managed symlink exists under that target
+	dir := t.TempDir()
+	skill := filepath.Join(dir, "demo")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: demo\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		path string
+		body map[string]string
+	}{
+		{"/api/targets", map[string]string{"dir": dir}},
+		{"/api/adopt", map[string]string{"id": "demo", "root": dir}},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req("POST", step.path, s.token, step.body))
+		if w.Code != http.StatusOK && w.Code != http.StatusCreated {
+			t.Fatalf("%s: %d body=%s", step.path, w.Code, w.Body.String())
+		}
+	}
+	if fi, _ := os.Lstat(skill); fi == nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("precondition: %s should be a managed symlink after adopt", skill)
+	}
+	// removing the tab must tear that symlink off disk, not just drop config
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("DELETE", "/api/targets", s.token, map[string]string{"dir": dir}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("remove target: %d", w.Code)
+	}
+	if _, err := os.Lstat(skill); !os.IsNotExist(err) {
+		t.Errorf("symlink under removed target should be gone, lstat err = %v", err)
+	}
+}
+
 func TestAdoptAddsEnabledMapping(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	s := newTestServer(t)

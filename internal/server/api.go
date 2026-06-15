@@ -659,13 +659,15 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := strings.TrimSpace(req.Dir)
+	want := harness.Expand(dir)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Drop the directory and any enabled selection that pointed at it, so its
-	// links are reconciled away on the next cycle (no dangling selections).
+	// Drop the directory and any enabled selection that pointed at it. Compare by
+	// resolved path so a form mismatch (trailing slash / ~ vs absolute) can't
+	// leave a selection behind. Removing the selections makes those links no
+	// longer desired, so the reconcile below tears them off disk.
 	out := s.cfg.Targets[:0]
 	for _, d := range s.cfg.Targets {
-		if d != dir {
+		if harness.Expand(d) != want {
 			out = append(out, d)
 		}
 	}
@@ -673,15 +675,21 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 	delete(s.cfg.TargetAliases, dir)
 	kept := s.cfg.Enabled[:0]
 	for _, e := range s.cfg.Enabled {
-		if e.Target != dir {
+		if harness.Expand(e.Target) != want {
 			kept = append(kept, e)
 		}
 	}
 	s.cfg.Enabled = kept
 	if err := s.persistConfigLocked(w); err != nil {
+		s.mu.Unlock()
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	s.mu.Unlock()
+
+	// Reconcile immediately so every symlink this tab owned is torn down right
+	// now, instead of relying on a separate apply round-trip from the client.
+	sum := s.ReconcileOnly()
+	writeJSON(w, http.StatusOK, sum)
 }
 
 // --- update-now ---
