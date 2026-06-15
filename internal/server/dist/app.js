@@ -93,25 +93,13 @@ const enabledFollow = (repo) =>
 const enabledSnapshot = (repo, link) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === currentTarget());
 
-// harnessOfDir classifies a target directory by agent (mirrors the backend's
-// harness.IsCodexTarget): codex when the path is a .codex/skills or
-// .agents/skills directory, otherwise cc.
-function harnessOfDir(dir) {
-  return /(\/|^)\.codex\/skills(\/|$)|(\/|^)\.agents\/skills(\/|$)/.test(dir || "") ? "codex" : "cc";
-}
-
-// skillBadges returns the status badges for a skill across all harnesses: a
-// per-harness "linked" badge for each agent it is currently linked into, plus
-// any conflict badges. Shows all harnesses regardless of the selected target,
-// so the search/filter view reflects both ends (F4/F8).
+// skillBadges returns only conflict/warning badges for a skill. Whether a skill
+// is synced to the current directory is shown by its checkbox (sync is by
+// directory/tab, NOT by cc/codex agent), so a per-agent "linked" badge would be
+// both redundant and misleading.
 function skillBadges(linkName) {
   const out = [];
   const confs = (state.status.lastSummary && state.status.lastSummary.conflicts) || [];
-  const harnesses = new Set();
-  (state.status.links || []).forEach((l) => { if (l.name === linkName) harnesses.add(harnessOfDir(l.target)); });
-  if (harnesses.has("cc")) out.push({ cls: "st-linked", text: "cc ✓" });
-  if (harnesses.has("codex")) out.push({ cls: "st-linked-codex", text: "codex ✓" });
-  if (out.length === 0) out.push({ cls: "", text: "未链接" });
   if (confs.some((c) => c.kind === "collision" && c.linkName === linkName)) out.push({ cls: "st-conflict", text: "撞名" });
   if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "被遮蔽" });
   if (confs.some((c) => c.kind === "nested" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "嵌套⚠" });
