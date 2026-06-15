@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"skillmanage/internal/config"
+	"skillmanage/internal/harness"
 )
 
 func newTestServer(t *testing.T) *Server {
@@ -319,16 +320,33 @@ func TestAdoptAddsEnabledMapping(t *testing.T) {
 
 func TestBackfillAdoptedEnabled(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "local")
-	cfg := &config.Config{}
+	absClaude := harness.Expand("~/.claude/skills/")
+	cfg := &config.Config{
+		Targets: []string{"~/.claude/skills/"}, // configured (canonical) form
+		// a previously-backfilled entry written in absolute form → must normalize
+		Enabled: []config.EnabledEntry{{Skill: "@local/old", Target: absClaude, Mode: config.ModeSnapshot}},
+	}
 	m := &config.Manifest{Links: []config.LinkRecord{
-		{Name: "foo", Target: "~/.claude/skills", Source: filepath.Join(store, "foo"), LinkType: config.LinkSymlink},
+		{Name: "old", Target: absClaude, Source: filepath.Join(store, "old"), LinkType: config.LinkSymlink},
+		{Name: "foo", Target: absClaude, Source: filepath.Join(store, "foo"), LinkType: config.LinkSymlink},
 		{Name: "bar", Target: "/x/.codex/skills", Source: "/other/bar"}, // not store-sourced → ignored
 	}}
 	if !backfillAdoptedEnabled(cfg, m, store) {
-		t.Fatal("expected backfill to add the orphan store link")
+		t.Fatal("expected backfill to normalize + add the orphan store link")
 	}
-	if len(cfg.Enabled) != 1 || cfg.Enabled[0].Skill != "@local/foo" {
-		t.Fatalf("want one @local/foo entry, got %+v", cfg.Enabled)
+	bySkill := map[string]string{}
+	for _, e := range cfg.Enabled {
+		bySkill[e.Skill] = e.Target
+	}
+	// existing abs entry normalized to the configured form; new foo added with it
+	if bySkill["@local/old"] != "~/.claude/skills/" {
+		t.Errorf("existing entry should normalize to ~/.claude/skills/, got %q", bySkill["@local/old"])
+	}
+	if bySkill["@local/foo"] != "~/.claude/skills/" {
+		t.Errorf("new entry should use the canonical target, got %q", bySkill["@local/foo"])
+	}
+	if len(cfg.Enabled) != 2 {
+		t.Fatalf("want old + foo, got %+v", cfg.Enabled)
 	}
 	if backfillAdoptedEnabled(cfg, m, store) {
 		t.Error("second run must be a no-op (idempotent)")

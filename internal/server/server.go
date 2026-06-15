@@ -164,11 +164,35 @@ func New(centralDir string) (*Server, error) {
 // @local/<name> → <target> mapping. Returns true if cfg was modified.
 func backfillAdoptedEnabled(cfg *config.Config, manifest *config.Manifest, personalStore string) bool {
 	storeAbs := harness.Expand(personalStore)
+	// Map an expanded dir back to its configured (user-facing) form, e.g.
+	// "/Users/x/.claude/skills" → "~/.claude/skills/". The UI matches an enabled
+	// entry's Target against the dropdown value (a config.Targets string) by exact
+	// string compare, so entries must carry that exact form or the checkbox state
+	// disagrees with the actual link.
+	canon := map[string]string{}
+	for _, d := range cfg.Targets {
+		canon[harness.Expand(d)] = d
+	}
+	canonicalize := func(target string) string {
+		if c, ok := canon[harness.Expand(target)]; ok {
+			return c
+		}
+		return target
+	}
+	changed := false
+	// 1. normalize existing enabled targets to the configured form (heals entries
+	//    written in absolute form by an earlier backfill).
+	for i := range cfg.Enabled {
+		if c := canonicalize(cfg.Enabled[i].Target); c != cfg.Enabled[i].Target {
+			cfg.Enabled[i].Target = c
+			changed = true
+		}
+	}
+	// 2. backfill missing @local mappings for store-sourced manifest links.
 	have := map[string]bool{}
 	for _, e := range cfg.Enabled {
 		have[e.Skill+"\x00"+harness.Expand(e.Target)] = true
 	}
-	changed := false
 	for _, l := range manifest.Links {
 		if filepath.Dir(harness.Expand(l.Source)) != storeAbs {
 			continue // not an adopted (store-sourced) link
@@ -178,7 +202,7 @@ func backfillAdoptedEnabled(cfg *config.Config, manifest *config.Manifest, perso
 		if have[key] {
 			continue
 		}
-		cfg.Enabled = append(cfg.Enabled, config.EnabledEntry{Skill: skill, Target: l.Target, Mode: config.ModeSnapshot})
+		cfg.Enabled = append(cfg.Enabled, config.EnabledEntry{Skill: skill, Target: canonicalize(l.Target), Mode: config.ModeSnapshot})
 		have[key] = true
 		changed = true
 	}
