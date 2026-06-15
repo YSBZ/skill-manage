@@ -66,6 +66,27 @@ const enabledFollow = (repo) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === currentTarget());
 const enabledSnapshot = (repo, link) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === currentTarget());
+const enabledEntryFor = (skill) =>
+  (state.status.enabled || []).find((e) => e.skill === skill && e.target === currentTarget());
+
+// disableToggle returns a 停用/启用 button for an existing enabled entry at the
+// current target (or null if there is none). Disabling withholds the link but
+// keeps the selection (F6).
+function disableToggle(skill) {
+  const entry = enabledEntryFor(skill);
+  if (!entry) return null;
+  const btn = ce("button", {
+    className: "small ghost",
+    textContent: entry.disabled ? "启用" : "停用",
+    title: entry.disabled ? "已停用：链接已撤下，选择保留" : "停用：撤下链接但保留选择",
+  });
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    await api("POST", "/api/enabled/disable", { skill, target: currentTarget(), disabled: !entry.disabled });
+    await apply();
+  };
+  return btn;
+}
 
 // harnessOfDir classifies a target directory by agent (mirrors the backend's
 // harness.IsCodexTarget): Codex when the path is a .codex/skills or
@@ -195,6 +216,10 @@ function renderSkills() {
       await apply();
     };
     head.append(fbtn);
+    if (follow) {
+      const dt = disableToggle(repo.name + "/*");
+      if (dt) head.append(dt);
+    }
     head.onclick = () => {
       if (collapsed) state.collapsed.delete(repo.name); else state.collapsed.add(repo.name);
       group.classList.toggle("collapsed");
@@ -227,9 +252,16 @@ function skillCard(repo, sk, follow) {
   r1.append(ce("span", { className: "skill-name", textContent: sk.linkName }));
   if (sk.logicalName !== sk.linkName) r1.append(ce("span", { className: "skill-logical", textContent: "(" + sk.logicalName + ")" }));
   skillBadges(sk.linkName).forEach((b) => r1.append(ce("span", { className: "badge " + b.cls, textContent: b.text })));
+  const covering = enabledEntryFor(repo + "/*") || enabledEntryFor(repo + "/" + sk.linkName);
+  if (covering && covering.disabled) r1.append(ce("span", { className: "badge st-shadowed", textContent: "已停用" }));
   const detail = ce("button", { className: "skill-detail-btn", textContent: "详情" });
   detail.onclick = () => openDetail(repo, sk.linkName);
   r1.append(detail);
+  // snapshot-level disable toggle (follow-level lives on the group head)
+  if (!follow) {
+    const dt = disableToggle(repo + "/" + sk.linkName);
+    if (dt) r1.append(dt);
+  }
   main.append(r1);
   if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
   row.append(main);

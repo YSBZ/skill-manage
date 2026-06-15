@@ -33,6 +33,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
+	mux.HandleFunc("POST /api/enabled/disable", s.requireAuth(s.handleSetEnabledDisabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleAddProject))
 	mux.HandleFunc("DELETE /api/projects", s.requireAuth(s.handleRemoveProject))
@@ -428,6 +429,41 @@ func (s *Server) handleAddEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]bool{"ok": true})
+}
+
+type disableReq struct {
+	Skill    string `json:"skill"`
+	Target   string `json:"target"`
+	Disabled bool   `json:"disabled"`
+}
+
+// handleSetEnabledDisabled flips the Disabled flag on an existing entry in
+// place (U7). It is distinct from add (which early-returns on a duplicate and
+// cannot change a field) and remove (which drops the row, losing the selection).
+func (s *Server) handleSetEnabledDisabled(w http.ResponseWriter, r *http.Request) {
+	var req disableReq
+	if err := readJSON(r, &req); err != nil || req.Skill == "" || req.Target == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := false
+	for i := range s.cfg.Enabled {
+		if s.cfg.Enabled[i].Skill == req.Skill && s.cfg.Enabled[i].Target == req.Target {
+			s.cfg.Enabled[i].Disabled = req.Disabled
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such enabled entry"})
+		return
+	}
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleRemoveEnabled(w http.ResponseWriter, r *http.Request) {

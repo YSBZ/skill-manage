@@ -216,6 +216,9 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 	}
 
 	for _, e := range cfg.Enabled {
+		if e.Disabled {
+			continue // selection kept, links withheld (F6)
+		}
 		repo, sel := splitSkill(e.Skill)
 		if repo == "" || (repo != LocalNamespace && !ValidRepoName(repo)) {
 			errs = append(errs, fmt.Sprintf("invalid enabled skill selector %q", e.Skill))
