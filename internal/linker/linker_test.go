@@ -355,3 +355,33 @@ func TestDetectConflicts(t *testing.T) {
 		}
 	}
 }
+
+// TestDetectConflictsCrossHarnessNotShadow is the KTD1 regression: mapping the
+// same skill to CC and Codex (the core dual-harness happy path) must NOT be
+// reported as a shadow conflict.
+func TestDetectConflictsCrossHarnessNotShadow(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	desired := []DesiredLink{
+		{LinkName: "dual", Target: "~/.claude/skills/", Source: "/repos/a/dual"},
+		{LinkName: "dual", Target: "~/.codex/skills/", Source: "/repos/a/dual"},
+	}
+	for _, c := range DetectConflicts(desired) {
+		if c.Kind == ConflictShadow {
+			t.Errorf("CC+Codex same name must not shadow, got %+v", c)
+		}
+	}
+	// but same name under two CC targets IS a shadow
+	cc := []DesiredLink{
+		{LinkName: "x", Target: "~/.claude/skills/", Source: "/repos/a/x"},
+		{LinkName: "x", Target: "/proj/.claude/skills", Source: "/repos/a/x"},
+	}
+	var shadow bool
+	for _, c := range DetectConflicts(cc) {
+		if c.Kind == ConflictShadow && c.LinkName == "x" {
+			shadow = true
+		}
+	}
+	if !shadow {
+		t.Errorf("same name under two CC targets should shadow")
+	}
+}

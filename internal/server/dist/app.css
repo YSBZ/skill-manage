@@ -91,6 +91,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .badge.dirty-skip, .badge.never-synced { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .badge.count { font-variant-numeric: tabular-nums; }
 .st-linked { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.st-linked-codex { color: #c98bff; border-color: color-mix(in srgb, #c98bff 50%, transparent); }
 .st-conflict { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .st-shadowed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 

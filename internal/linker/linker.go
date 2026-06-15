@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"skillmanage/internal/config"
+	"skillmanage/internal/harness"
 )
 
 var (
@@ -248,11 +249,15 @@ type Conflict struct {
 
 // DetectConflicts inspects a desired link set for within-root collisions and
 // cross-target shadowing. It is pure (no filesystem access) so the reconciler
-// can surface conflicts before touching disk.
+// can surface conflicts before touching disk. Shadowing is scoped per harness
+// (KTD1): the same name under CC personal + CC project is a shadow, but the
+// same name under CC and Codex is the intended dual-harness mapping, not a
+// shadow.
 func DetectConflicts(desired []DesiredLink) []Conflict {
 	type key struct{ target, name string }
+	type shadowKey struct{ harness, name string }
 	sourcesByKey := map[key]map[string]bool{}
-	targetsByName := map[string]map[string]bool{}
+	targetsByShadow := map[shadowKey]map[string]bool{}
 
 	for _, d := range desired {
 		k := key{d.Target, d.LinkName}
@@ -260,10 +265,11 @@ func DetectConflicts(desired []DesiredLink) []Conflict {
 			sourcesByKey[k] = map[string]bool{}
 		}
 		sourcesByKey[k][d.Source] = true
-		if targetsByName[d.LinkName] == nil {
-			targetsByName[d.LinkName] = map[string]bool{}
+		sk := shadowKey{harnessOf(d.Target), d.LinkName}
+		if targetsByShadow[sk] == nil {
+			targetsByShadow[sk] = map[string]bool{}
 		}
-		targetsByName[d.LinkName][d.Target] = true
+		targetsByShadow[sk][d.Target] = true
 	}
 
 	var out []Conflict
@@ -272,9 +278,9 @@ func DetectConflicts(desired []DesiredLink) []Conflict {
 			out = append(out, Conflict{Kind: ConflictCollision, LinkName: k.name, Targets: []string{k.target}, Sources: sortedKeys(srcs)})
 		}
 	}
-	for name, tgts := range targetsByName {
+	for sk, tgts := range targetsByShadow {
 		if len(tgts) > 1 {
-			out = append(out, Conflict{Kind: ConflictShadow, LinkName: name, Targets: sortedKeys(tgts)})
+			out = append(out, Conflict{Kind: ConflictShadow, LinkName: sk.name, Targets: sortedKeys(tgts)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -284,6 +290,15 @@ func DetectConflicts(desired []DesiredLink) []Conflict {
 		return out[i].LinkName < out[j].LinkName
 	})
 	return out
+}
+
+// harnessOf classifies a target directory by the agent that consumes it, so
+// shadow detection only fires within a single harness (KTD1).
+func harnessOf(target string) string {
+	if harness.IsCodexTarget(target) {
+		return "codex"
+	}
+	return "claude-code"
 }
 
 func sortedKeys(m map[string]bool) []string {

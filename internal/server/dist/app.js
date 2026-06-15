@@ -67,16 +67,29 @@ const enabledFollow = (repo) =>
 const enabledSnapshot = (repo, link) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === currentTarget());
 
-function skillBadge(linkName) {
-  const s = state.status.lastSummary;
-  const confs = (s && s.conflicts) || [];
-  if (confs.some((c) => c.kind === "collision" && c.linkName === linkName))
-    return { cls: "st-conflict", text: "撞名" };
-  if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName))
-    return { cls: "st-shadowed", text: "被遮蔽" };
-  if ((state.status.links || []).some((l) => l.name === linkName))
-    return { cls: "st-linked", text: "已链接" };
-  return { cls: "", text: "未链接" };
+// harnessOfDir classifies a target directory by agent (mirrors the backend's
+// harness.IsCodexTarget): Codex when the path is a .codex/skills or
+// .agents/skills directory, otherwise Claude Code.
+function harnessOfDir(dir) {
+  return /(\/|^)\.codex\/skills(\/|$)|(\/|^)\.agents\/skills(\/|$)/.test(dir || "") ? "Codex" : "CC";
+}
+
+// skillBadges returns the status badges for a skill across all harnesses: a
+// per-harness "linked" badge for each agent it is currently linked into, plus
+// any conflict badges. Shows all harnesses regardless of the selected target,
+// so the search/filter view reflects both ends (F4/F8).
+function skillBadges(linkName) {
+  const out = [];
+  const confs = (state.status.lastSummary && state.status.lastSummary.conflicts) || [];
+  const harnesses = new Set();
+  (state.status.links || []).forEach((l) => { if (l.name === linkName) harnesses.add(harnessOfDir(l.target)); });
+  if (harnesses.has("CC")) out.push({ cls: "st-linked", text: "CC ✓" });
+  if (harnesses.has("Codex")) out.push({ cls: "st-linked-codex", text: "Codex ✓" });
+  if (out.length === 0) out.push({ cls: "", text: "未链接" });
+  if (confs.some((c) => c.kind === "collision" && c.linkName === linkName)) out.push({ cls: "st-conflict", text: "撞名" });
+  if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "被遮蔽" });
+  if (confs.some((c) => c.kind === "nested" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "嵌套⚠" });
+  return out;
 }
 
 async function load() {
@@ -213,8 +226,7 @@ function skillCard(repo, sk, follow) {
   const r1 = ce("div", { className: "skill-row1" });
   r1.append(ce("span", { className: "skill-name", textContent: sk.linkName }));
   if (sk.logicalName !== sk.linkName) r1.append(ce("span", { className: "skill-logical", textContent: "(" + sk.logicalName + ")" }));
-  const b = skillBadge(sk.linkName);
-  r1.append(ce("span", { className: "badge " + b.cls, textContent: b.text }));
+  skillBadges(sk.linkName).forEach((b) => r1.append(ce("span", { className: "badge " + b.cls, textContent: b.text })));
   const detail = ce("button", { className: "skill-detail-btn", textContent: "详情" });
   detail.onclick = () => openDetail(repo, sk.linkName);
   r1.append(detail);
@@ -234,9 +246,10 @@ function renderSummary() {
   if (s.pruned && s.pruned.length) parts.push("清理悬空 " + s.pruned.length);
   f.append(ce("span", { textContent: parts.length ? "上次同步：" + parts.join("，") : "上次同步：无变化" }));
   (s.conflicts || []).forEach((c) => {
-    const msg = c.kind === "collision"
-      ? "撞名 " + c.linkName + "（多个仓，需起别名）"
-      : "遮蔽 " + c.linkName + "（全局与项目同名，项目被遮蔽）";
+    let msg;
+    if (c.kind === "collision") msg = "撞名 " + c.linkName + "（多个仓，需起别名）";
+    else if (c.kind === "nested") msg = "嵌套 " + c.linkName + "（已链接到 Codex，含嵌套子 skill，可能污染 Codex 列表）";
+    else msg = "遮蔽 " + c.linkName + "（同一 agent 下全局与项目同名，项目被遮蔽）";
     f.append(ce("div", { className: "conflict", textContent: "⚠ " + msg }));
   });
   (s.errors || []).forEach((e) => f.append(ce("div", { className: "error", textContent: "✗ " + e })));
