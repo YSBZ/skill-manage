@@ -64,25 +64,6 @@ func TestMissedToday(t *testing.T) {
 	}
 }
 
-func TestRunNowTriggersJob(t *testing.T) {
-	ran := make(chan struct{}, 1)
-	// schedule far from now so the daily timer won't fire during the test
-	s, err := New("03:00", func(context.Context) { ran <- struct{}{} })
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go s.Run(ctx, time.Now()) // lastRun=now so no missed-run fire
-
-	s.RunNow()
-	select {
-	case <-ran:
-	case <-time.After(2 * time.Second):
-		t.Fatal("RunNow did not trigger the job")
-	}
-}
-
 func TestMissedRunFiresOnStart(t *testing.T) {
 	ran := make(chan struct{}, 1)
 	s, err := New("03:00", func(context.Context) { ran <- struct{}{} })

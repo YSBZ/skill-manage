@@ -21,7 +21,7 @@ func TestTargets(t *testing.T) {
 	if len(ts) != 4 {
 		t.Fatalf("want 4 targets (blank + guarded dropped), got %d: %+v", len(ts), ts)
 	}
-	// order preserved, harness inferred from path, label == harness
+	// order preserved, harness inferred from path
 	want := []struct {
 		dir string
 		h   Harness
@@ -32,7 +32,7 @@ func TestTargets(t *testing.T) {
 		{"/work/proj/.claude/skills", HarnessClaudeCode},
 	}
 	for i, w := range want {
-		if ts[i].Dir != w.dir || ts[i].Harness != w.h || ts[i].Label != string(w.h) {
+		if ts[i].Dir != w.dir || ts[i].Harness != w.h {
 			t.Errorf("target[%d] = %+v, want dir=%q harness=%q", i, ts[i], w.dir, w.h)
 		}
 	}

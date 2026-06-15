@@ -1,8 +1,8 @@
 // Package scheduler runs the daily sync-then-reconcile cycle on a
 // recompute-next-fire timer (KTD7): each loop computes the next wall-clock fire
 // time and sleeps via time.Timer, self-correcting for drift and DST. A startup
-// missed-run check covers laptop-sleep gaps, and RunNow triggers an out-of-band
-// cycle (R4).
+// missed-run check covers laptop-sleep gaps. On-demand syncs go straight through
+// the server's SyncAll, not the scheduler.
 package scheduler
 
 import (
@@ -49,12 +49,11 @@ func MissedToday(now, lastRun time.Time, hour, min int) bool {
 	return !now.Before(today) && lastRun.Before(today)
 }
 
-// Scheduler fires job daily at the configured time, plus on demand.
+// Scheduler fires job daily at the configured time.
 type Scheduler struct {
 	hour, min int
 	job       func(context.Context)
 	now       func() time.Time
-	trigger   chan struct{}
 }
 
 // New builds a Scheduler for dailyAt ("HH:MM"). job is the cycle to run.
@@ -64,26 +63,16 @@ func New(dailyAt string, job func(context.Context)) (*Scheduler, error) {
 		return nil, err
 	}
 	return &Scheduler{
-		hour:    h,
-		min:     m,
-		job:     job,
-		now:     time.Now,
-		trigger: make(chan struct{}, 1),
+		hour: h,
+		min:  m,
+		job:  job,
+		now:  time.Now,
 	}, nil
 }
 
-// RunNow requests an out-of-band cycle (non-blocking; coalesces if one is
-// already pending).
-func (s *Scheduler) RunNow() {
-	select {
-	case s.trigger <- struct{}{}:
-	default:
-	}
-}
-
-// Run blocks until ctx is cancelled, firing job daily and on RunNow. lastRun is
-// the timestamp of the last successful cycle (zero if never), used for the
-// startup missed-run check.
+// Run blocks until ctx is cancelled, firing job daily. lastRun is the timestamp
+// of the last successful cycle (zero if never), used for the startup missed-run
+// check.
 func (s *Scheduler) Run(ctx context.Context, lastRun time.Time) {
 	if MissedToday(s.now(), lastRun, s.hour, s.min) {
 		s.runJob(ctx)
@@ -96,9 +85,6 @@ func (s *Scheduler) Run(ctx context.Context, lastRun time.Time) {
 			timer.Stop()
 			return
 		case <-timer.C:
-			s.runJob(ctx)
-		case <-s.trigger:
-			timer.Stop()
 			s.runJob(ctx)
 		}
 	}

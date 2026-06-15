@@ -71,7 +71,6 @@ select {
 select option { background: var(--panel); color: var(--text); }
 #repo-url, #target-path { flex: 1; min-width: 0; }
 .branch { width: 100px; }
-.target { width: 100%; margin-bottom: 8px; }
 button {
   background: var(--accent); color: #fff; border: 0; border-radius: 8px;
   padding: 7px 13px; cursor: pointer; font-weight: 500;
@@ -100,7 +99,6 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .badge.cloning, .badge.sync-in-progress { color: var(--accent); border-color: var(--accent-dim); }
 .badge.dirty-skip, .badge.never-synced { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .badge.count { font-variant-numeric: tabular-nums; }
-.st-linked { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .st-linked-codex { color: #c98bff; border-color: color-mix(in srgb, #c98bff 50%, transparent); }
 .st-cc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .st-unknown { color: var(--muted); border-color: var(--line); }
@@ -158,7 +156,6 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .skill-logical { color: var(--muted); font-size: 12px; }
 .skill-desc { color: var(--muted); font-size: 12.5px; margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .skill-detail-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
-.follow-pill { font-size: 11px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 8px; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 
 /* misc */

@@ -92,7 +92,6 @@ func dirExists(p string) bool {
 type Target struct {
 	Harness Harness `json:"harness"`
 	Dir     string  `json:"dir"`
-	Label   string  `json:"label"`
 	Alias   string  `json:"alias,omitempty"` // optional user display name (cosmetic)
 }
 
@@ -108,8 +107,7 @@ func Targets(dirs []string) []Target {
 		if strings.TrimSpace(d) == "" || Guarded(d) {
 			continue
 		}
-		h := Classify(d)
-		out = append(out, Target{Harness: h, Dir: d, Label: string(h)})
+		out = append(out, Target{Harness: Classify(d), Dir: d})
 	}
 	return out
 }
