@@ -184,8 +184,8 @@ func (s *Server) handleRemoveRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	name := reconcile.RepoName(req.URL)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	out := s.cfg.Repos[:0]
 	for _, repo := range s.cfg.Repos {
 		if repo.URL != req.URL {
@@ -193,10 +193,26 @@ func (s *Server) handleRemoveRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cfg.Repos = out
+	// Drop this repo's skill selections so reconcile no longer wants their links
+	// and tears them off disk. Enabled.Skill is "<repoName>/<skill>".
+	kept := s.cfg.Enabled[:0]
+	for _, e := range s.cfg.Enabled {
+		if !strings.HasPrefix(e.Skill, name+"/") {
+			kept = append(kept, e)
+		}
+	}
+	s.cfg.Enabled = kept
 	delete(s.repoStatus, req.URL)
 	if err := s.persistConfigLocked(w); err != nil {
+		s.mu.Unlock()
 		return
 	}
+	reposRoot := s.reposRoot
+	s.mu.Unlock()
+	// Remove the local mirror and reconcile now so the repo's symlinks are gone
+	// immediately, not on the next apply.
+	_ = os.RemoveAll(filepath.Join(reposRoot, name))
+	s.ReconcileOnly()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

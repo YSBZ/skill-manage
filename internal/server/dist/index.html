@@ -41,7 +41,6 @@
           <input id="repo-branch" placeholder="分支(可选)" class="branch" />
           <button type="submit">添加</button>
         </form>
-        <p id="repo-hint" class="repo-hint hidden">私有仓需先配置 git 凭据才能自动更新：SSH 把 key 加入 ssh-agent，或 HTTPS 直接点仓库卡片上的「填写凭据」填个人令牌(PAT)。后台拉取不会弹窗输密码。</p>
         <ul id="repo-list"></ul>
 
         <div class="pane-head">
@@ -85,6 +84,32 @@
             <button type="submit">添加</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="confirm-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(440px,100%)">
+        <div class="modal-head"><h3 id="confirm-title">确认</h3></div>
+        <div class="help-body"><p id="confirm-msg" style="white-space:pre-wrap;color:var(--text)"></p></div>
+        <div class="row" style="justify-content:flex-end;gap:8px;padding:0 18px 18px">
+          <button id="confirm-cancel" class="ghost">取消</button>
+          <button id="confirm-ok">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="repo-hint-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(480px,100%)">
+        <div class="modal-head">
+          <h3>私有仓如何自动更新</h3>
+          <button id="repo-hint-close" class="ghost small">关闭</button>
+        </div>
+        <div class="help-body">
+          <p>本工具靠 git 拉取/更新仓库；自动更新在后台<b>非交互</b>运行，<b>不会弹窗让你输密码</b>。私有仓需先配好免交互鉴权，否则该仓会标红、无法更新。</p>
+          <p>· <b>HTTPS（最简单）</b>：点仓库卡片上的「填写凭据」按钮，填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。</p>
+          <p>· <b>SSH</b>：把该 git 主机的 key 加入 <code>ssh-agent</code>（带 passphrase 的需先解锁），公钥登记到服务器。</p>
+          <p>仓名前的圆点表示连通状态：<b style="color:var(--ok)">绿</b>=上次同步成功，<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据），灰=尚未同步。</p>
+        </div>
       </div>
     </div>
 

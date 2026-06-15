@@ -44,6 +44,22 @@ async function api(method, path, body) {
   return data;
 }
 
+// confirmModal replaces the native confirm() with an in-page dialog. Returns a
+// Promise<bool>. okText/danger customize the confirm button.
+function confirmModal(msg, okText, danger) {
+  return new Promise((resolve) => {
+    const m = $("#confirm-modal"), ok = $("#confirm-ok"), cancel = $("#confirm-cancel");
+    $("#confirm-msg").textContent = msg;
+    ok.textContent = okText || "确定";
+    ok.className = danger ? "danger" : "";
+    m.classList.remove("hidden");
+    const done = (v) => { m.classList.add("hidden"); ok.onclick = cancel.onclick = m.onclick = null; resolve(v); };
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+    m.onclick = (e) => { if (e.target.id === "confirm-modal") done(false); };
+  });
+}
+
 const state = {
   status: null,
   targets: [],
@@ -223,9 +239,9 @@ function renderRepos() {
     meta.append(ce("span", { className: "group-spacer" }));
     const rm = ce("button", { className: "danger small", textContent: "移除" });
     rm.onclick = async () => {
-      if (!confirm("移除仓库 " + repo.name + "？其链接会在下次应用时清理。")) return;
-      await api("DELETE", "/api/repos", { url: repo.url });
-      await apply();
+      if (!(await confirmModal("移除仓库 " + repo.name + "？它建立的软链会立即清理。"))) return;
+      await api("DELETE", "/api/repos", { url: repo.url }); // reconciles server-side
+      await load();
     };
     meta.append(rm);
     li.append(meta);
@@ -253,7 +269,7 @@ function renderTabs() {
     const rm = ce("button", { className: "tab-x", textContent: "×", title: "移除此同步目录" });
     rm.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm("移除同步目录 " + (t.alias || t.dir) + "？\n该目录下由本工具建立的链接会在下次同步时清理；目录里你自己的真身 skill 不受影响。")) return;
+      if (!(await confirmModal("移除同步目录 " + (t.alias || t.dir) + "？\n该目录下由本工具建立的链接会立即清理；目录里你自己的真身 skill 不受影响。"))) return;
       if (state.activeTarget === t.dir) state.activeTarget = undefined;
       // DELETE reconciles server-side, tearing down this tab's links on disk.
       await api("DELETE", "/api/targets", { dir: t.dir });
@@ -559,7 +575,9 @@ $("#cred-form").onsubmit = async (e) => {
 $("#cred-close").onclick = closeCredModal;
 $("#cred-cancel").onclick = closeCredModal;
 $("#cred-modal").onclick = (e) => { if (e.target.id === "cred-modal") closeCredModal(); };
-$("#repo-hint-btn").onclick = () => $("#repo-hint").classList.toggle("hidden");
+$("#repo-hint-btn").onclick = () => $("#repo-hint-modal").classList.remove("hidden");
+$("#repo-hint-close").onclick = () => $("#repo-hint-modal").classList.add("hidden");
+$("#repo-hint-modal").onclick = (e) => { if (e.target.id === "repo-hint-modal") $("#repo-hint-modal").classList.add("hidden"); };
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
@@ -575,7 +593,7 @@ $("#ignore-plugins").onchange = async (e) => {
 $("#adopt-all").onclick = async () => {
   const items = state.adoptable.slice();
   if (!items.length) return;
-  if (!confirm("全选收编 " + items.length + " 个未备份 skill？将逐个移入受管存储并原位软链。")) return;
+  if (!(await confirmModal("全选收编 " + items.length + " 个未备份 skill？将逐个移入受管存储并原位软链。"))) return;
   const btn = $("#adopt-all"); btn.disabled = true; btn.textContent = "收编中…";
   let ok = 0; const errs = [];
   for (const a of items) {
@@ -588,7 +606,7 @@ $("#adopt-all").onclick = async () => {
   await load();
 };
 $("#update-now").onclick = () => updateNow(false);
-$("#update-force").onclick = () => { if (confirm("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
+$("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#autostart").onchange = async (e) => {
   try { await api("POST", "/api/autostart", { enabled: e.target.checked }); }
   catch (err) { banner("自启设置失败：" + err.message, true); e.target.checked = !e.target.checked; }
