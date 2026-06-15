@@ -130,10 +130,10 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .tab-add {
   width: 36px; height: 36px; flex: 0 0 auto; padding: 0;
   display: flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--line); background: transparent; color: var(--muted);
-  border-radius: 10px; font-size: 20px; line-height: 1; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent);
+  border-radius: 10px; font-size: 22px; font-weight: 600; line-height: 1; cursor: pointer;
 }
-.tab-add:hover { border-color: var(--accent); color: var(--accent); }
+.tab-add:hover { background: var(--accent); color: #fff; }
 .tm-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
 
 /* directory browser inside the add-target modal */
