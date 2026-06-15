@@ -210,7 +210,7 @@ function renderTargetList() {
   state.targets.forEach((t) => {
     const li = ce("li");
     const label = ce("span", { className: "path" });
-    label.append(ce("span", { className: "badge" + (t.harness === "codex" ? " st-linked-codex" : ""), textContent: t.harness, style: "margin-right:6px" }));
+    label.append(ce("span", { className: "badge " + (t.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: t.harness, style: "margin-right:6px" }));
     label.append(document.createTextNode(t.dir));
     li.append(label);
     const rm = ce("button", { className: "danger small", textContent: "移除" });
@@ -239,7 +239,7 @@ function renderAdoptable() {
     const li = ce("li");
     const name = ce("span", { className: "path", textContent: a.name });
     const tag = HARNESS_LABEL[a.harness];
-    if (tag) name.append(ce("span", { className: "badge" + (a.harness === "codex" ? " st-linked-codex" : ""), textContent: tag, style: "margin-left:6px" }));
+    if (tag) name.append(ce("span", { className: "badge " + (a.harness === "codex" ? "st-linked-codex" : "st-cc"), textContent: tag, style: "margin-left:6px" }));
     li.append(name);
     const btn = ce("button", { className: "small", textContent: "收编" });
     btn.onclick = async () => {
