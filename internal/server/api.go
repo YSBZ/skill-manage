@@ -631,13 +631,20 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "already a sync directory"})
 		return
 	}
-	// An alias names a single directory; when the selection fanned out into
-	// multiple skill dirs it is ambiguous, so only apply it to a lone add.
-	if alias != "" && len(added) == 1 {
+	// Apply the alias. A lone add takes it verbatim; when the selection fanned
+	// out into several skill dirs, suffix each with its harness (e.g. "dev cc",
+	// "dev codex") so the tabs stay distinguishable.
+	if alias != "" {
 		if s.cfg.TargetAliases == nil {
 			s.cfg.TargetAliases = map[string]string{}
 		}
-		s.cfg.TargetAliases[added[0]] = alias
+		for _, d := range added {
+			if len(added) == 1 {
+				s.cfg.TargetAliases[d] = alias
+			} else {
+				s.cfg.TargetAliases[d] = alias + " " + string(harness.Classify(d))
+			}
+		}
 	}
 	if err := s.persistConfigLocked(w); err != nil {
 		return
