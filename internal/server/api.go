@@ -597,28 +597,52 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "directory is guarded"})
 		return
 	}
+	// Expand the selection into the concrete cc/codex skills dirs it implies, so
+	// picking a project root (or a .claude home) adds the real skill dirs with
+	// correct labels instead of an unlabeled "unknown" parent. Picking a project
+	// root that holds both adds two targets. Falls back to the dir verbatim when
+	// nothing cc/codex is found (preserving the ability to add an unknown dir).
+	dirs := harness.SkillDirsFor(dir)
+	if len(dirs) == 0 {
+		dirs = []string{dir}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Dedup by resolved path so "~/.claude/skills", "~/.claude/skills/" and the
-	// absolute form are treated as the same directory.
-	want := harness.Expand(dir)
-	for _, d := range s.cfg.Targets {
-		if harness.Expand(d) == want {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "already a sync directory"})
-			return
+	var added []string
+	for _, d := range dirs {
+		// Dedup by resolved path so "~/.claude/skills", "~/.claude/skills/" and
+		// the absolute form are treated as the same directory.
+		want := harness.Expand(d)
+		dup := false
+		for _, ex := range s.cfg.Targets {
+			if harness.Expand(ex) == want {
+				dup = true
+				break
+			}
 		}
+		if dup {
+			continue
+		}
+		s.cfg.Targets = append(s.cfg.Targets, d)
+		added = append(added, d)
 	}
-	s.cfg.Targets = append(s.cfg.Targets, dir)
-	if alias != "" {
+	if len(added) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "already a sync directory"})
+		return
+	}
+	// An alias names a single directory; when the selection fanned out into
+	// multiple skill dirs it is ambiguous, so only apply it to a lone add.
+	if alias != "" && len(added) == 1 {
 		if s.cfg.TargetAliases == nil {
 			s.cfg.TargetAliases = map[string]string{}
 		}
-		s.cfg.TargetAliases[dir] = alias
+		s.cfg.TargetAliases[added[0]] = alias
 	}
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusCreated, map[string][]string{"added": added})
 }
 
 func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {

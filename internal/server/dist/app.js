@@ -431,8 +431,13 @@ $("#add-repo").onsubmit = async (e) => {
   } catch (err) { banner("添加失败：" + err.message, true); }
 };
 async function addTarget(dir, alias) {
-  try { await api("POST", "/api/targets", { dir, alias }); state.activeTarget = dir; await load(); }
-  catch (err) { banner("添加同步目录失败：" + err.message, true); }
+  try {
+    // The selection may fan out into several real skill dirs (a project root
+    // with both cc and codex); focus the first one actually added.
+    const res = await api("POST", "/api/targets", { dir, alias });
+    if (res && res.added && res.added.length) state.activeTarget = res.added[0];
+    await load();
+  } catch (err) { banner("添加同步目录失败：" + err.message, true); }
 }
 $("#add-target").onsubmit = async (e) => {
   e.preventDefault();

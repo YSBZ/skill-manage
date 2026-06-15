@@ -136,6 +136,44 @@ func IsCodexTarget(dir string) bool {
 		strings.HasSuffix(r, filepath.FromSlash("/.agents/skills"))
 }
 
+// SkillDirsFor expands a user-selected directory into the concrete Claude Code
+// and Codex skills directories it implies. Only these two agents are supported,
+// so their well-known subdir conventions are matched directly — the user OK'd
+// hardcoding the *pattern* (".claude/skills", ".codex/skills"), which is distinct
+// from hardcoding absolute install paths into config:
+//
+//	dir itself          — when the selection already is a cc/codex skills dir
+//	dir/skills          — when dir is a .claude/.codex home (e.g. ~/.claude)
+//	dir/.claude/skills  — cc, for a project or home root (e.g. a repo checkout)
+//	dir/.codex/skills   — codex
+//	dir/.agents/skills  — codex (project-level alternative to .codex/skills)
+//
+// It returns the existing, non-guarded candidates — at most one per harness, so
+// a project root yields exactly one cc + one codex target (.codex/skills wins
+// over the .agents/skills alternative because it is probed first). Empty when
+// none apply, so the caller can fall back to adding the selection verbatim.
+func SkillDirsFor(dir string) []string {
+	base := expand(dir)
+	cands := []string{
+		base,
+		filepath.Join(base, "skills"),
+		filepath.Join(base, ".claude", "skills"),
+		filepath.Join(base, ".codex", "skills"),
+		filepath.Join(base, ".agents", "skills"),
+	}
+	var out []string
+	seenHarness := map[Harness]bool{}
+	for _, c := range cands {
+		h := Classify(c)
+		if h == HarnessUnknown || seenHarness[h] || Guarded(c) || !dirExists(c) {
+			continue
+		}
+		seenHarness[h] = true
+		out = append(out, c)
+	}
+	return out
+}
+
 // Expand resolves a leading "~" and returns a cleaned absolute path. It is the
 // single canonical resolver for target Dirs (which keep the portable "~" form):
 // callers outside this package — adopt's scan/relocate paths, the server's

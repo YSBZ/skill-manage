@@ -108,6 +108,44 @@ func Scan(repoRoot string) ([]Skill, error) {
 	return skills, nil
 }
 
+// ScanShallow returns only the skills that are DIRECT children of root — a
+// subdirectory holding a SKILL.md at its own top level. Unlike Scan it never
+// descends, so pointing it at a broad directory (e.g. ~/.claude, which holds
+// plugins/, projects/, …) surfaces nothing instead of dredging up every
+// deeply-nested plugin skill. This matches the adopt containment rule, which
+// only accepts skills sitting directly under the managed skills dir (KTD4/KTD7).
+func ScanShallow(root string) ([]Skill, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var skills []Skill
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == ".git" {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		info, statErr := os.Stat(filepath.Join(dir, "SKILL.md"))
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+		abs, absErr := filepath.Abs(dir)
+		if absErr != nil {
+			return nil, absErr
+		}
+		name := e.Name()
+		skills = append(skills, Skill{
+			LogicalName: name,
+			LinkName:    pathutil.SanitizePathName(name),
+			Dir:         abs,
+			Description: parseDescription(filepath.Join(dir, "SKILL.md")),
+			HasNested:   hasNestedSkillMd(dir),
+		})
+	}
+	sort.Slice(skills, func(i, j int) bool { return skills[i].LinkName < skills[j].LinkName })
+	return skills, nil
+}
+
 // hasNestedSkillMd reports whether skillDir contains a SKILL.md below its root
 // (i.e. inside a subdirectory). The root SKILL.md itself does not count.
 func hasNestedSkillMd(skillDir string) bool {

@@ -47,14 +47,14 @@ type Adoptable struct {
 }
 
 // ListAdoptable returns the real (non-symlink) skills under each personal target
-// root that the daemon does not already own. Every personal target is a
+// root that the daemon does not already own. Every sync target is a
 // "bidirectional" directory (KTD1): the same dir is where the agent loads skills
 // from, where we drop our symlinks, and where the user hand-authors skills — so
-// the adopt scan root IS the link target, derived from harness.PersonalTargets()
-// rather than a separately hardcoded path. scanner.Scan skips symlinks (WalkDir
-// lstat's) so links we created are naturally excluded; the manifest check
-// additionally excludes copy-fallback entries we own, and guarded dirs (Codex
-// .system / vendor_imports/skills) are never listed.
+// the adopt scan root IS the link target. scanner.ScanShallow looks at direct
+// children only (no deep walk) and skips symlinks, so links we created are
+// naturally excluded and a broad dir doesn't surface nested plugin skills; the
+// manifest check additionally excludes copy-fallback entries we own, and guarded
+// dirs (Codex .system / vendor_imports/skills) are never listed.
 func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptable, error) {
 	var out []Adoptable
 	seenRoot := map[string]bool{}
@@ -67,7 +67,10 @@ func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptab
 		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
 			continue // this agent has no skills dir yet → nothing to adopt here
 		}
-		skills, err := scanner.Scan(abs)
+		// Direct children only: an adoptable skill sits right under the target,
+		// matching Adopt's containment rule. A deep walk here would dredge up
+		// every nested plugin skill when a broad dir (e.g. ~/.claude) is added.
+		skills, err := scanner.ScanShallow(abs)
 		if err != nil {
 			return nil, err
 		}
@@ -78,13 +81,27 @@ func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptab
 			}
 		}
 		for _, sk := range skills {
-			if owned[sk.LinkName] || harness.Guarded(sk.Dir) {
+			// Plugin skills (under a .../plugins/... path) are managed by the
+			// agent's own plugin system, not hand-authored — never offer them for
+			// adoption.
+			if owned[sk.LinkName] || harness.Guarded(sk.Dir) || underPlugins(sk.Dir) {
 				continue
 			}
 			out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir, Root: abs, Harness: string(t.Harness)})
 		}
 	}
 	return out, nil
+}
+
+// underPlugins reports whether p has a path component named "plugins" — the
+// convention for agent plugin trees (~/.claude/plugins/…, codex equivalents).
+func underPlugins(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if seg == "plugins" {
+			return true
+		}
+	}
+	return false
 }
 
 // Adopt relocates the skill identified by id (a ListAdoptable ID, never a raw

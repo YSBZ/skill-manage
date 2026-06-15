@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,46 @@ func TestDiscoverDefaultTargets(t *testing.T) {
 	// present → discovered (abs form under CODEX_HOME)
 	if !has(DiscoverDefaultTargets(), want) {
 		t.Errorf("existing codex skills dir should be discovered, got %v", DiscoverDefaultTargets())
+	}
+}
+
+func TestSkillDirsFor(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	has := func(list []string, suffix string) bool {
+		for _, x := range list {
+			if strings.HasSuffix(x, suffix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// a project root holding BOTH cc and codex skill dirs → both detected
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".codex", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := SkillDirsFor(proj)
+	if len(got) != 2 || !has(got, filepath.Join(".claude", "skills")) || !has(got, filepath.Join(".codex", "skills")) {
+		t.Errorf("project root should fan out to cc+codex skills dirs, got %v", got)
+	}
+
+	// a ".claude home" → its skills/ child is the cc dir
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got = SkillDirsFor(filepath.Join(home, ".claude"))
+	if len(got) != 1 || !has(got, filepath.Join(".claude", "skills")) {
+		t.Errorf(".claude home should yield its skills child, got %v", got)
+	}
+
+	// a dir with no cc/codex skill dirs → empty (caller falls back to verbatim)
+	if got := SkillDirsFor(t.TempDir()); len(got) != 0 {
+		t.Errorf("plain dir should yield nothing, got %v", got)
 	}
 }
 

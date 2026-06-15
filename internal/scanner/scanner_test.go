@@ -17,6 +17,27 @@ func mkSkill(t *testing.T, root, rel string) {
 	}
 }
 
+func TestScanShallowDirectChildrenOnly(t *testing.T) {
+	root := t.TempDir()
+	mkSkill(t, root, "alpha")                       // direct child → listed
+	mkSkill(t, root, "beta")                        // direct child → listed
+	mkSkill(t, root, "plugins/cache/x/skills/deep") // nested → must NOT appear
+	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o755); err != nil {
+		t.Fatal(err) // a plain dir with no SKILL.md → ignored
+	}
+	skills, err := ScanShallow(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, s := range skills {
+		got = append(got, s.LinkName)
+	}
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Errorf("ScanShallow should list only direct-child skills [alpha beta], got %v", got)
+	}
+}
+
 func TestScanHasNested(t *testing.T) {
 	root := t.TempDir()
 	mkSkill(t, root, "plain")
