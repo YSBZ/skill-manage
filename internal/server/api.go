@@ -696,7 +696,14 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cfg.Targets = out
-	delete(s.cfg.TargetAliases, dir)
+	// Drop the alias by resolved path too — matching how Targets/Enabled are
+	// filtered above — so a differing dir form (trailing slash / ~ / absolute)
+	// can't orphan the alias entry.
+	for k := range s.cfg.TargetAliases {
+		if harness.Expand(k) == want {
+			delete(s.cfg.TargetAliases, k)
+		}
+	}
 	kept := s.cfg.Enabled[:0]
 	for _, e := range s.cfg.Enabled {
 		if harness.Expand(e.Target) != want {
