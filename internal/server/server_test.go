@@ -504,6 +504,31 @@ func TestBindFallback(t *testing.T) {
 	}
 }
 
+func TestIsAuthError(t *testing.T) {
+	auth := []string{
+		"fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+		"remote: HTTP Basic: Access denied",
+		"git@github.com: Permission denied (publickey).",
+		"fatal: Authentication failed for 'https://...'",
+		"fatal: unable to access '...': The requested URL returned error: 403",
+	}
+	for _, m := range auth {
+		if !isAuthError(m) {
+			t.Errorf("should be auth error: %q", m)
+		}
+	}
+	notAuth := []string{
+		"fatal: unable to access '...': Could not resolve host: github.com",
+		"fatal: repository 'https://...' not found",
+		"",
+	}
+	for _, m := range notAuth {
+		if isAuthError(m) {
+			t.Errorf("should NOT be auth error: %q", m)
+		}
+	}
+}
+
 func TestServerStartsWithoutGit(t *testing.T) {
 	t.Setenv("PATH", "") // git not resolvable → must not crash startup
 	s, err := New(t.TempDir())

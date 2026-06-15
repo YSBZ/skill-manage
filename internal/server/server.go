@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,36 @@ type RepoStatus struct {
 	State  string `json:"state"`
 	Dirty  bool   `json:"dirty,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// AuthHint is set when Error looks like a credentials/key failure, so the UI
+	// can tell the user how to fix auto-update instead of showing a raw git error.
+	AuthHint bool `json:"authHint,omitempty"`
+}
+
+// isAuthError reports whether a git error message indicates a credentials/key
+// failure (as opposed to a network or missing-repo error). Auto-update runs
+// non-interactively, so a private repo without configured credentials fails
+// here rather than prompting — and the user needs a pointer to fix it.
+func isAuthError(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, sig := range []string{
+		"authentication failed",
+		"could not read username",
+		"could not read password",
+		"terminal prompts disabled", // GIT_TERMINAL_PROMPT=0 hit a creds prompt
+		"permission denied",         // ssh publickey
+		"publickey",
+		"host key verification failed",
+		"invalid username or password",
+		"http basic",                            // remote: HTTP Basic: Access denied
+		"could not read from remote repository", // common ssh auth tail
+		"returned error: 403",
+		"returned error: 401",
+	} {
+		if strings.Contains(m, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 // Server is the daemon's HTTP surface and shared state.
@@ -265,6 +296,7 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 		st := RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty}
 		if res.Err != nil {
 			st.Error = res.Err.Error()
+			st.AuthHint = isAuthError(st.Error)
 		}
 		statuses[repo.URL] = st
 	}

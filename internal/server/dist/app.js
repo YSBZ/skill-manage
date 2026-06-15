@@ -179,6 +179,7 @@ function renderRepos() {
     meta.append(rm);
     li.append(meta);
     if (repo.error) li.append(ce("div", { className: "muted", style: "color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap", textContent: repo.error }));
+    if (repo.authHint) li.append(ce("div", { className: "repo-authhint", textContent: "鉴权失败，无法自动更新：私有仓需先配置 git 凭据 —— SSH 把 key 加入 ssh-agent，或 HTTPS 用凭据助手 / 个人令牌(PAT)。详见标题旁 ? 指南。" }));
     ul.append(li);
   });
 }
