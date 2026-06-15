@@ -49,6 +49,7 @@ const state = {
   targets: [],
   adoptable: [],
   adoptError: false,
+  ignorePlugins: true, // hide plugin skills from the adoptable list by default
   skillsByRepo: {},
   expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
@@ -112,7 +113,7 @@ async function load() {
   catch (e) { banner("加载失败：" + e.message, true); return; }
   try { state.targets = (await api("GET", "/api/targets")) || []; }
   catch { state.targets = []; }
-  try { state.adoptable = ((await api("GET", "/api/adoptable")) || {}).skills || []; state.adoptError = false; }
+  try { const a = (await api("GET", "/api/adoptable")) || {}; state.adoptable = a.skills || []; state.ignorePlugins = a.includePlugins === false; state.adoptError = false; }
   catch { state.adoptable = []; state.adoptError = true; }
   const repos = state.status.repos || [];
   // Fetch tracked-repo skills plus the @local store (adopted skills).
@@ -248,6 +249,7 @@ async function browseTo(path) {
 
 function renderAdoptable() {
   const ul = $("#adopt-list"); ul.innerHTML = "";
+  const ip = $("#ignore-plugins"); if (ip) ip.checked = state.ignorePlugins;
   const allBtn = $("#adopt-all");
   if (allBtn) allBtn.classList.toggle("hidden", state.adoptable.length === 0 || state.adoptError);
   if (state.adoptError) {
@@ -466,10 +468,18 @@ $("#target-path").onkeydown = (e) => {
 $("#target-path").onpaste = () => {
   setTimeout(() => browseTo($("#target-path").value.trim()), 0);
 };
+$("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
+$("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
+$("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
 $("#tab-add").onclick = openTargetModal;
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
+$("#ignore-plugins").onchange = async (e) => {
+  const ignore = e.target.checked;
+  try { await api("POST", "/api/ignore-plugins", { ignore }); state.ignorePlugins = ignore; await load(); }
+  catch (err) { banner("设置失败：" + err.message, true); e.target.checked = state.ignorePlugins; }
+};
 $("#adopt-all").onclick = async () => {
   const items = state.adoptable.slice();
   if (!items.length) return;

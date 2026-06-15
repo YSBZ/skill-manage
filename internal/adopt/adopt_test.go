@@ -58,6 +58,28 @@ func isSymlink(t *testing.T, p string) bool {
 	return fi.Mode()&os.ModeSymlink != 0
 }
 
+func TestListAdoptablePluginToggle(t *testing.T) {
+	e := newEnv(t)
+	// a skills dir that lives under a plugins/ tree, with one real skill
+	pluginSkills := filepath.Join(e.root, "claude", "plugins", "cache", "p", "skills")
+	if err := os.MkdirAll(filepath.Join(pluginSkills, "pskill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginSkills, "pskill", "SKILL.md"), []byte("---\nname: pskill\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	roots := []harness.Target{{Harness: harness.HarnessClaudeCode, Dir: pluginSkills}}
+
+	// ignored by default (includePlugins=false)
+	if list, err := ListAdoptable(roots, e.man, false); err != nil || len(list) != 0 {
+		t.Errorf("plugin skill should be ignored by default, got %+v (err %v)", list, err)
+	}
+	// shown when opted in
+	if list, err := ListAdoptable(roots, e.man, true); err != nil || len(list) != 1 || list[0].ID != "pskill" {
+		t.Errorf("plugin skill should appear when included, got %+v (err %v)", list, err)
+	}
+}
+
 func TestListAdoptableExcludesSymlinksAndOwned(t *testing.T) {
 	e := newEnv(t)
 	e.mkRealSkill(t, "alpha") // adoptable
@@ -68,7 +90,7 @@ func TestListAdoptableExcludesSymlinksAndOwned(t *testing.T) {
 	}
 	e.man.Links = append(e.man.Links, config.LinkRecord{Name: "owned", Target: e.cc, Source: filepath.Join(e.store, "owned"), LinkType: config.LinkCopy})
 
-	list, err := ListAdoptable(ccRoot(e.cc), e.man)
+	list, err := ListAdoptable(ccRoot(e.cc), e.man, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +121,7 @@ func TestListAdoptableSpansMultipleRoots(t *testing.T) {
 	list, err := ListAdoptable([]harness.Target{
 		{Harness: harness.HarnessClaudeCode, Dir: e.cc},
 		{Harness: harness.HarnessCodex, Dir: codex},
-	}, e.man)
+	}, e.man, false)
 	if err != nil {
 		t.Fatal(err)
 	}

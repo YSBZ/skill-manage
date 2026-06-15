@@ -34,13 +34,24 @@ header {
   background: linear-gradient(180deg, #12151b, #0e1014);
   flex: 0 0 auto; z-index: 10;
 }
-.brand { font-size: 16px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.brand { font-size: 16px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; display: flex; align-items: center; }
 .brand .logo { color: var(--accent); margin-right: 4px; }
+.help-btn { margin-left: 9px; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1; cursor: pointer; }
+.help-btn:hover { border-color: var(--accent); color: var(--accent); }
 .stats { display: flex; gap: 18px; flex: 1; color: var(--muted); font-size: 13px; }
 .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
 .stats .stat-warn b { color: var(--warn); }
 .actions { display: flex; align-items: center; gap: 10px; }
 .toggle { color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.small-toggle { font-size: 12px; margin: 0 0 8px; }
+
+/* help / guide modal */
+.help-body { padding: 4px 20px 20px; overflow: auto; }
+.help-body h4 { margin: 18px 0 6px; font-size: 13.5px; color: var(--text); }
+.help-body h4:first-child { margin-top: 8px; }
+.help-body p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.help-body code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.help-body .lead { color: var(--text); }
 
 /* layout: the grid row fills the remaining viewport height; min-height:0 lets
    the two columns become independent scroll containers instead of growing the

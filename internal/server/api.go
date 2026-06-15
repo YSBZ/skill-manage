@@ -32,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/skills", s.requireAuth(s.handleListSkills))
 	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
 	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
+	mux.HandleFunc("POST /api/ignore-plugins", s.requireAuth(s.handleSetIgnorePlugins))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
@@ -431,8 +432,9 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	snapshot := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
 	roots := s.targetsLocked()
+	includePlugins := s.cfg.IncludePluginSkills
 	s.mu.Unlock()
-	list, err := adopt.ListAdoptable(roots, &snapshot)
+	list, err := adopt.ListAdoptable(roots, &snapshot, includePlugins)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -440,7 +442,29 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []adopt.Adoptable{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": list})
+	writeJSON(w, http.StatusOK, map[string]any{"skills": list, "includePlugins": includePlugins})
+}
+
+type pluginPrefReq struct {
+	Ignore bool `json:"ignore"`
+}
+
+// handleSetIgnorePlugins toggles whether plugin skills are hidden from the
+// adoptable list. The checkbox is phrased as "忽略 plugin", so ignore=true maps
+// to IncludePluginSkills=false.
+func (s *Server) handleSetIgnorePlugins(w http.ResponseWriter, r *http.Request) {
+	var req pluginPrefReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg.IncludePluginSkills = !req.Ignore
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ignore": req.Ignore})
 }
 
 type adoptReq struct {

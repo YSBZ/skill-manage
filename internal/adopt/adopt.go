@@ -55,7 +55,7 @@ type Adoptable struct {
 // naturally excluded and a broad dir doesn't surface nested plugin skills; the
 // manifest check additionally excludes copy-fallback entries we own, and guarded
 // dirs (Codex .system / vendor_imports/skills) are never listed.
-func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptable, error) {
+func ListAdoptable(roots []harness.Target, manifest *config.Manifest, includePlugins bool) ([]Adoptable, error) {
 	var out []Adoptable
 	seenRoot := map[string]bool{}
 	for _, t := range roots {
@@ -82,9 +82,9 @@ func ListAdoptable(roots []harness.Target, manifest *config.Manifest) ([]Adoptab
 		}
 		for _, sk := range skills {
 			// Plugin skills (under a .../plugins/... path) are managed by the
-			// agent's own plugin system, not hand-authored — never offer them for
-			// adoption.
-			if owned[sk.LinkName] || harness.Guarded(sk.Dir) || underPlugins(sk.Dir) {
+			// agent's own plugin system, not hand-authored — ignored unless the
+			// user opts to include them.
+			if owned[sk.LinkName] || harness.Guarded(sk.Dir) || (!includePlugins && underPlugins(sk.Dir)) {
 				continue
 			}
 			out = append(out, Adoptable{ID: sk.LinkName, Name: sk.LogicalName, Dir: sk.Dir, Root: abs, Harness: string(t.Harness)})

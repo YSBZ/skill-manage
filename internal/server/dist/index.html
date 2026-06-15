@@ -12,6 +12,7 @@
     <header>
       <div class="brand">
         <span class="logo">◆</span> SkillManage
+        <button id="help-btn" class="help-btn" title="使用指南 / 设计说明">?</button>
       </div>
       <div class="stats" id="stats"></div>
       <div class="actions">
@@ -43,6 +44,9 @@
           <h2>未备份 skill</h2>
           <button id="adopt-all" class="ghost small hidden" title="把列出的真身 skill 全部移入受管存储并原位软链">全选收编</button>
         </div>
+        <label class="toggle small-toggle" title="plugins 目录下的 skill 由 agent 插件系统管理，默认不在收编列表里显示">
+          <input type="checkbox" id="ignore-plugins" checked /> 忽略 plugin 里的 skill
+        </label>
         <ul id="adopt-list"></ul>
       </aside>
 
@@ -77,6 +81,39 @@
             <button type="submit">添加</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="help-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>SkillManage 使用指南</h3>
+          <button id="help-close" class="ghost small">关闭</button>
+        </div>
+        <div class="help-body">
+          <p class="lead">一个「同步 skill」的工具，刻意减少定制。你只需要提供两样东西：<b>① git 远程仓（skill 来源）</b> 和 <b>② 要同步进去的目录</b>。其余都是工具的活：自动更新、选择性 / 整仓同步、把本地手写 skill 反向收编。</p>
+
+          <h4>同步目录（顶部 tab）</h4>
+          <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>
+
+          <h4>选择性同步 / 整仓同步</h4>
+          <p>每个 tab 独立维护自己的映射：在 skill 卡片上勾选要同步进该目录的 skill。或点仓库的「全选并跟随」整仓同步——之后仓库新增的 skill 自动加链、删除的自动清链。</p>
+
+          <h4>收编本地 skill（未备份 skill）</h4>
+          <p>「未备份 skill」列出同步目录里你手写、还没纳入管理的真身 skill。点「收编」会把它移入受管存储并在原位留一个软链——它在 agent 里照常可用，同时成为可跨 harness 复用的受管来源。<b>plugins 目录下的 skill 由 agent 插件系统管理，默认忽略不显示</b>；想纳入可取消勾选「忽略 plugin 里的 skill」。</p>
+
+          <h4>更新：自动 / 立即 / 强制</h4>
+          <p>守护进程按计划每天自动拉取上游并重新同步软链。「立即更新」手动触发一次；「强制更新」会丢弃仓库的本地改动、与上游保持一致（谨慎使用）。</p>
+
+          <h4>开机自启</h4>
+          <p>勾选后在你登录系统时自动拉起守护进程（macOS LaunchAgent / Linux systemd user / Windows 启动项）。不勾则需手动运行——后台自动同步只在进程运行时发生。</p>
+
+          <h4>导入 / 导出</h4>
+          <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>
+
+          <h4>安全约束（设计用意）</h4>
+          <p>① <b>只读镜像</b>：从不改写 skill 内容，只做映射。② <b>never-clobber</b>：绝不覆盖你已有的真身文件。③ <b>manifest 所有权</b>：只增删本工具自己建立的链接，删除前一律与磁盘核对。④ Codex 的 <code>.system</code> / <code>vendor_imports/skills</code> 是守卫目录，永不写入或收编。</p>
+        </div>
       </div>
     </div>
 

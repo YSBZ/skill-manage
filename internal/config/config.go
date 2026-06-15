@@ -77,7 +77,12 @@ type Config struct {
 	// TargetAliases is an optional display name per target dir (dir → alias),
 	// shown on the tab instead of the raw path. Purely cosmetic.
 	TargetAliases map[string]string `yaml:"target_aliases,omitempty"`
-	Schedule      Schedule          `yaml:"schedule"`
+	// IncludePluginSkills, when true, lets skills living under a .../plugins/...
+	// path appear in the adoptable ("未备份 skill") list. The zero value (false)
+	// ignores them by default — they are managed by the agent's plugin system,
+	// not hand-authored — which is what most users want.
+	IncludePluginSkills bool     `yaml:"include_plugin_skills,omitempty"`
+	Schedule            Schedule `yaml:"schedule"`
 }
 
 // LinkRecord is one daemon-owned link.
