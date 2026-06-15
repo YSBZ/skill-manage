@@ -299,8 +299,13 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
 		st := RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty}
 		if res.Err != nil {
+			// Surface git's actual stderr (the useful part) — res.Err alone is just
+			// "exit status 128". Both feed auth detection.
 			st.Error = res.Err.Error()
-			st.AuthHint = isAuthError(st.Error)
+			if s := strings.TrimSpace(res.Stderr); s != "" {
+				st.Error = s
+			}
+			st.AuthHint = isAuthError(res.Stderr + " " + res.Err.Error())
 		}
 		statuses[repo.URL] = st
 	}
