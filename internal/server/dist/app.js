@@ -209,7 +209,7 @@ function openCredModal(host, username, pending) {
   state.credPending = pending || null;
   $("#cred-skip").classList.toggle("hidden", !pending);
   $("#cred-modal").classList.remove("hidden");
-  $("#cred-token").focus();
+  $("#cred-user").focus();
 }
 function closeCredModal() {
   state.credPending = null;
