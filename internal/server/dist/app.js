@@ -220,19 +220,21 @@ function renderTargetList() {
 
 function renderAdoptable() {
   const ul = $("#adopt-list"); ul.innerHTML = "";
+  const allBtn = $("#adopt-all");
+  if (allBtn) allBtn.classList.toggle("hidden", state.adoptable.length === 0 || state.adoptError);
   if (state.adoptError) {
     ul.append(ce("li", { className: "muted", style: "color:var(--err)", textContent: "加载失败，请刷新" }));
     return;
   }
   if (state.adoptable.length === 0) {
-    ul.append(ce("li", { className: "muted", textContent: "个人目录（CC / Codex）下无本地真身 skill（已全部收编或均为软链）" }));
+    ul.append(ce("li", { className: "muted", textContent: "同步目录下无未备份的真身 skill（已全部收编或均为软链）" }));
     return;
   }
   state.adoptable.forEach((a) => {
     const li = ce("li");
     const name = ce("span", { className: "path", textContent: a.name });
     const tag = HARNESS_LABEL[a.harness];
-    if (tag) name.append(ce("span", { className: "badge", textContent: tag, style: "margin-left:6px" }));
+    if (tag) name.append(ce("span", { className: "badge" + (a.harness === "codex" ? " st-linked-codex" : ""), textContent: tag, style: "margin-left:6px" }));
     li.append(name);
     const btn = ce("button", { className: "small", textContent: "收编" });
     btn.onclick = async () => {
@@ -420,6 +422,21 @@ $("#add-target").onsubmit = async (e) => {
   if (!dir) return;
   $("#target-path").value = "";
   await addTarget(dir);
+};
+$("#adopt-all").onclick = async () => {
+  const items = state.adoptable.slice();
+  if (!items.length) return;
+  if (!confirm("全选收编 " + items.length + " 个未备份 skill？将逐个移入受管存储并原位软链。")) return;
+  const btn = $("#adopt-all"); btn.disabled = true; btn.textContent = "收编中…";
+  let ok = 0; const errs = [];
+  for (const a of items) {
+    try { await doAdopt(a.id, a.root); ok++; }
+    catch (e) { errs.push(a.name + "：" + (ADOPT_ERR[e.code] || e.message)); }
+  }
+  btn.disabled = false; btn.textContent = "全选收编";
+  if (errs.length === 0) banner("已全部收编 " + ok + " 个");
+  else banner("收编完成 " + ok + " 个，失败 " + errs.length + " 个：" + errs.join("；"), true);
+  await load();
 };
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = () => { if (confirm("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };

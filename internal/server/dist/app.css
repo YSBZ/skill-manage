@@ -60,9 +60,9 @@ input, select {
   border-radius: 8px; padding: 7px 10px; outline: none;
 }
 input:focus, select:focus { border-color: var(--accent); }
-#repo-url, #project-path { flex: 1; min-width: 150px; }
+#repo-url, #target-path { flex: 1; min-width: 0; }
 .branch { width: 100px; }
-.target { width: 100%; }
+.target { width: 100%; margin-bottom: 8px; }
 button {
   background: var(--accent); color: #fff; border: 0; border-radius: 8px;
   padding: 7px 13px; cursor: pointer; font-weight: 500;
