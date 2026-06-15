@@ -164,6 +164,15 @@ function renderStats() {
 
 function stateBadge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
 
+// repoDot classifies a repo's last-sync result into a status dot color:
+// err = failed/auth, idle = not yet synced or in progress, ok = synced.
+function repoDot(repo) {
+  const st = repo.state || "never-synced";
+  if (repo.error || st === "failed") return "err";
+  if (st === "never-synced" || st === "cloning" || st === "sync-in-progress") return "idle";
+  return "ok";
+}
+
 // httpsHost returns the host of an https repo URL, or "" for ssh/scp URLs
 // (credential entry only applies to HTTPS).
 function httpsHost(u) {
@@ -186,15 +195,25 @@ function closeCredModal() { $("#cred-modal").classList.add("hidden"); }
 function renderRepos() {
   const ul = $("#repo-list"); ul.innerHTML = "";
   (state.status.repos || []).forEach((repo) => {
+    const host = httpsHost(repo.url);
     const li = ce("li");
     const top = ce("div", { className: "repo-top" });
-    top.append(ce("span", { className: "repo-name", textContent: repo.name }), stateBadge(repo.state || "never-synced"));
+    // connectivity/auth dot: green=上次同步成功, red=失败(可点重填凭据), grey=未同步
+    const dotKind = repoDot(repo);
+    const dot = ce("span", { className: "repo-dot " + dotKind });
+    if (dotKind === "err" && host) {
+      dot.title = "连接/鉴权失败，点击重填凭据";
+      dot.classList.add("clickable");
+      dot.onclick = () => openCredModal(host, state.credHosts[host] || "");
+    } else {
+      dot.title = dotKind === "ok" ? "上次同步成功" : dotKind === "err" ? "上次同步失败" : "尚未同步";
+    }
+    top.append(dot, ce("span", { className: "repo-name", textContent: repo.name }), stateBadge(repo.state || "never-synced"));
     li.append(top);
     li.append(ce("div", { className: "repo-url", textContent: repo.url }));
     const meta = ce("div", { className: "repo-meta" });
     const n = (state.skillsByRepo[repo.name] || []).length;
     meta.append(ce("span", { className: "badge count", textContent: n + " skill" }));
-    const host = httpsHost(repo.url);
     if (host) {
       const has = Object.prototype.hasOwnProperty.call(state.credHosts, host);
       const cb = ce("button", { className: "ghost small", textContent: has ? "凭据✓" : "填写凭据", title: has ? ("已为 " + host + " 配置凭据，点此重填") : ("为私有仓 " + host + " 填写 HTTPS 令牌") });

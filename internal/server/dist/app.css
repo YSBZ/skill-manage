@@ -96,6 +96,12 @@ button.danger:hover { color: var(--err); border-color: var(--err); }
 ul { list-style: none; padding: 0; margin: 0 0 8px; }
 #repo-list li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
 .repo-top { display: flex; align-items: center; gap: 8px; }
+.repo-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.repo-dot.ok { background: var(--ok); }
+.repo-dot.err { background: var(--err); }
+.repo-dot.idle { background: var(--muted); }
+.repo-dot.clickable { cursor: pointer; }
+.repo-dot.clickable:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 30%, transparent); }
 .repo-name { font-weight: 600; flex: 1; }
 .repo-url { color: var(--muted); font-size: 11px; word-break: break-all; margin-top: 3px; }
 .repo-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
