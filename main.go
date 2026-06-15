@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"skillmanage/internal/autostart"
+	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
 	"skillmanage/internal/lock"
 	"skillmanage/internal/scheduler"
@@ -26,23 +29,48 @@ const defaultPort = 7799
 func main() {
 	centralDir := flag.String("central", "", "central folder (default ~/.skillmanage)")
 	noAutostart := flag.Bool("no-autostart", false, "do not register login autostart on first run")
+	noOpen := flag.Bool("no-open", false, "do not open the browser on launch (autostart-launched instances pass this)")
 	flag.Parse()
 
-	if err := run(*centralDir, !*noAutostart); err != nil {
-		fmt.Fprintln(os.Stderr, "skillmanage:", err)
-		os.Exit(1)
-	}
-}
-
-func run(centralDir string, registerAutostart bool) error {
-	dir := centralDir
+	dir := *centralDir
 	if dir == "" {
 		d, err := config.DefaultCentralDir()
 		if err != nil {
-			return err
+			fatal("", err)
 		}
 		dir = d
 	}
+	if err := run(dir, !*noAutostart, !*noOpen); err != nil {
+		fatal(dir, err)
+	}
+}
+
+// fatal reports a startup failure to stderr AND a log file under the central
+// dir. The log file is the only diagnostic on Windows, where the binary is
+// built windowless (no console to read stderr from) — without it a failed
+// launch is just a window that flashes and vanishes.
+func fatal(dir string, err error) {
+	msg := "skillmanage: " + err.Error()
+	fmt.Fprintln(os.Stderr, msg)
+	if dir != "" {
+		if f, e := os.OpenFile(filepath.Join(dir, "skillmanage.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); e == nil {
+			fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), msg)
+			_ = f.Close()
+		}
+	}
+	os.Exit(1)
+}
+
+// readAddressURL returns the UI URL the running instance recorded, or "".
+func readAddressURL(dir string) string {
+	b, err := os.ReadFile(config.AddressPath(dir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func run(dir string, registerAutostart, openBrowser bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -50,7 +78,15 @@ func run(centralDir string, registerAutostart bool) error {
 	// Single-instance guard before any sync/reconcile (KTD8).
 	lk, err := lock.Acquire(config.LockfilePath(dir))
 	if errors.Is(err, lock.ErrLocked) {
-		return fmt.Errorf("already running (lock held at %s)", config.LockfilePath(dir))
+		// Already running. A double-clicked window would otherwise just print an
+		// error and vanish ("闪一下就关了"); instead point the user at the live
+		// instance and exit cleanly.
+		if openBrowser {
+			if url := readAddressURL(dir); url != "" {
+				_ = browser.Open(url)
+			}
+		}
+		return nil
 	}
 	if err != nil {
 		return err
@@ -63,11 +99,14 @@ func run(centralDir string, registerAutostart bool) error {
 	}
 	defer srv.Close()
 
-	// Wire autostart and register on launch (R19), best-effort.
+	// Wire autostart and (re-)register on launch (R19), best-effort. Always
+	// re-register when enabled so the recorded command refreshes — picking up a
+	// moved binary and the --no-open arg that keeps login-launched instances
+	// from popping a browser every login.
 	if exe, err := os.Executable(); err == nil {
 		if mgr, err := autostart.New(exe); err == nil {
 			srv.SetAutostart(mgr)
-			if registerAutostart && !mgr.IsRegistered() {
+			if registerAutostart {
 				_ = mgr.Register()
 			}
 		}
@@ -97,7 +136,13 @@ func run(centralDir string, registerAutostart bool) error {
 	if err := srv.WriteAddress(ln.Addr().String()); err != nil {
 		fmt.Fprintln(os.Stderr, "skillmanage: warning: could not write address file:", err)
 	}
-	fmt.Printf("skillmanage: UI at http://%s/\n", ln.Addr().String())
+	url := fmt.Sprintf("http://%s/", ln.Addr().String())
+	fmt.Printf("skillmanage: UI at %s\n", url)
+	// Open the UI for an interactive launch (double-click / manual run). Skipped
+	// for autostart-launched instances, which pass --no-open.
+	if openBrowser {
+		_ = browser.Open(url)
+	}
 
 	httpSrv := &http.Server{Handler: srv.Handler()}
 	go func() {

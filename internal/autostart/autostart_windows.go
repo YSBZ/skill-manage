@@ -25,7 +25,8 @@ func (m *Manager) Register() error {
 		return err
 	}
 	defer k.Close()
-	return k.SetStringValue(appName, m.exePath)
+	// --no-open: a login-launched instance must not pop a browser every login.
+	return k.SetStringValue(appName, `"`+m.exePath+`" --no-open`)
 }
 
 // Unregister deletes the HKCU Run value.

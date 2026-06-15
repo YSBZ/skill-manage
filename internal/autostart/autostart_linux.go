@@ -32,8 +32,25 @@ func New(exePath string) (*Manager, error) {
 
 func (m *Manager) block() string {
 	return markerBegin + "\n" +
-		`pgrep -x skillmanage >/dev/null 2>&1 || ( "` + m.exePath + `" >/dev/null 2>&1 & )` + "\n" +
+		`pgrep -x skillmanage >/dev/null 2>&1 || ( "` + m.exePath + `" --no-open >/dev/null 2>&1 & )` + "\n" +
 		markerEnd + "\n"
+}
+
+// stripBlock returns content with any existing guarded block removed.
+func stripBlock(content string) string {
+	begin := strings.Index(content, markerBegin)
+	if begin < 0 {
+		return content
+	}
+	end := strings.Index(content, markerEnd)
+	if end < 0 {
+		return content
+	}
+	end += len(markerEnd)
+	if end < len(content) && content[end] == '\n' {
+		end++ // also consume the trailing newline after the end marker
+	}
+	return content[:begin] + content[end:]
 }
 
 func (m *Manager) read() string {
@@ -44,12 +61,10 @@ func (m *Manager) read() string {
 	return string(b)
 }
 
-// Register appends the guarded launcher block (idempotent).
+// Register writes the guarded launcher block, refreshing any existing one so
+// the recorded path and args (e.g. --no-open) stay current. Idempotent.
 func (m *Manager) Register() error {
-	content := m.read()
-	if strings.Contains(content, markerBegin) {
-		return nil // already registered
-	}
+	content := stripBlock(m.read())
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
@@ -59,22 +74,7 @@ func (m *Manager) Register() error {
 
 // Unregister removes the guarded block.
 func (m *Manager) Unregister() error {
-	content := m.read()
-	begin := strings.Index(content, markerBegin)
-	if begin < 0 {
-		return nil
-	}
-	end := strings.Index(content, markerEnd)
-	if end < 0 {
-		return nil
-	}
-	end += len(markerEnd)
-	// also consume a trailing newline after the end marker
-	if end < len(content) && content[end] == '\n' {
-		end++
-	}
-	out := content[:begin] + content[end:]
-	return os.WriteFile(m.profilePath, []byte(out), 0o644)
+	return os.WriteFile(m.profilePath, []byte(stripBlock(m.read())), 0o644)
 }
 
 // IsRegistered reports whether the guarded block is present.

@@ -33,7 +33,7 @@ func plistContent(exePath string) string {
 <dict>
   <key>Label</key><string>` + label + `</string>
   <key>ProgramArguments</key>
-  <array><string>` + exePath + `</string></array>
+  <array><string>` + exePath + `</string><string>--no-open</string></array>
   <key>RunAtLoad</key><true/>
 </dict>
 </plist>

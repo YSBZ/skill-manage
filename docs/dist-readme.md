@@ -4,17 +4,18 @@
 
 ## 1. 运行
 
-这个 zip 里有一个可执行文件（`skillmanage` 或 `skillmanage.exe`）。
+这个 zip 里有一个可执行文件（`skillmanage` 或 `skillmanage.exe`）。启动后会**自动在默认浏览器打开** UI（默认 `http://127.0.0.1:7799/`）；它是常驻后台进程，再次运行只会打开已在跑的那个实例的 UI，不会重复启动。
+
+**Windows：** 双击 `skillmanage.exe` 即可——它在后台运行、不弹命令行窗口，浏览器会自动打开。
+
+> Windows 首次运行 SmartScreen 可能提示"已保护你的电脑"，点「更多信息」→「仍要运行」。
+> 若双击后浏览器没自动打开，手动访问 `http://127.0.0.1:7799/`；启动失败的原因会写进 `%USERPROFILE%\.skillmanage\skillmanage.log`。
 
 **macOS / Linux / WSL：**
 ```sh
 chmod +x skillmanage
 ./skillmanage
 ```
-
-**Windows：** 双击 `skillmanage.exe`，或在 PowerShell 里 `./skillmanage.exe`。
-
-启动后终端会打印 UI 地址（默认 `http://127.0.0.1:7799/`），用浏览器打开即可。
 
 > **macOS 第一次会被拦**（"无法验证开发者 / 来自身份不明的开发者"），这是未签名工具的正常现象。解隔离一次即可：
 > ```sh
