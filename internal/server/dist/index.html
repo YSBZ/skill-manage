@@ -27,7 +27,10 @@
     <div class="layout">
       <aside>
         <div class="pane-head">
-          <h2>仓库</h2>
+          <div class="row" style="gap:4px">
+            <h2>仓库</h2>
+            <button id="repo-hint-btn" class="help-btn" title="私有仓如何自动更新">?</button>
+          </div>
           <div class="row">
             <button id="export" class="ghost small">导出</button>
             <button id="import" class="ghost small">导入</button>
@@ -38,7 +41,7 @@
           <input id="repo-branch" placeholder="分支(可选)" class="branch" />
           <button type="submit">添加</button>
         </form>
-        <p class="repo-hint">私有仓需先配置 git 凭据才能自动更新：SSH 把 key 加入 ssh-agent，或 HTTPS 用凭据助手 / 个人令牌(PAT)。后台拉取不会弹窗输密码。</p>
+        <p id="repo-hint" class="repo-hint hidden">私有仓需先配置 git 凭据才能自动更新：SSH 把 key 加入 ssh-agent，或 HTTPS 直接点仓库卡片上的「填写凭据」填个人令牌(PAT)。后台拉取不会弹窗输密码。</p>
         <ul id="repo-list"></ul>
 
         <div class="pane-head">

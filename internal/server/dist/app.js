@@ -559,6 +559,7 @@ $("#cred-form").onsubmit = async (e) => {
 $("#cred-close").onclick = closeCredModal;
 $("#cred-cancel").onclick = closeCredModal;
 $("#cred-modal").onclick = (e) => { if (e.target.id === "cred-modal") closeCredModal(); };
+$("#repo-hint-btn").onclick = () => $("#repo-hint").classList.toggle("hidden");
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
