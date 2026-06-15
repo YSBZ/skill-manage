@@ -269,6 +269,12 @@ func TestAddRemoveTarget(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Errorf("duplicate target add: got %d, want 409", w.Code)
 	}
+	// same path with a trailing slash is the same directory → also rejected
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/targets", s.token, map[string]string{"dir": "/work/proj/.claude/skills/"}))
+	if w.Code != http.StatusConflict {
+		t.Errorf("trailing-slash duplicate should be rejected, got %d", w.Code)
+	}
 	// remove it, and any enabled entry pointing at it
 	s.mu.Lock()
 	s.cfg.Enabled = append(s.cfg.Enabled, config.EnabledEntry{Skill: "r/foo", Target: "/work/proj/.claude/skills"})

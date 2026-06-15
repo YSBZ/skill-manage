@@ -412,9 +412,6 @@ $("#add-target").onsubmit = async (e) => {
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
-document.querySelectorAll("#add-target [data-fill]").forEach((b) => {
-  b.onclick = () => { $("#target-path").value = b.getAttribute("data-fill"); $("#target-alias").focus(); };
-});
 $("#adopt-all").onclick = async () => {
   const items = state.adoptable.slice();
   if (!items.length) return;

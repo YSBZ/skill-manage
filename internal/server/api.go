@@ -538,8 +538,11 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Dedup by resolved path so "~/.claude/skills", "~/.claude/skills/" and the
+	// absolute form are treated as the same directory.
+	want := harness.Expand(dir)
 	for _, d := range s.cfg.Targets {
-		if d == dir {
+		if harness.Expand(d) == want {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "already a sync directory"})
 			return
 		}
