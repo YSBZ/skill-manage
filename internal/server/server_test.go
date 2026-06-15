@@ -372,43 +372,6 @@ func TestAdoptRejectsUnknownRoot(t *testing.T) {
 	}
 }
 
-func TestDisableEnabledInPlace(t *testing.T) {
-	s := newTestServer(t)
-	h := s.Handler()
-	// add an enabled entry
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req("POST", "/api/enabled", s.token, config.EnabledEntry{Skill: "demo/foo", Target: "~/.claude/skills/", Mode: config.ModeSnapshot}))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("add enabled: %d", w.Code)
-	}
-	// disable it in place
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, req("POST", "/api/enabled/disable", s.token, map[string]any{"skill": "demo/foo", "target": "~/.claude/skills/", "disabled": true}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("disable: %d", w.Code)
-	}
-	cfg, _, _ := config.LoadConfig(s.centralDir)
-	if len(cfg.Enabled) != 1 || !cfg.Enabled[0].Disabled {
-		t.Fatalf("entry must be kept and marked disabled, got %+v", cfg.Enabled)
-	}
-	// re-enable
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, req("POST", "/api/enabled/disable", s.token, map[string]any{"skill": "demo/foo", "target": "~/.claude/skills/", "disabled": false}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("re-enable: %d", w.Code)
-	}
-	cfg, _, _ = config.LoadConfig(s.centralDir)
-	if len(cfg.Enabled) != 1 || cfg.Enabled[0].Disabled {
-		t.Errorf("entry should be enabled again, got %+v", cfg.Enabled)
-	}
-	// disabling a non-existent entry → 404
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, req("POST", "/api/enabled/disable", s.token, map[string]any{"skill": "x/y", "target": "~/.claude/skills/", "disabled": true}))
-	if w.Code != http.StatusNotFound {
-		t.Errorf("disable unknown entry: got %d, want 404", w.Code)
-	}
-}
-
 func TestBindFallback(t *testing.T) {
 	s := newTestServer(t)
 	// take an OS-assigned port

@@ -195,32 +195,6 @@ func TestNestedConflictCodexOnly(t *testing.T) {
 	}
 }
 
-func TestDisabledEntrySkipped(t *testing.T) {
-	f := newFix(t)
-	f.mkSkill(t, "alpha", "a1")
-	enabled := config.EnabledEntry{Skill: "alpha/a1", Target: f.target, Mode: config.ModeSnapshot}
-
-	f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{enabled}}, f.man)
-	if !f.linkExists("a1") {
-		t.Fatal("a1 should be linked when enabled")
-	}
-	// disable: selection kept, link withheld → torn down next cycle
-	enabled.Disabled = true
-	f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{enabled}}, f.man)
-	if f.linkExists("a1") {
-		t.Errorf("disabled entry's link should be removed")
-	}
-	if len(f.man.Links) != 0 {
-		t.Errorf("manifest should drop the withheld link, got %+v", f.man.Links)
-	}
-	// re-enable → restored
-	enabled.Disabled = false
-	f.rec.Apply(config.Config{Enabled: []config.EnabledEntry{enabled}}, f.man)
-	if !f.linkExists("a1") {
-		t.Errorf("re-enabled entry should restore the link")
-	}
-}
-
 func TestValidRepoName(t *testing.T) {
 	for _, ok := range []string{"backend-skills", "fe.skills", "a_b"} {
 		if !ValidRepoName(ok) {

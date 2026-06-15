@@ -56,11 +56,6 @@ type EnabledEntry struct {
 	Skill  string `yaml:"skill" json:"skill"`
 	Target string `yaml:"target" json:"target"`
 	Mode   Mode   `yaml:"mode,omitempty" json:"mode,omitempty"`
-	// Disabled keeps the selection but withholds its links: reconcile skips a
-	// disabled entry, so its links are torn down on the next cycle while the
-	// entry (and its mode/target) is preserved for one-click re-enable (F6).
-	// omitempty keeps existing configs byte-identical until a disable happens.
-	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 // Schedule controls the daily sync cadence.
