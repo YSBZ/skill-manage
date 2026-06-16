@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
 	mux.HandleFunc("DELETE /api/targets", s.requireAuth(s.handleRemoveTarget))
+	mux.HandleFunc("POST /api/targets/reorder", s.requireAuth(s.handleReorderTargets))
 	mux.HandleFunc("GET /api/browse", s.requireAuth(s.handleBrowse))
 	mux.HandleFunc("GET /api/credentials", s.requireAuth(s.handleListCredentials))
 	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
@@ -524,6 +526,7 @@ type inventoryItem struct {
 	Selector    string             `json:"selector,omitempty"` // enabled selector for managed items (U9 toggle)
 	Managed     bool               `json:"managed"`            // owned by SkillManage (git/local)
 	Enabled     bool               `json:"enabled"`            // a managed link is materialized → enabled
+	Follow      bool               `json:"follow,omitempty"`   // enabled via a whole-source follow (source/*) → no per-item disable
 	Collision   bool               `json:"collision,omitempty"`
 }
 
@@ -556,6 +559,15 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
 	conflicts := append([]linker.Conflict(nil), s.lastSummary.Conflicts...)
+	// Whole-source follow entries (e.g. "myrepo/*", "@local/*") mapped to THIS
+	// target: items they cover cannot be disabled individually (follow is
+	// all-or-nothing), so the UI shows "跟随中" instead of a per-item toggle.
+	followSrc := map[string]bool{}
+	for _, e := range s.cfg.Enabled {
+		if strings.HasSuffix(e.Skill, "/*") && harness.Expand(e.Target) == want {
+			followSrc[strings.TrimSuffix(e.Skill, "/*")] = true
+		}
+	}
 	dirSourcePaths := effectiveDirectorySources(s.cfg.DirectorySources)
 	reposRoot, personalStore := s.reposRoot, s.personalStore
 	targets := append([]string(nil), s.cfg.Targets...)
@@ -611,10 +623,13 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		}
 		if it.Managed {
 			it.Enabled = true // present + managed ⟹ the link is live
-			if res.Kind == source.KindGit && res.Repo != "" {
-				it.Selector = res.Repo + "/" + sk.LinkName
-			} else if res.Kind == source.KindLocal {
-				it.Selector = reconcile.LocalNamespace + "/" + sk.LinkName
+			src := res.Repo
+			if res.Kind == source.KindLocal {
+				src = reconcile.LocalNamespace
+			}
+			if src != "" {
+				it.Selector = src + "/" + sk.LinkName
+				it.Follow = followSrc[src] // covered by a whole-source follow → no per-item disable
 			}
 		}
 		items = append(items, it)
@@ -982,8 +997,9 @@ func (s *Server) handleAddEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	wantTarget := harness.Expand(e.Target)
 	for _, x := range s.cfg.Enabled {
-		if x.Skill == e.Skill && x.Target == e.Target {
+		if x.Skill == e.Skill && harness.Expand(x.Target) == wantTarget {
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true}) // already enabled
 			return
 		}
@@ -1003,9 +1019,10 @@ func (s *Server) handleRemoveEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	wantTarget := harness.Expand(e.Target)
 	out := s.cfg.Enabled[:0]
 	for _, x := range s.cfg.Enabled {
-		if x.Skill == e.Skill && x.Target == e.Target {
+		if x.Skill == e.Skill && harness.Expand(x.Target) == wantTarget {
 			continue
 		}
 		out = append(out, x)
@@ -1141,6 +1158,40 @@ func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
 	// now, instead of relying on a separate apply round-trip from the client.
 	sum := s.ReconcileOnly()
 	writeJSON(w, http.StatusOK, sum)
+}
+
+type reorderReq struct {
+	Dirs []string `json:"dirs"`
+}
+
+// handleReorderTargets reorders the sync directories (tabs) to match the order
+// the user dragged them into. The request lists dirs in the desired order; we
+// reorder cfg.Targets by that (matched by resolved path), keeping any target the
+// client didn't mention at the end in its original relative order. Purely
+// cosmetic — it touches no links.
+func (s *Server) handleReorderTargets(w http.ResponseWriter, r *http.Request) {
+	var req reorderReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	pos := map[string]int{}
+	for i, d := range req.Dirs {
+		pos[harness.Expand(d)] = i
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at := func(dir string) int {
+		if p, ok := pos[harness.Expand(dir)]; ok {
+			return p
+		}
+		return 1 << 30 // unmentioned → keep at the end
+	}
+	sort.SliceStable(s.cfg.Targets, func(a, b int) bool { return at(s.cfg.Targets[a]) < at(s.cfg.Targets[b]) })
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // httpsHostOf returns the host of an http(s) URL, or "" for ssh/scp remotes

@@ -276,6 +276,13 @@ function renderTabs() {
     };
     tab.append(rm);
     tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); fetchInventory(); };
+    // Drag to reorder tabs (persisted via /api/targets/reorder).
+    tab.draggable = true;
+    tab.ondragstart = (e) => { state.dragDir = t.dir; tab.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
+    tab.ondragend = () => { tab.classList.remove("dragging"); document.querySelectorAll(".tab.drop-to").forEach((x) => x.classList.remove("drop-to")); };
+    tab.ondragover = (e) => { if (state.dragDir && state.dragDir !== t.dir) { e.preventDefault(); tab.classList.add("drop-to"); } };
+    tab.ondragleave = () => tab.classList.remove("drop-to");
+    tab.ondrop = (e) => { e.preventDefault(); tab.classList.remove("drop-to"); reorderTabs(state.dragDir, t.dir); };
     bar.append(tab);
   });
   if (activeEl) {
@@ -284,6 +291,22 @@ function renderTabs() {
     const delta = (tRect.left - cRect.left) - (bar.clientWidth - activeEl.offsetWidth) / 2;
     bar.scrollTo({ left: bar.scrollLeft + delta, behavior: "smooth" });
   }
+}
+
+// reorderTabs moves the dragged tab to where it was dropped and persists order.
+async function reorderTabs(fromDir, toDir) {
+  state.dragDir = null;
+  if (!fromDir || fromDir === toDir) return;
+  const arr = state.targets.slice();
+  const fi = arr.findIndex((t) => t.dir === fromDir);
+  const ti = arr.findIndex((t) => t.dir === toDir);
+  if (fi < 0 || ti < 0) return;
+  const [moved] = arr.splice(fi, 1);
+  arr.splice(ti, 0, moved);
+  state.targets = arr;
+  renderTabs();
+  try { await api("POST", "/api/targets/reorder", { dirs: arr.map((t) => t.dir) }); }
+  catch (e) { banner("保存标签顺序失败：" + e.message, true); }
 }
 
 function openTargetModal() {
@@ -359,30 +382,48 @@ function renderInventory() {
     root.append(box);
     return;
   }
-  items.forEach((i) => root.append(inventoryCard(i)));
+  // Group by source (R3.2 / 用户要求「按仓库分类」): 本地 → 各 git 仓 → skills.sh →
+  // 插件 → 未备份 → 未知软链.
+  const groups = new Map();
+  items.forEach((i) => {
+    const g = groupOf(i);
+    if (!groups.has(g.key)) groups.set(g.key, { title: g.title, order: g.order, items: [] });
+    groups.get(g.key).items.push(i);
+  });
+  const ordered = [...groups.values()].sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
+  ordered.forEach((g) => {
+    const grp = ce("div", { className: "inv-group" });
+    const head = ce("div", { className: "inv-group-head" });
+    head.append(ce("span", { className: "group-title", textContent: g.title }));
+    head.append(ce("span", { className: "badge count", textContent: g.items.length + " skill" }));
+    grp.append(head);
+    const body = ce("div", { className: "inv-group-body" });
+    g.items.forEach((i) => body.append(inventoryCard(i)));
+    grp.append(body);
+    root.append(grp);
+  });
+}
+
+// groupOf maps an inventory item to its source group (title + sort order).
+function groupOf(i) {
+  switch (i.kind) {
+    case "local": return { key: "local", title: "本地（已收编）", order: 0 };
+    case "git": return { key: "git:" + (i.repo || ""), title: i.repo || "git 仓", order: 1 };
+    case "skills.sh": return { key: "skillssh", title: "skills.sh", order: 2 };
+    case "plugin": return { key: "plugin", title: "插件", order: 3 };
+    case "handwritten": return { key: "hand", title: "未备份（可收编）", order: 4 };
+    default: return { key: "unknown", title: "未知软链", order: 5 };
+  }
 }
 
 function inventoryCard(i) {
   const s = SRC[i.kind] || SRC.unknown;
   const row = ce("div", { className: "skill inv " + s.cls });
-
-  const left = ce("div", { className: "inv-left" });
-  if (i.managed) {
-    const tog = ce("input", { type: "checkbox", checked: !!i.enabled });
-    tog.title = "启用 = 在此目录建软链；停用 = 拆除软链";
-    tog.onchange = () => toggleSkill(i, tog);
-    left.append(tog);
-  } else {
-    left.append(ce("span", { className: "inv-readonly", title: "非本工具管理，只读", textContent: "•" }));
-  }
-  row.append(left);
-
   const main = ce("div", { className: "skill-main" });
   const r1 = ce("div", { className: "skill-row1" });
   r1.append(ce("span", { className: "skill-name", textContent: i.name }));
 
   let badgeText = s.label;
-  if (i.kind === "git" && i.repo) badgeText = "git · " + i.repo;
   if (i.kind === "skills.sh" && i.sourceUrl) badgeText = "skills.sh · " + hostOf(i.sourceUrl);
   const badge = ce("span", { className: "src-badge " + s.cls, textContent: badgeText });
   if (i.kind === "skills.sh" && i.sourceUrl) badge.title = i.sourceUrl; // title is text-safe (no innerHTML)
@@ -394,11 +435,21 @@ function inventoryCard(i) {
     r1.append(c);
   }
 
+  r1.append(ce("span", { className: "group-spacer" }));
+
+  // actions / state (right side)
   if (i.managed && i.selector) {
     const d = ce("button", { className: "skill-detail-btn", textContent: "详情" });
-    const repo = i.selector.split("/")[0];
-    d.onclick = () => openDetail(repo, i.name);
+    d.onclick = () => openDetail(i.selector.split("/")[0], i.name);
     r1.append(d);
+    if (i.follow) {
+      // covered by a whole-source follow — can't disable individually
+      r1.append(ce("span", { className: "inv-state following", title: "整仓跟随中——在「+ 添加」里取消该来源的「整仓跟随」", textContent: "跟随中" }));
+    } else {
+      const off = ce("button", { className: "ghost small inv-off", textContent: "停用", title: "拆除此目录下的软链（不影响真身与其它目录）" });
+      off.onclick = () => disableSkill(i, off);
+      r1.append(off);
+    }
   }
   if (i.kind === "handwritten") {
     const ad = ce("button", { className: "small", textContent: "收编", title: "移入受管存储并原位软链，纳入自动更新" });
@@ -411,7 +462,7 @@ function inventoryCard(i) {
       u.onclick = () => updateSkillSh(i.name, u);
       r1.append(u);
     } else {
-      r1.append(ce("span", { className: "inv-hint", textContent: "由 skills.sh 管理，请用 npx skills update 更新" }));
+      r1.append(ce("span", { className: "inv-hint", textContent: "skills.sh 管理，用 npx skills update 更新" }));
     }
   }
   main.append(r1);
@@ -429,19 +480,18 @@ function summaryToast(sum, name, enable) {
   }
 }
 
-async function toggleSkill(i, tog) {
-  tog.disabled = true;
-  const enable = tog.checked;
-  const sel = i.selector;
+// disableSkill tears down a managed skill's link in the current target. Enabling
+// happens in the "+ 添加" drawer, so inventory only ever disables.
+async function disableSkill(i, btn) {
+  btn.disabled = true; btn.textContent = "停用中…";
   try {
-    if (enable) await api("POST", "/api/enabled", { skill: sel, target: currentTarget(), mode: "snapshot" });
-    else await api("DELETE", "/api/enabled", { skill: sel, target: currentTarget() });
+    await api("DELETE", "/api/enabled", { skill: i.selector, target: currentTarget() });
     const sum = await api("POST", "/api/apply"); // returns reconcile Summary
-    summaryToast(sum, i.name, enable);
+    summaryToast(sum, i.name, false);
     await load();
   } catch (e) {
-    tog.checked = !enable; tog.disabled = false;
-    banner((enable ? "启用" : "停用") + " " + i.name + " 失败：" + e.message, true);
+    btn.disabled = false; btn.textContent = "停用";
+    banner("停用 " + i.name + " 失败：" + e.message, true);
   }
 }
 
