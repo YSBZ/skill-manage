@@ -16,7 +16,6 @@
       </div>
       <div class="stats" id="stats"></div>
       <div class="actions">
-        <label class="toggle"><input type="checkbox" id="autostart" /> 开机自启</label>
         <button id="update-now">立即更新</button>
         <button id="update-force" class="ghost" title="丢弃本地改动，强制与上游一致">强制更新</button>
       </div>
@@ -158,11 +157,8 @@
           <h4>与 skills.sh 等工具共存</h4>
           <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：它们在现状视图里只读显示，绝不会被移动或删除（第四条不变式）。skills.sh 装的 skill 更新仍交给它自己——若本机有 <code>npx</code>，现状视图会提供一个「更新」按钮代调 <code>npx skills update</code>；否则只给提示。<code>~/.agents/skills</code>（跨工具中立目录）会被自动识别为来源。</p>
 
-          <h4>更新：自动 / 立即 / 强制</h4>
-          <p>守护进程按计划每天自动拉取上游并重新同步软链。「立即更新」手动触发一次；「强制更新」会丢弃仓库的本地改动、与上游保持一致（谨慎使用）。</p>
-
-          <h4>开机自启</h4>
-          <p>勾选后在你登录系统时自动拉起守护进程（macOS LaunchAgent / Linux systemd user / Windows 启动项）。不勾则需手动运行——后台自动同步只在进程运行时发生。</p>
+          <h4>更新：立即 / 强制（仅手动）</h4>
+          <p>工具<b>不做后台自动更新、也不开机自启</b>——只在你点「立即更新」时拉取上游并重新同步软链；「强制更新」会丢弃仓库的本地改动、与上游保持一致（谨慎使用）。启动时只重建软链（不拉取）。需要更新时手动点一下即可。</p>
 
           <h4>导入 / 导出</h4>
           <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>

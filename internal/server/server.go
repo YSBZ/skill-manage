@@ -84,8 +84,6 @@ type Server struct {
 	npxPath string
 	runner  skillsRunner
 
-	autostart AutostartManager
-
 	// baseCtx is the daemon-lifetime context used as the parent for syncs that
 	// must outlive the originating HTTP request (update-now: closing the tab
 	// must not abort the sync) yet still cancel on daemon shutdown. Set once via
@@ -102,18 +100,6 @@ type Server struct {
 	repoStatus  map[string]RepoStatus
 	lastSummary reconcile.Summary
 }
-
-// AutostartManager registers/unregisters the daemon for login start (R19). The
-// concrete implementation is platform-specific (internal/autostart); the server
-// depends on the interface so it stays testable without touching the OS.
-type AutostartManager interface {
-	Register() error
-	Unregister() error
-	IsRegistered() bool
-}
-
-// SetAutostart wires in the platform autostart manager (called from main).
-func (s *Server) SetAutostart(m AutostartManager) { s.autostart = m }
 
 // SetBaseContext sets the daemon-lifetime parent context for request-detached
 // syncs. Call once before serving.

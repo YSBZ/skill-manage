@@ -17,11 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"skillmanage/internal/autostart"
 	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
 	"skillmanage/internal/lock"
-	"skillmanage/internal/scheduler"
 	"skillmanage/internal/server"
 )
 
@@ -37,8 +35,7 @@ func main() {
 	}
 
 	centralDir := flag.String("central", "", "central folder (default ~/.skillmanage)")
-	noAutostart := flag.Bool("no-autostart", false, "do not register login autostart on first run")
-	noOpen := flag.Bool("no-open", false, "do not open the browser on launch (autostart-launched instances pass this)")
+	noOpen := flag.Bool("no-open", false, "do not open the browser on launch")
 	flag.Parse()
 
 	dir := *centralDir
@@ -49,7 +46,7 @@ func main() {
 		}
 		dir = d
 	}
-	if err := run(dir, !*noAutostart, !*noOpen); err != nil {
+	if err := run(dir, !*noOpen); err != nil {
 		fatal(dir, err)
 	}
 }
@@ -127,7 +124,7 @@ func readAddressURL(dir string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func run(dir string, registerAutostart, openBrowser bool) error {
+func run(dir string, openBrowser bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -162,19 +159,6 @@ func run(dir string, registerAutostart, openBrowser bool) error {
 	}
 	defer srv.Close()
 
-	// Wire autostart and (re-)register on launch (R19), best-effort. Always
-	// re-register when enabled so the recorded command refreshes — picking up a
-	// moved binary and the --no-open arg that keeps login-launched instances
-	// from popping a browser every login.
-	if exe, err := os.Executable(); err == nil {
-		if mgr, err := autostart.New(exe); err == nil {
-			srv.SetAutostart(mgr)
-			if registerAutostart {
-				_ = mgr.Register()
-			}
-		}
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -182,15 +166,11 @@ func run(dir string, registerAutostart, openBrowser bool) error {
 	// survive a closed browser tab but still cancel on daemon shutdown.
 	srv.SetBaseContext(ctx)
 
-	// Daily scheduler + an initial sync on launch.
-	sched, err := scheduler.New(srv.Schedule(), func(c context.Context) { srv.SyncAll(c, false) })
-	if err != nil {
-		return err
-	}
-	// Pass the persisted last-sync time so the scheduler's missed-run check can
-	// actually fire after a sleep/downtime gap (not time.Now(), which disables it).
-	go sched.Run(ctx, srv.LastSync())
-	go srv.SyncAll(ctx, false)
+	// No background auto-update and no daily scheduler (removed by request): the
+	// daemon never pulls on its own. On launch we only RECONCILE — materialize the
+	// links the current config asks for, without touching git — so existing
+	// mirrors map correctly. Pulling happens only when the user clicks 立即更新.
+	srv.ReconcileOnly()
 
 	ln, err := srv.Bind(defaultPort)
 	if err != nil {

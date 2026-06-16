@@ -158,7 +158,7 @@ async function load() {
     catch { return [name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
-  renderStats(); renderRepos(); renderTabs(); renderSummary(); loadAutostart();
+  renderStats(); renderRepos(); renderTabs(); renderSummary();
   await fetchInventory();
   if (state.status.gitError) {
     banner("未检测到 git：" + state.status.gitError + "。请安装 Git 并确保在 PATH 中，然后重启本工具——否则无法拉取/更新仓库。", true);
@@ -404,14 +404,28 @@ function renderInventory() {
   });
 }
 
+// repoFromUrl derives "owner/repo" from a git URL (skills.sh sourceUrl), so a
+// skills.sh skill is grouped under the repo it came from — it's a 库 too, just
+// installed by a different tool.
+function repoFromUrl(u) {
+  if (!u) return "";
+  let p = u.replace(/^[a-z]+:\/\//i, "").replace(/\.git$/i, "");
+  const slash = p.indexOf("/");
+  if (slash >= 0) p = p.slice(slash + 1); // drop host
+  return p;
+}
+
 // groupOf maps an inventory item to its source group (title + sort order).
 function groupOf(i) {
   switch (i.kind) {
-    case "local": return { key: "local", title: "本地（已收编）", order: 0 };
+    case "local": return { key: "local", title: "本地（已备份）", order: 0 };
     case "git": return { key: "git:" + (i.repo || ""), title: i.repo || "git 仓", order: 1 };
-    case "skills.sh": return { key: "skillssh", title: "skills.sh", order: 2 };
+    case "skills.sh": {
+      const repo = repoFromUrl(i.sourceUrl);
+      return { key: "skillssh:" + repo, title: (repo || "skills.sh") + " · skills.sh", order: 2 };
+    }
     case "plugin": return { key: "plugin", title: "插件", order: 3 };
-    case "handwritten": return { key: "hand", title: "未备份（可收编）", order: 4 };
+    case "handwritten": return { key: "hand", title: "未备份（可备份）", order: 4 };
     default: return { key: "unknown", title: "未知软链", order: 5 };
   }
 }
@@ -675,13 +689,6 @@ async function updateNow(force) {
   else toast("已是最新，无变化");
 }
 
-async function loadAutostart() {
-  try {
-    const a = await api("GET", "/api/autostart");
-    const el = $("#autostart"); el.checked = a.registered; el.disabled = !a.supported;
-  } catch { /* ignore */ }
-}
-
 // events
 $("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
 $("#add-search").oninput = (e) => { state.addSearch = e.target.value; renderAddDrawer(); };
@@ -768,10 +775,6 @@ $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
-$("#autostart").onchange = async (e) => {
-  try { await api("POST", "/api/autostart", { enabled: e.target.checked }); }
-  catch (err) { banner("自启设置失败：" + err.message, true); e.target.checked = !e.target.checked; }
-};
 $("#export").onclick = async () => {
   const repos = await api("GET", "/api/repos/export");
   const blob = new Blob([JSON.stringify(repos, null, 2)], { type: "application/json" });
