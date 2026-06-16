@@ -246,6 +246,7 @@ function renderRepos() {
       dot.title = dotKind === "ok" ? "上次同步成功" : dotKind === "err" ? "上次同步失败" : "尚未同步";
     }
     top.append(dot, ce("span", { className: "repo-name", textContent: repo.name }), stateBadge(repo.state || "never-synced"));
+    if (repo.hasUpdate) top.append(ce("span", { className: "badge has-update", textContent: "有更新", title: "上游有新提交，点「立即更新」拉取" }));
     li.append(top);
     li.append(ce("div", { className: "repo-url", textContent: repo.url }));
     const meta = ce("div", { className: "repo-meta" });
@@ -795,6 +796,17 @@ $("#tab-add").onclick = openTargetModal;
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
+$("#check-updates").onclick = async () => {
+  banner("检查更新中…");
+  try {
+    const r = await api("POST", "/api/check-updates");
+    if (r && r.error) { banner("检查更新失败（git 不可用）：" + r.error, true); return; }
+    await load();
+    const n = (r && r.updates) || 0;
+    toast(n > 0 ? n + " 个仓有更新，点「立即更新」拉取" : "所有仓都是最新");
+    banner("");
+  } catch (e) { banner("检查更新失败：" + e.message, true); }
+};
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#export").onclick = async () => {

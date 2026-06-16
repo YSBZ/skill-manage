@@ -52,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
 	mux.HandleFunc("DELETE /api/credentials", s.requireAuth(s.handleDeleteCredential))
 	mux.HandleFunc("POST /api/dirsource/update", s.requireAuth(s.handleDirSourceUpdate))
+	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 
@@ -1328,6 +1329,69 @@ func (s *Server) handleDeleteCredential(w http.ResponseWriter, r *http.Request) 
 
 type updateReq struct {
 	Force bool `json:"force"`
+}
+
+// handleCheckUpdates contacts each cloned repo's remote (ls-remote, no object
+// download) and records whether origin is ahead of the local mirror — so the
+// user can see which repos have updates without auto-pulling (auto-update was
+// removed). Network I/O runs unlocked; results merge into repoStatus.
+func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	repos := append([]config.RepoConfig(nil), s.cfg.Repos...)
+	noGit := s.syncer == nil
+	gitErr := s.gitErr
+	reposRoot := s.reposRoot
+	syncer := s.syncer
+	existing := make(map[string]RepoStatus, len(s.repoStatus))
+	for k, v := range s.repoStatus {
+		existing[k] = v
+	}
+	s.mu.Unlock()
+
+	if noGit {
+		writeJSON(w, http.StatusOK, map[string]any{"error": gitErr})
+		return
+	}
+	ctx := s.detachedCtx()
+	statuses := make(map[string]RepoStatus, len(repos))
+	for _, repo := range repos {
+		name := reconcile.RepoName(repo.URL)
+		st := existing[repo.URL]
+		st.URL, st.Branch, st.Name = repo.URL, repo.Branch, name
+		dir := filepath.Join(reposRoot, name)
+		if !dirHasContent(dir) {
+			st.State, st.HasUpdate = "never-synced", false
+			statuses[repo.URL] = st
+			continue
+		}
+		if st.State == "" {
+			st.State = "stale"
+		}
+		has, err := syncer.CheckUpdate(ctx, dir, repo.Branch)
+		if err != nil {
+			st.HasUpdate = false
+			st.Error = err.Error()
+			st.AuthHint = isAuthError(err.Error())
+		} else {
+			st.HasUpdate = has
+			st.Error = ""
+			st.AuthHint = false
+			if !has {
+				st.State = "synced" // confirmed local == remote → 已同步
+			}
+		}
+		statuses[repo.URL] = st
+	}
+	updates := 0
+	s.mu.Lock()
+	for url, st := range statuses {
+		s.repoStatus[url] = st
+		if st.HasUpdate {
+			updates++
+		}
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updates": updates})
 }
 
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {

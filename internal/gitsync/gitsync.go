@@ -160,6 +160,38 @@ func (s *Syncer) sync(ctx context.Context, dir, remote string, opts Options) Res
 	return res
 }
 
+// CheckUpdate reports whether origin's branch (or HEAD when branch is empty) is
+// at a different commit than the local mirror's HEAD — i.e. an update is
+// available to pull. It uses `ls-remote` (no object download) so it is cheap,
+// but it still contacts the remote and needs the same auth as Sync; a failure
+// (auth/network) is returned so the caller can surface it. The mirror is a
+// reset --hard read-only clone, so local == last-pulled remote; remote != local
+// therefore means upstream moved.
+func (s *Syncer) CheckUpdate(ctx context.Context, dir, branch string) (bool, error) {
+	localOut, _, err := s.run(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	local := strings.TrimSpace(localOut)
+	ref := "HEAD"
+	if b := strings.TrimSpace(branch); b != "" {
+		ref = "refs/heads/" + b
+	}
+	remoteOut, stderr, err := s.run(ctx, dir, "ls-remote", "origin", ref)
+	if err != nil {
+		if e := strings.TrimSpace(stderr); e != "" {
+			return false, fmt.Errorf("%s", e)
+		}
+		return false, err
+	}
+	line := strings.TrimSpace(remoteOut)
+	if line == "" {
+		return false, nil // ref absent upstream → treat as no update
+	}
+	remote := strings.Fields(line)[0]
+	return remote != "" && remote != local, nil
+}
+
 // run executes git with daemon-safe flags and env, returning (stdout, stderr, err).
 func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, string, error) {
 	// Bound each invocation so a process blocked on an unreachable remote

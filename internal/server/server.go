@@ -36,6 +36,9 @@ type RepoStatus struct {
 	// AuthHint is set when Error looks like a credentials/key failure, so the UI
 	// can tell the user how to fix auto-update instead of showing a raw git error.
 	AuthHint bool `json:"authHint,omitempty"`
+	// HasUpdate is set by the on-demand 检查更新 endpoint when origin is ahead of
+	// the local mirror — a hint to run 立即更新. Cleared after a sync.
+	HasUpdate bool `json:"hasUpdate,omitempty"`
 }
 
 // isAuthError reports whether a git error message indicates a credentials/key
