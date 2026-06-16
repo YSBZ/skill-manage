@@ -87,6 +87,36 @@ func TestLoadConfigDoesNotSeedTargets(t *testing.T) {
 	}
 }
 
+func TestDirectorySourcesBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	// A config written before phase 3 has no directory_sources key. It must load
+	// cleanly with DirectorySources == nil (no migration, KTD1).
+	old := "repos:\n  - url: https://example.com/x-skills.git\nschedule:\n  daily_at: \"09:00\"\n"
+	if err := os.WriteFile(ConfigPath(dir), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DirectorySources != nil {
+		t.Errorf("pre-phase-3 config must load DirectorySources == nil, got %+v", cfg.DirectorySources)
+	}
+
+	// Round-trip a config that does carry directory sources.
+	cfg.DirectorySources = []DirectorySource{{Path: "~/.agents/skills", Label: "skills.sh"}}
+	if err := SaveConfig(dir, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	got, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(got.DirectorySources) != 1 || got.DirectorySources[0].Path != "~/.agents/skills" || got.DirectorySources[0].Label != "skills.sh" {
+		t.Errorf("directory_sources round-trip mismatch: %+v", got.DirectorySources)
+	}
+}
+
 func TestLoadConfigMissingIsFirstRun(t *testing.T) {
 	dir := t.TempDir()
 	cfg, firstRun, err := LoadConfig(dir)

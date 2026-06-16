@@ -46,6 +46,18 @@ type RepoConfig struct {
 	Branch string `yaml:"branch,omitempty" json:"branch,omitempty"`
 }
 
+// DirectorySource is a registered directory whose skills SkillManage recognizes
+// and displays but never owns or writes — e.g. ~/.agents/skills, the cross-tool
+// convention where skills.sh (npx skills) installs (phase 3, R1.1/R1.4). Phase 3
+// directory sources are always read-only; a write-target toggle is deferred, so
+// there is deliberately no ReadOnly field yet (KTD1) — adding a field that can
+// only hold one value is dead config. The field is omitempty on Config, so a
+// config.yaml written before phase 3 loads with DirectorySources == nil.
+type DirectorySource struct {
+	Path  string `yaml:"path" json:"path"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+}
+
 // EnabledEntry maps a skill selection to a link target.
 //
 // Skill is either "<repo>/*" (follow the whole repo) or "<repo>/<skill-dir>"
@@ -81,8 +93,12 @@ type Config struct {
 	// path appear in the adoptable ("未备份 skill") list. The zero value (false)
 	// ignores them by default — they are managed by the agent's plugin system,
 	// not hand-authored — which is what most users want.
-	IncludePluginSkills bool     `yaml:"include_plugin_skills,omitempty"`
-	Schedule            Schedule `yaml:"schedule"`
+	IncludePluginSkills bool `yaml:"include_plugin_skills,omitempty"`
+	// DirectorySources are registered read-only directories (e.g. ~/.agents/skills)
+	// whose skills are recognized/displayed but never owned (phase 3). omitempty so
+	// pre-phase-3 configs round-trip unchanged and load with this nil.
+	DirectorySources []DirectorySource `yaml:"directory_sources,omitempty"`
+	Schedule         Schedule          `yaml:"schedule"`
 }
 
 // LinkRecord is one daemon-owned link.
