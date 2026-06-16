@@ -43,7 +43,7 @@
         </form>
         <ul id="repo-list"></ul>
 
-        <p class="aside-note muted">未备份的真身 skill 现在直接显示在右侧「目录现状」里（标 <b>未备份</b>），就地点「收编」即可。</p>
+        <p class="aside-note muted">未备份的真身 skill 现在直接显示在右侧「目录现状」里（标 <b>未备份</b>），就地点「备份」即可。</p>
       </aside>
 
       <main>
@@ -152,8 +152,8 @@
           <h4>从库添加 / 整仓跟随</h4>
           <p>点主面板的「+ 添加」打开抽屉，列出库（git 仓 + @local）里<b>尚未启用进当前目录</b>的 skill，点「启用」即映射进来。或点某仓的「整仓跟随」——之后该仓新增的 skill 自动加链、删除的自动清链。</p>
 
-          <h4>收编未备份 skill</h4>
-          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill。就地点「收编」把它移入受管存储（<code>~/.skillmanage/local</code>）并在原位留一个软链——agent 里照常可用，同时成为可跨 harness 复用的受管来源（收编后来源变为<code>本地</code>）。</p>
+          <h4>备份未备份 skill</h4>
+          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill。就地点「备份」把它移入受管存储（<code>~/.skillmanage/local</code>）并在原位留一个软链——agent 里照常可用，同时成为可跨 harness 复用的受管来源（备份后来源变为<code>本地</code>）。</p>
 
           <h4>与 skills.sh 等工具共存</h4>
           <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：它们在现状视图里只读显示，绝不会被移动或删除（第四条不变式）。skills.sh 装的 skill 更新仍交给它自己——若本机有 <code>npx</code>，现状视图会提供一个「更新」按钮代调 <code>npx skills update</code>；否则只给提示。<code>~/.agents/skills</code>（跨工具中立目录）会被自动识别为来源。</p>

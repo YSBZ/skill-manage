@@ -452,7 +452,7 @@ function inventoryCard(i) {
     }
   }
   if (i.kind === "handwritten") {
-    const ad = ce("button", { className: "small", textContent: "收编", title: "移入受管存储并原位软链，纳入自动更新" });
+    const ad = ce("button", { className: "small", textContent: "备份", title: "移入受管存储并原位软链，纳入自动更新（未备份 → 已备份）" });
     ad.onclick = () => adoptHandwritten(i, ad);
     r1.append(ad);
   }
@@ -465,10 +465,33 @@ function inventoryCard(i) {
       r1.append(ce("span", { className: "inv-hint", textContent: "skills.sh 管理，用 npx skills update 更新" }));
     }
   }
+  if (i.kind === "unknown") {
+    const del = ce("button", { className: "danger small", textContent: "删除软链", title: "只删此软链，不动它指向的目标" });
+    del.onclick = () => deleteStrayLink(i, del);
+    r1.append(del);
+  }
   main.append(r1);
+  // 反查：show where an unknown stray symlink points.
+  if (i.kind === "unknown" && i.linkTarget) main.append(ce("div", { className: "inv-linktarget", title: i.linkTarget, textContent: "→ " + i.linkTarget }));
   if (i.description) main.append(ce("div", { className: "skill-desc", textContent: i.description }));
   row.append(main);
   return row;
+}
+
+// deleteStrayLink removes a single unknown/stray symlink (the symlink only, never
+// its target). Explicit, confirmed — the user-initiated exception to never-break.
+async function deleteStrayLink(i, btn) {
+  const where = i.linkTarget ? "（指向 " + i.linkTarget + "）" : "";
+  if (!(await confirmModal("删除软链 " + i.name + " " + where + "？\n只删这条软链本身，不会动它指向的目标，也不影响其它目录。", "删除软链", true))) return;
+  btn.disabled = true; btn.textContent = "删除中…";
+  try {
+    await api("DELETE", "/api/inventory/link", { target: currentTarget(), name: i.name });
+    toast("已删除软链 " + i.name);
+    await fetchInventory();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "删除软链";
+    banner("删除软链 " + i.name + " 失败：" + e.message, true);
+  }
 }
 
 function summaryToast(sum, name, enable) {
@@ -496,15 +519,15 @@ async function disableSkill(i, btn) {
 }
 
 async function adoptHandwritten(i, btn) {
-  if (!(await confirmModal("将 " + i.name + " 移入受管存储（~/.skillmanage/local）并在原位建软链？\n此操作会移动原目录。", "收编"))) return;
-  btn.disabled = true; btn.textContent = "收编中…";
+  if (!(await confirmModal("将 " + i.name + " 备份进受管存储（~/.skillmanage/local）并在原位建软链？\n此操作会移动原目录。", "备份"))) return;
+  btn.disabled = true; btn.textContent = "备份中…";
   try {
     await doAdopt({ id: i.name, root: currentTarget() });
-    toast("已收编 " + i.name + "（原位已软链）");
+    toast("已备份 " + i.name + "（原位已软链）");
     await load();
   } catch (e) {
-    btn.disabled = false; btn.textContent = "收编";
-    banner("收编 " + i.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
+    btn.disabled = false; btn.textContent = "备份";
+    banner("备份 " + i.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
   }
 }
 

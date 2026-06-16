@@ -39,6 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
 	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
 	mux.HandleFunc("GET /api/inventory", s.requireAuth(s.handleInventory))
+	mux.HandleFunc("DELETE /api/inventory/link", s.requireAuth(s.handleDeleteStrayLink))
 	mux.HandleFunc("POST /api/ignore-plugins", s.requireAuth(s.handleSetIgnorePlugins))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
@@ -527,6 +528,7 @@ type inventoryItem struct {
 	Managed     bool               `json:"managed"`            // owned by SkillManage (git/local)
 	Enabled     bool               `json:"enabled"`            // a managed link is materialized → enabled
 	Follow      bool               `json:"follow,omitempty"`   // enabled via a whole-source follow (source/*) → no per-item disable
+	LinkTarget  string             `json:"linkTarget,omitempty"` // for unknown links: where the symlink resolves (反查源头)
 	Collision   bool               `json:"collision,omitempty"`
 }
 
@@ -621,6 +623,11 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		if res.Kind == source.KindSkillsSh {
 			it.SourceURL = validHTTPURL(res.SourceURL) // strip non-http(s) (XSS guard)
 		}
+		if res.Kind == source.KindUnknown {
+			if rt, ok := clf.Mgr.ResolveLink(sk.Dir); ok {
+				it.LinkTarget = rt // 反查：where the stray symlink points
+			}
+		}
 		if it.Managed {
 			it.Enabled = true // present + managed ⟹ the link is live
 			src := res.Repo
@@ -635,6 +642,70 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, it)
 	}
 	writeJSON(w, http.StatusOK, inventoryResp{Target: configured, Scope: scope, Items: items})
+}
+
+type strayLinkReq struct {
+	Target string `json:"target"`
+	Name   string `json:"name"`
+}
+
+// handleDeleteStrayLink removes a single stray symlink (an "unknown" inventory
+// entry) the user explicitly chose to clean up. This is the ONE user-initiated
+// exception to never-break (invariant ④, which governs AUTOMATIC reconcile):
+// the request is explicit and confirmed in the UI. It is still tightly bounded —
+// it removes ONLY the symlink, never the target it points at; refuses anything
+// that is not a symlink (so a real directory's data is never deleted); and
+// refuses links recorded in our manifest (use disable for those).
+func (s *Server) handleDeleteStrayLink(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req strayLinkReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid link name"})
+		return
+	}
+	want := harness.Expand(strings.TrimSpace(req.Target))
+	s.mu.Lock()
+	configured := ""
+	for _, d := range s.cfg.Targets {
+		if harness.Expand(d) == want {
+			configured = d
+			break
+		}
+	}
+	owned := linker.NewManager(s.reposRoot, s.personalStore).FindOwned(&s.manifest, configured, name) != nil
+	s.mu.Unlock()
+	if configured == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown sync target"})
+		return
+	}
+	if owned {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "这是本工具管理的链接，请用「停用」"})
+		return
+	}
+	p := filepath.Join(want, name)
+	lst, err := os.Lstat(p)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "链接不存在"})
+		return
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		// Never delete a real file/dir — only a symlink.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是软链，拒绝删除（只删软链，不动真实目录）"})
+		return
+	}
+	if err := os.Remove(p); err != nil { // removes the symlink only, never its target
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // effectiveDirectorySources returns the configured directory-source paths plus

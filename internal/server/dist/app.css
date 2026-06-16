@@ -277,3 +277,6 @@ footer .error { color: var(--err); }
 .tab { cursor: grab; }
 .tab.dragging { opacity: .5; }
 .tab.drop-to { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 反查：where an unknown stray symlink points */
+.inv-linktarget { color: var(--muted); font-size: 11.5px; margin-top: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
