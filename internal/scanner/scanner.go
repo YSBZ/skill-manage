@@ -9,10 +9,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"skillmanage/internal/pathutil"
+)
+
+// Scan bounds, aligned with the Agent Skills client guidance (R5.2): cap the
+// walk depth and total directory count so pointing Scan at a pathological tree
+// (a huge monorepo, a symlinked cycle materialized as dirs) cannot hang. A real
+// skill repo never approaches these — Scan also stops descending at each skill
+// (KTD4) — so the caps only ever bite runaway inputs.
+const (
+	maxScanDepth = 6
+	maxScanDirs  = 2000
 )
 
 // Skill is one discovered skill unit.
@@ -73,6 +84,8 @@ func parseDescription(skillMdPath string) string {
 // descend into a skill (the direct-child rule, KTD4) and skips .git.
 func Scan(repoRoot string) ([]Skill, error) {
 	var skills []Skill
+	dirsSeen := 0
+	rootSeps := strings.Count(filepath.Clean(repoRoot), string(os.PathSeparator))
 	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -80,7 +93,18 @@ func Scan(repoRoot string) ([]Skill, error) {
 		if !d.IsDir() {
 			return nil
 		}
-		if d.Name() == ".git" {
+		// Skip dirs that never hold authored skills, per the standard's scan rules
+		// (R5.2): VCS metadata and dependency caches.
+		if name := d.Name(); name == ".git" || name == "node_modules" {
+			return filepath.SkipDir
+		}
+		// Bound a runaway walk: stop entirely past the directory budget, and stop
+		// descending past the depth cap. A real skill repo hits neither.
+		dirsSeen++
+		if dirsSeen > maxScanDirs {
+			return filepath.SkipAll
+		}
+		if strings.Count(filepath.Clean(path), string(os.PathSeparator))-rootSeps > maxScanDepth {
 			return filepath.SkipDir
 		}
 		info, statErr := os.Stat(filepath.Join(path, "SKILL.md"))

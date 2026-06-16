@@ -156,6 +156,38 @@ func IsCodexTarget(dir string) bool {
 		strings.HasSuffix(r, filepath.FromSlash("/.agents/skills"))
 }
 
+// SkillScope is whether a skills directory is user-level (personal/global, e.g.
+// ~/.claude/skills, $CODEX_HOME/skills, ~/.agents/skills) or project-level
+// (repo-local, e.g. /work/myrepo/.claude/skills). The Agent Skills convention
+// is that project-level skills take precedence over user-level on a name clash
+// (R5.1); the inventory view uses this to label which of two same-named skills
+// actually wins (project) and which is shadowed (user). It is a DISPLAY signal —
+// reconcile does not suppress links by scope this phase.
+type SkillScope string
+
+const (
+	ScopeUser    SkillScope = "user"
+	ScopeProject SkillScope = "project"
+)
+
+// Scope classifies a skills directory as user-level or project-level. A path
+// under the home (or $CODEX_HOME) install roots is user-level; anything else is
+// project-level (a repo checkout's .claude/.codex/.agents skills dir).
+func Scope(dir string) SkillScope {
+	r := expand(dir)
+	if underOrEqual(r, codexSkillsRoot()) { // honors $CODEX_HOME override
+		return ScopeUser
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, sub := range [][]string{{".claude", "skills"}, {".codex", "skills"}, {".agents", "skills"}} {
+			if underOrEqual(r, filepath.Join(append([]string{home}, sub...)...)) {
+				return ScopeUser
+			}
+		}
+	}
+	return ScopeProject
+}
+
 // SkillDirsFor expands a user-selected directory into the concrete Claude Code
 // and Codex skills directories it implies. Only these two agents are supported,
 // so their well-known subdir conventions are matched directly — the user OK'd
