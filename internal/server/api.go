@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"skillmanage/internal/adopt"
 	"skillmanage/internal/config"
@@ -45,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/credentials", s.requireAuth(s.handleListCredentials))
 	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
 	mux.HandleFunc("DELETE /api/credentials", s.requireAuth(s.handleDeleteCredential))
+	mux.HandleFunc("POST /api/dirsource/update", s.requireAuth(s.handleDirSourceUpdate))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 	mux.HandleFunc("GET /api/autostart", s.requireAuth(s.handleAutostartStatus))
@@ -110,7 +114,8 @@ type statusResp struct {
 	Targets     []string              `json:"targets"`
 	Links       []config.LinkRecord   `json:"links"`
 	LastSummary reconcile.Summary     `json:"lastSummary"`
-	GitError    string                `json:"gitError,omitempty"` // set when git is unavailable
+	GitError    string                `json:"gitError,omitempty"`      // set when git is unavailable
+	NpxAvailable bool                 `json:"npxAvailable,omitempty"` // true → UI offers one-click skills.sh update (U7)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -121,8 +126,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Enabled:     s.cfg.Enabled,
 		Targets:     s.cfg.Targets,
 		Links:       s.manifest.Links,
-		LastSummary: s.lastSummary,
-		GitError:    s.gitErr,
+		LastSummary:  s.lastSummary,
+		GitError:     s.gitErr,
+		NpxAvailable: s.npxPath != "",
 	}
 	// repo status in config order
 	for _, repo := range s.cfg.Repos {
@@ -687,6 +693,104 @@ func validHTTPURL(raw string) string {
 		return raw
 	}
 	return ""
+}
+
+// --- skills.sh update delegation (phase 3 U7) ---
+
+// skillsRunner runs `npx skills update <name>` for a directory source. Split by
+// platform (runner_unix.go / runner_windows.go) so Windows can route through
+// cmd /c and suppress the console window the windowless daemon would flash.
+type skillsRunner interface {
+	UpdateSkill(ctx context.Context, npxPath, name string) (stdout, stderr string, err error)
+}
+
+// skillNameRe bounds the skill name passed to npx: a leading alnum/underscore
+// then alnum/dot/dash/underscore. No path separators, no shell metacharacters,
+// no leading dash (which npx would read as a flag). This is the first of two
+// gates; the second is the on-disk allowlist (the name must be a real directory
+// directly under ~/.agents/skills).
+var skillNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+
+type dirSourceUpdateReq struct {
+	Name string `json:"name"`
+}
+
+// handleDirSourceUpdate delegates a skills.sh-managed skill's update to its own
+// tool (`npx skills update <name>`). It never writes ~/.agents itself (invariant
+// ④). Security (KTD5): defensive Origin check on this command-executing
+// endpoint, strict name regex, AND an on-disk allowlist so a forged or crafted
+// name cannot steer npx — the name must be a real directory currently under
+// ~/.agents/skills.
+func (s *Server) handleDirSourceUpdate(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req dirSourceUpdateReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "." || name == ".." || !skillNameRe.MatchString(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid skill name"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	s.mu.Unlock()
+
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update"})
+		return
+	}
+	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)
+	if agentsSkillsRoot == "" || !isDirectChildDir(agentsSkillsRoot, name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是 skills.sh 管理的 skill"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 60*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.UpdateSkill(ctx, npx, name)
+	resp := map[string]any{"ok": err == nil, "stdout": stdout, "stderr": stderr}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// isDirectChildDir reports whether name is a real directory sitting directly
+// under root. name is already regex-validated to contain no separators, so this
+// cannot traverse out of root.
+func isDirectChildDir(root, name string) bool {
+	fi, err := os.Stat(filepath.Join(root, name))
+	return err == nil && fi.IsDir()
+}
+
+// originLoopbackOK rejects a request whose Origin/Referer is a non-loopback web
+// origin — a forged cross-site POST. A missing Origin (curl, same-origin fetch
+// that didn't set it) is allowed; the Bearer-token gate and Host check already
+// bound this to a localhost client.
+func originLoopbackOK(r *http.Request) bool {
+	o := r.Header.Get("Origin")
+	if o == "" {
+		o = r.Header.Get("Referer")
+	}
+	if o == "" {
+		return true
+	}
+	u, err := url.Parse(o)
+	if err != nil {
+		return false
+	}
+	switch u.Hostname() {
+	case "127.0.0.1", "localhost", "::1", "":
+		return true
+	default:
+		return false
+	}
 }
 
 type pluginPrefReq struct {
