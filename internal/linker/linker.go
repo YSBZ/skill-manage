@@ -323,16 +323,61 @@ func sortedKeys(m map[string]bool) []string {
 // untouched. Best-effort: platforms where the target cannot be read return
 // false (conservative — Windows junction whose target is unreadable is treated
 // as foreign, so we refuse rather than risk clobbering it).
-func (mgr *Manager) looksOurs(path string) bool {
-	target, err := readLinkTarget(path)
+func (mgr *Manager) looksOurs(path string) bool { return mgr.OwnedRoot(path) != "" }
+
+// OwnedRoot returns which private canonical root the link at path resolves under
+// — the repos root or the personal store — or "" if it resolves elsewhere or
+// cannot be read. It is the exported form of the looksOurs ownership signature
+// (invariant ④/KTD6), so other packages (source classification) reuse the SAME
+// predicate instead of reimplementing "is this ours?" and risking drift.
+func (mgr *Manager) OwnedRoot(path string) string {
+	resolved, ok := mgr.ResolveLink(path)
+	if !ok {
+		return ""
+	}
+	switch {
+	case underRoot(mgr.reposRoot, resolved):
+		return mgr.reposRoot
+	case mgr.personalStore != "" && underRoot(mgr.personalStore, resolved):
+		return mgr.personalStore
+	default:
+		return ""
+	}
+}
+
+// ResolveLink returns the cleaned absolute path the link at p points at, using
+// the same platform-correct, conservative resolution Link uses (Windows
+// junctions whose target is unreadable yield ok=false). ok is false when p is
+// not a readable link (a real directory, a broken link, or an unreadable
+// junction) — callers treat those as non-owned / unknown.
+func (mgr *Manager) ResolveLink(p string) (string, bool) {
+	target, err := readLinkTarget(p)
 	if err != nil || target == "" {
-		return false
+		return "", false
 	}
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(path), target)
+		target = filepath.Join(filepath.Dir(p), target)
 	}
-	target = filepath.Clean(target)
-	return underRoot(mgr.reposRoot, target) || (mgr.personalStore != "" && underRoot(mgr.personalStore, target))
+	return filepath.Clean(target), true
+}
+
+// ReposRoot and PersonalStore expose the private canonical roots so callers can
+// map an owned link's resolved target to a source kind (git vs local).
+func (mgr *Manager) ReposRoot() string     { return mgr.reposRoot }
+func (mgr *Manager) PersonalStore() string { return mgr.personalStore }
+
+// FindOwned looks up a manifest record for (target, name), matching the target
+// by resolved path and the name case-insensitively. The case fold matters on
+// macOS/Windows: a manifest record keyed "find-skills" must still match an
+// on-disk entry named "Find-Skills", or an owned link is misread as unowned.
+func (mgr *Manager) FindOwned(m *config.Manifest, target, name string) *config.LinkRecord {
+	wantTarget := harness.Expand(target)
+	for i := range m.Links {
+		if harness.Expand(m.Links[i].Target) == wantTarget && strings.EqualFold(m.Links[i].Name, name) {
+			return &m.Links[i]
+		}
+	}
+	return nil
 }
 
 // underRoot reports whether target is root or a descendant of root.
