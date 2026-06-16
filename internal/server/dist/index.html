@@ -43,14 +43,7 @@
         </form>
         <ul id="repo-list"></ul>
 
-        <div class="pane-head">
-          <h2>未备份 skill</h2>
-          <button id="adopt-all" class="ghost small hidden" title="把列出的真身 skill 全部移入受管存储并原位软链">全选收编</button>
-        </div>
-        <label class="toggle small-toggle" title="plugins 目录下的 skill 由 agent 插件系统管理，默认不在收编列表里显示">
-          <input type="checkbox" id="ignore-plugins" checked /> 忽略 plugin 里的 skill
-        </label>
-        <ul id="adopt-list"></ul>
+        <p class="aside-note muted">未备份的真身 skill 现在直接显示在右侧「目录现状」里（标 <b>未备份</b>），就地点「收编」即可。</p>
       </aside>
 
       <main>
@@ -59,7 +52,8 @@
           <button id="tab-add" class="tab-add" title="添加同步目录">+</button>
         </div>
         <div class="main-head">
-          <input id="search" type="search" placeholder="搜索 skill（名称 / 描述）…" />
+          <input id="search" type="search" placeholder="搜索当前目录的 skill（名称 / 描述）…" />
+          <button id="add-skill" title="从库里把 skill 启用进当前目录">+ 添加</button>
         </div>
         <div id="skills"></div>
       </main>
@@ -152,12 +146,17 @@
           <h4>同步目录（顶部 tab）</h4>
           <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>
 
-          <h4>选择性同步 / 整仓同步</h4>
-          <p>每个 tab 独立维护自己的映射：在 skill 卡片上勾选要同步进该目录的 skill。或点仓库的「全选并跟随」整仓同步——之后仓库新增的 skill 自动加链、删除的自动清链。</p>
+          <h4>目录现状视图</h4>
+          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，并标明来源：<code>git</code>（来自 git 仓）、<code>本地</code>（已收编/手写、受管）、<code>skills.sh</code>（由 skills.sh 安装）、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。本工具管理的（git/本地）带<b>启用/停用开关</b>，切换即建/拆软链并提示结果；别家管理的（skills.sh/插件）只读不碰。</p>
 
-          <h4>收编本地 skill（未备份 skill）</h4>
-          <p>「未备份 skill」按<b>当前选中的 tab</b>列出该同步目录里你手写、还没纳入管理的真身 skill（切 tab 会跟着变）。点「收编」把它移入受管存储并在原位留一个软链——它在 agent 里照常可用，同时成为可跨 harness 复用的受管来源。</p>
-          <p><b>plugins 目录下的 skill</b> 由 agent 插件系统管理，默认<b>忽略不显示</b>。取消勾选「忽略 plugin 里的 skill」后，会额外扫描该 tab 对应的插件目录（如 <code>~/.claude/plugins</code>）并列出，带 <code>plugin</code> 标签。对它们点「收编」走的是<b>复制导入</b>：把副本存入受管存储并映射进当前 tab，<b>不改动插件原件</b>。注意这会与插件自带的同名 skill 并存，按需使用。</p>
+          <h4>从库添加 / 整仓跟随</h4>
+          <p>点主面板的「+ 添加」打开抽屉，列出库（git 仓 + @local）里<b>尚未启用进当前目录</b>的 skill，点「启用」即映射进来。或点某仓的「整仓跟随」——之后该仓新增的 skill 自动加链、删除的自动清链。</p>
+
+          <h4>收编未备份 skill</h4>
+          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill。就地点「收编」把它移入受管存储（<code>~/.skillmanage/local</code>）并在原位留一个软链——agent 里照常可用，同时成为可跨 harness 复用的受管来源（收编后来源变为<code>本地</code>）。</p>
+
+          <h4>与 skills.sh 等工具共存</h4>
+          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：它们在现状视图里只读显示，绝不会被移动或删除（第四条不变式）。skills.sh 装的 skill 更新仍交给它自己——若本机有 <code>npx</code>，现状视图会提供一个「更新」按钮代调 <code>npx skills update</code>；否则只给提示。<code>~/.agents/skills</code>（跨工具中立目录）会被自动识别为来源。</p>
 
           <h4>更新：自动 / 立即 / 强制</h4>
           <p>守护进程按计划每天自动拉取上游并重新同步软链。「立即更新」手动触发一次；「强制更新」会丢弃仓库的本地改动、与上游保持一致（谨慎使用）。</p>
@@ -174,6 +173,19 @@
       </div>
     </div>
 
+    <div id="add-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(620px,100%)">
+        <div class="modal-head">
+          <h3>添加 skill 到 <span id="add-target-name"></span></h3>
+          <button id="add-modal-close" class="ghost small">关闭</button>
+        </div>
+        <div style="padding:12px 18px 0">
+          <input id="add-search" type="search" placeholder="搜索库里的 skill…" style="width:100%" />
+        </div>
+        <div id="add-list" class="add-list"></div>
+      </div>
+    </div>
+
     <div id="modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
@@ -184,6 +196,8 @@
         <pre id="modal-content"></pre>
       </div>
     </div>
+
+    <div id="toast" class="toast hidden"></div>
 
     <script src="/app.js"></script>
   </body>

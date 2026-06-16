@@ -221,3 +221,51 @@ footer .error { color: var(--err); }
 .modal-head h3 { margin: 0; font-size: 15px; }
 #modal-desc { padding: 12px 18px 0; margin: 0; }
 #modal-content { margin: 12px 18px 18px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+
+/* --- phase 3: 目录现状视图 + 添加抽屉 + toast --- */
+.main-head { display: flex; gap: 10px; align-items: center; }
+.main-head #search { flex: 1; }
+#add-skill { flex: 0 0 auto; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent); }
+#add-skill:hover { background: var(--accent); color: #fff; }
+
+#skills { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+#skills .empty { grid-column: 1 / -1; }
+.aside-note { font-size: 11.5px; line-height: 1.55; margin: 4px 0 0; }
+
+/* inventory rows reuse .skill; left gutter holds the toggle or a read-only dot */
+.inv-left { display: flex; align-items: flex-start; padding-top: 1px; }
+.inv-readonly { color: var(--muted); font-size: 18px; line-height: 14px; width: 16px; text-align: center; }
+.inv-hint { color: var(--muted); font-size: 11.5px; }
+
+/* source badges — color carries meaning but text/border also distinguishes */
+.src-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+.src-badge.src-git { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.src-badge.src-local { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.src-badge.src-skillssh { color: #c98bff; border-color: color-mix(in srgb, #c98bff 50%, transparent); }
+.src-badge.src-plugin { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.src-badge.src-handwritten { color: var(--muted); border-color: var(--line); }
+.src-badge.src-unknown { color: var(--muted); border-color: var(--line); border-style: dashed; }
+.src-badge.src-shadow { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+
+/* a subtle left accent on the card by source */
+.skill.inv { border-left-width: 3px; }
+.skill.inv.src-git { border-left-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.skill.inv.src-local { border-left-color: color-mix(in srgb, var(--ok) 60%, var(--line)); }
+.skill.inv.src-skillssh { border-left-color: color-mix(in srgb, #c98bff 60%, var(--line)); }
+.skill.inv.src-plugin { border-left-color: color-mix(in srgb, var(--warn) 60%, var(--line)); }
+
+/* "+ 添加" drawer list */
+.add-list { padding: 10px 18px 18px; max-height: 60vh; overflow-y: auto; }
+.add-group { margin-bottom: 14px; }
+.add-group-head { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.add-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; }
+.add-row:hover { background: var(--panel-2); border-radius: 8px; }
+.add-desc { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+
+/* transient toast for build/teardown/update feedback */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  background: var(--panel-2); border: 1px solid var(--accent-dim); color: var(--text);
+  padding: 10px 16px; border-radius: 10px; font-size: 13px; z-index: 100;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); max-width: 80vw;
+}

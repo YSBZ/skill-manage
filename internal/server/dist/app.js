@@ -63,18 +63,20 @@ function confirmModal(msg, okText, danger) {
 const state = {
   status: null,
   targets: [],
-  adoptable: [],
-  adoptError: false,
-  ignorePlugins: true, // hide plugin skills from the adoptable list by default
+  npxAvailable: false,
   credHosts: {}, // host → username for hosts with a stored HTTPS credential
   credPending: null, // {url, branch} when filling creds before adding a repo
-  skillsByRepo: {},
-  expanded: undefined, // accordion: open group name; undefined=未初始化, null=用户主动全收起
+  skillsByRepo: {}, // catalog for the "+ 添加" drawer
+  inventory: [], // current tab's directory inventory (phase 3 U6)
+  invScope: "",
+  invLoading: false,
+  invError: "",
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
+  addSearch: "",
 };
 
-// error_code → 用户文案（KTD7/U6：不同失败点处置不同）
+// error_code → 用户文案（收编不同失败点处置不同）
 const ADOPT_ERR = {
   copy_failed: "原 skill 未动，请检查磁盘空间或权限",
   verify_failed: "原 skill 未动，复制不完整",
@@ -88,9 +90,17 @@ const ADOPT_ERR = {
 
 const HARNESS_LABEL = { cc: "cc", codex: "codex", unknown: "unknown" };
 const harnessClass = (h) => (h === "codex" ? "st-linked-codex" : h === "cc" ? "st-cc" : "st-unknown");
-// Reserved source namespace for adopted (收编) skills living in the personal
-// store; surfaced in the main list alongside tracked repos so收编 is visible.
 const LOCAL_NS = "@local";
+
+// SRC maps a classified source kind to its badge label + CSS class (phase 3 U8).
+const SRC = {
+  git: { label: "git", cls: "src-git" },
+  local: { label: "本地", cls: "src-local" },
+  "skills.sh": { label: "skills.sh", cls: "src-skillssh" },
+  plugin: { label: "插件", cls: "src-plugin" },
+  handwritten: { label: "未备份", cls: "src-handwritten" },
+  unknown: { label: "未知软链", cls: "src-unknown" },
+};
 
 function banner(msg, isErr) {
   const b = $("#banner");
@@ -99,70 +109,61 @@ function banner(msg, isErr) {
   b.className = "banner" + (isErr ? " err" : "");
 }
 
+// toast shows a transient confirmation (build/teardown link feedback, R4.2).
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), 3200);
+}
+
+function hostOf(u) { try { return new URL(u).hostname; } catch { return u; } }
+function targetLabel(dir) {
+  const t = state.targets.find((x) => x.dir === dir);
+  return (t && t.alias) || dir;
+}
+
 const targetDirs = () => state.targets.map((t) => t.dir);
 // currentTarget = the active tab's directory (each tab is one sync dir and keeps
 // its own skill→dir mapping). Falls back to the first directory.
 const currentTarget = () => {
   const dirs = targetDirs();
   if (state.activeTarget && dirs.includes(state.activeTarget)) return state.activeTarget;
-  return dirs[0] || "~/.claude/skills/";
+  return dirs[0] || "";
 };
 
 const enabledFollow = (repo) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === currentTarget());
-const enabledSnapshot = (repo, link) =>
-  (state.status.enabled || []).some((e) => e.skill === repo + "/" + link && e.target === currentTarget());
 
-// skillBadges returns only conflict/warning badges for a skill. Whether a skill
-// is synced to the current directory is shown by its checkbox (sync is by
-// directory/tab, NOT by cc/codex agent), so a per-agent "linked" badge would be
-// both redundant and misleading.
-function skillBadges(linkName) {
-  const out = [];
-  const confs = (state.status.lastSummary && state.status.lastSummary.conflicts) || [];
-  if (confs.some((c) => c.kind === "collision" && c.linkName === linkName)) out.push({ cls: "st-conflict", text: "撞名" });
-  if (confs.some((c) => c.kind === "shadow" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "被遮蔽" });
-  if (confs.some((c) => c.kind === "nested" && c.linkName === linkName)) out.push({ cls: "st-shadowed", text: "嵌套⚠" });
-  return out;
-}
-
-// Fetch the adoptable ("未备份 skill") list scoped to the active tab, so it
-// always matches the currently selected sync directory.
-async function fetchAdoptable() {
-  const t = currentTarget();
-  const q = t ? "?target=" + encodeURIComponent(t) : "";
-  try {
-    const a = (await api("GET", "/api/adoptable" + q)) || {};
-    state.adoptable = a.skills || [];
-    state.ignorePlugins = a.includePlugins === false;
-    state.adoptError = false;
-  } catch { state.adoptable = []; state.adoptError = true; }
-}
+function banner_(msg) { banner(msg); }
 
 async function load() {
   try { state.status = await api("GET", "/api/status"); }
   catch (e) { banner("加载失败：" + e.message, true); return; }
+  state.npxAvailable = !!state.status.npxAvailable;
   try { state.targets = (await api("GET", "/api/targets")) || []; }
   catch { state.targets = []; }
-  await fetchAdoptable();
   try {
     const list = (await api("GET", "/api/credentials")) || [];
     state.credHosts = {};
     list.forEach((c) => { state.credHosts[c.host] = c.username || ""; });
   } catch { state.credHosts = {}; }
   const repos = state.status.repos || [];
-  // Fetch tracked-repo skills plus the @local store (adopted skills).
+  // Catalog for the "+ 添加" drawer: tracked-repo skills plus the @local store.
   const names = repos.map((r) => r.name).concat(LOCAL_NS);
   const entries = await Promise.all(names.map(async (name) => {
     try { return [name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(name))) || []]; }
     catch { return [name, []]; }
   }));
   state.skillsByRepo = Object.fromEntries(entries);
-  renderStats(); renderRepos(); renderTabs(); renderAdoptable(); renderSkills(); renderSummary(); loadAutostart();
+  renderStats(); renderRepos(); renderTabs(); renderSummary(); loadAutostart();
+  await fetchInventory();
   if (state.status.gitError) {
     banner("未检测到 git：" + state.status.gitError + "。请安装 Git 并确保在 PATH 中，然后重启本工具——否则无法拉取/更新仓库。", true);
   } else {
-    banner(repos.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
+    banner(repos.length === 0 && state.targets.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
   }
 }
 
@@ -181,8 +182,7 @@ function renderStats() {
 
 function stateBadge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
 
-// repoDot classifies a repo's last-sync result into a status dot color:
-// err = failed/auth, idle = not yet synced or in progress, ok = synced.
+// repoDot classifies a repo's last-sync result into a status dot color.
 function repoDot(repo) {
   const st = repo.state || "never-synced";
   if (repo.error || st === "failed") return "err";
@@ -190,17 +190,10 @@ function repoDot(repo) {
   return "ok";
 }
 
-// httpsHost returns the host of an https repo URL, or "" for ssh/scp URLs
-// (credential entry only applies to HTTPS).
 function httpsHost(u) {
-  try {
-    if (!/^https?:\/\//i.test(u)) return "";
-    return new URL(u).hostname;
-  } catch { return ""; }
+  try { if (!/^https?:\/\//i.test(u)) return ""; return new URL(u).hostname; } catch { return ""; }
 }
 
-// openCredModal opens the credential dialog. pending = {url, branch} marks the
-// "filling creds before adding a repo" flow (shows a skip-for-public button).
 function openCredModal(host, username, pending) {
   $("#cred-host").textContent = host;
   $("#cred-host").dataset.host = host;
@@ -223,7 +216,6 @@ function renderRepos() {
     const host = httpsHost(repo.url);
     const li = ce("li");
     const top = ce("div", { className: "repo-top" });
-    // connectivity/auth dot: green=上次同步成功, red=失败(可点重填凭据), grey=未同步
     const dotKind = repoDot(repo);
     const dot = ce("span", { className: "repo-dot " + dotKind });
     if (dotKind === "err" && host) {
@@ -249,7 +241,7 @@ function renderRepos() {
     const rm = ce("button", { className: "danger small", textContent: "移除" });
     rm.onclick = async () => {
       if (!(await confirmModal("移除仓库 " + repo.name + "？它建立的软链会立即清理。"))) return;
-      await api("DELETE", "/api/repos", { url: repo.url }); // reconciles server-side
+      await api("DELETE", "/api/repos", { url: repo.url });
       await load();
     };
     meta.append(rm);
@@ -260,9 +252,8 @@ function renderRepos() {
   });
 }
 
-// renderTabs draws one tab per sync directory. The active tab is the current
-// target: the skill list below reflects (and edits) that directory's own
-// skill→dir mapping. Each tab carries a cc/codex badge and a remove ×.
+// renderTabs draws one tab per sync directory. Switching a tab re-scans that
+// directory's inventory.
 function renderTabs() {
   const bar = $("#target-tabs"); bar.innerHTML = "";
   const active = currentTarget();
@@ -280,17 +271,13 @@ function renderTabs() {
       e.stopPropagation();
       if (!(await confirmModal("移除同步目录 " + (t.alias || t.dir) + "？\n该目录下由本工具建立的链接会立即清理；目录里你自己的真身 skill 不受影响。"))) return;
       if (state.activeTarget === t.dir) state.activeTarget = undefined;
-      // DELETE reconciles server-side, tearing down this tab's links on disk.
       await api("DELETE", "/api/targets", { dir: t.dir });
       await load();
     };
     tab.append(rm);
-    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); renderSkills(); fetchAdoptable().then(renderAdoptable); };
+    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); fetchInventory(); };
     bar.append(tab);
   });
-  // The "+" lives outside the scroll container (#tab-add in the markup) so it
-  // stays pinned to the right instead of scrolling away with the tabs.
-  // Bring the selected tab to the center of the scroll row.
   if (activeEl) {
     const cRect = bar.getBoundingClientRect();
     const tRect = activeEl.getBoundingClientRect();
@@ -304,34 +291,24 @@ function openTargetModal() {
   $("#target-alias").value = "";
   $("#target-modal").classList.remove("hidden");
   $("#target-path").focus();
-  browseTo(""); // "" → daemon starts at the user's home dir
+  browseTo("");
 }
 function closeTargetModal() { $("#target-modal").classList.add("hidden"); }
 
-// Server-side directory browser: the daemon walks the real filesystem (a web
-// page can't read absolute paths from a native folder picker). Drilling into a
-// dir also makes it the current path, so the active path IS the selection.
 async function browseTo(path) {
   const box = $("#target-browser");
   box.innerHTML = "";
   let resp;
-  try {
-    resp = await api("GET", "/api/browse?path=" + encodeURIComponent(path));
-  } catch (err) {
-    box.append(ce("div", { className: "dir-empty err", textContent: err.message }));
-    return;
-  }
-  $("#target-path").value = resp.path; // current dir = selection
+  try { resp = await api("GET", "/api/browse?path=" + encodeURIComponent(path)); }
+  catch (err) { box.append(ce("div", { className: "dir-empty err", textContent: err.message })); return; }
+  $("#target-path").value = resp.path;
   if (resp.parent) {
     const up = ce("div", { className: "dir-row up" });
     up.append(ce("span", { className: "ic", textContent: "⬆" }), ce("span", { textContent: "上级目录" }));
     up.onclick = () => browseTo(resp.parent);
     box.append(up);
   }
-  if (resp.dirs.length === 0) {
-    box.append(ce("div", { className: "dir-empty", textContent: "（无子目录）" }));
-    return;
-  }
+  if (resp.dirs.length === 0) { box.append(ce("div", { className: "dir-empty", textContent: "（无子目录）" })); return; }
   resp.dirs.forEach((d) => {
     const row = ce("div", { className: "dir-row" });
     row.append(ce("span", { className: "ic", textContent: "📁" }), ce("span", { textContent: d.name }));
@@ -340,48 +317,169 @@ async function browseTo(path) {
   });
 }
 
-function renderAdoptable() {
-  const ul = $("#adopt-list"); ul.innerHTML = "";
-  const ip = $("#ignore-plugins"); if (ip) ip.checked = state.ignorePlugins;
-  const allBtn = $("#adopt-all");
-  if (allBtn) allBtn.classList.toggle("hidden", state.adoptable.length === 0 || state.adoptError);
-  if (state.adoptError) {
-    ul.append(ce("li", { className: "muted", style: "color:var(--err)", textContent: "加载失败，请刷新" }));
-    return;
-  }
-  if (state.adoptable.length === 0) {
-    ul.append(ce("li", { className: "muted", textContent: "同步目录下无未备份的真身 skill（已全部收编或均为软链）" }));
-    return;
-  }
-  state.adoptable.forEach((a) => {
-    const li = ce("li");
-    const name = ce("span", { className: "path", textContent: a.name });
-    const tag = HARNESS_LABEL[a.harness];
-    if (tag) name.append(ce("span", { className: "badge " + harnessClass(a.harness), textContent: tag, style: "margin-left:6px" }));
-    if (a.plugin) name.append(ce("span", { className: "badge st-plugin", textContent: "plugin", style: "margin-left:6px", title: "来自插件目录：收编=复制进受管存储并映射进当前目录，不改动插件原件" }));
-    li.append(name);
-    const btn = ce("button", { className: "small", textContent: "收编" });
-    btn.onclick = async () => {
-      btn.disabled = true; btn.textContent = "收编中…";
-      try {
-        await doAdopt(a);
-        banner(a.plugin ? "已导入 " + a.name + " 并映射进当前目录" : "已收编 " + a.name + "（原位已软链）");
-        await load();
-      } catch (e) {
-        btn.disabled = false; btn.textContent = "收编";
-        banner("收编 " + a.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
-      }
-    };
-    li.append(btn); ul.append(li);
-  });
+// --- inventory (目录现状视图, phase 3 U8) ---
+
+async function fetchInventory() {
+  const t = currentTarget();
+  if (!t) { state.inventory = []; state.invLoading = false; state.invError = ""; renderInventory(); return; }
+  state.invLoading = true; state.invError = ""; renderInventory();
+  try {
+    const r = await api("GET", "/api/inventory?target=" + encodeURIComponent(t));
+    state.inventory = r.items || [];
+    state.invScope = r.scope || "";
+  } catch (e) { state.inventory = []; state.invError = e.message; }
+  state.invLoading = false;
+  renderInventory();
 }
 
-// doAdopt posts to /api/adopt and surfaces the error_code so the caller can map
-// it to a specific message (generic api() would drop the code). root addresses
-// which personal source dir the skill lives under (CC vs Codex).
+function renderInventory() {
+  const root = $("#skills"); root.innerHTML = "";
+  if (state.targets.length === 0) {
+    root.append(ce("div", { className: "empty", textContent: "还没有同步目录。点右上角「+」添加一个，再回到这里查看现状。" }));
+    return;
+  }
+  if (state.invLoading) { root.append(ce("div", { className: "empty", textContent: "正在扫描…" })); return; }
+  if (state.invError) {
+    const e = ce("div", { className: "empty", style: "color:var(--err)" });
+    e.append(ce("span", { textContent: "扫描失败：" + state.invError }));
+    const retry = ce("button", { className: "small", textContent: "重试", style: "margin-left:10px" });
+    retry.onclick = fetchInventory;
+    e.append(retry);
+    root.append(e);
+    return;
+  }
+  const term = state.search.trim().toLowerCase();
+  let items = state.inventory;
+  if (term) items = items.filter((i) => i.name.toLowerCase().includes(term) || (i.description || "").toLowerCase().includes(term));
+  if (items.length === 0) {
+    if (term) { root.append(ce("div", { className: "empty", textContent: "没有匹配的 skill" })); return; }
+    const box = ce("div", { className: "empty" });
+    box.append(ce("div", { textContent: "该目录暂无 skill。" }));
+    box.append(ce("div", { className: "muted", style: "margin-top:6px", textContent: "点上方「+ 添加」从库选取，或在目录里创建 SKILL.md 后刷新。" }));
+    root.append(box);
+    return;
+  }
+  items.forEach((i) => root.append(inventoryCard(i)));
+}
+
+function inventoryCard(i) {
+  const s = SRC[i.kind] || SRC.unknown;
+  const row = ce("div", { className: "skill inv " + s.cls });
+
+  const left = ce("div", { className: "inv-left" });
+  if (i.managed) {
+    const tog = ce("input", { type: "checkbox", checked: !!i.enabled });
+    tog.title = "启用 = 在此目录建软链；停用 = 拆除软链";
+    tog.onchange = () => toggleSkill(i, tog);
+    left.append(tog);
+  } else {
+    left.append(ce("span", { className: "inv-readonly", title: "非本工具管理，只读", textContent: "•" }));
+  }
+  row.append(left);
+
+  const main = ce("div", { className: "skill-main" });
+  const r1 = ce("div", { className: "skill-row1" });
+  r1.append(ce("span", { className: "skill-name", textContent: i.name }));
+
+  let badgeText = s.label;
+  if (i.kind === "git" && i.repo) badgeText = "git · " + i.repo;
+  if (i.kind === "skills.sh" && i.sourceUrl) badgeText = "skills.sh · " + hostOf(i.sourceUrl);
+  const badge = ce("span", { className: "src-badge " + s.cls, textContent: badgeText });
+  if (i.kind === "skills.sh" && i.sourceUrl) badge.title = i.sourceUrl; // title is text-safe (no innerHTML)
+  r1.append(badge);
+
+  if (i.collision) {
+    const c = ce("span", { className: "src-badge src-shadow", textContent: "遮蔽" });
+    c.title = "被同名 skill 遮蔽，实际不生效（项目级 > 用户级）";
+    r1.append(c);
+  }
+
+  if (i.managed && i.selector) {
+    const d = ce("button", { className: "skill-detail-btn", textContent: "详情" });
+    const repo = i.selector.split("/")[0];
+    d.onclick = () => openDetail(repo, i.name);
+    r1.append(d);
+  }
+  if (i.kind === "handwritten") {
+    const ad = ce("button", { className: "small", textContent: "收编", title: "移入受管存储并原位软链，纳入自动更新" });
+    ad.onclick = () => adoptHandwritten(i, ad);
+    r1.append(ad);
+  }
+  if (i.kind === "skills.sh") {
+    if (state.npxAvailable) {
+      const u = ce("button", { className: "ghost small", textContent: "更新", title: "调用 npx skills update 更新（由 skills.sh 管理）" });
+      u.onclick = () => updateSkillSh(i.name, u);
+      r1.append(u);
+    } else {
+      r1.append(ce("span", { className: "inv-hint", textContent: "由 skills.sh 管理，请用 npx skills update 更新" }));
+    }
+  }
+  main.append(r1);
+  if (i.description) main.append(ce("div", { className: "skill-desc", textContent: i.description }));
+  row.append(main);
+  return row;
+}
+
+function summaryToast(sum, name, enable) {
+  if (enable) {
+    const made = (sum && sum.created || []).find((x) => x.name === name);
+    toast(made ? "已在 " + targetLabel(currentTarget()) + " 建立软链 " + name : "已启用 " + name);
+  } else {
+    toast("已移除软链 " + name);
+  }
+}
+
+async function toggleSkill(i, tog) {
+  tog.disabled = true;
+  const enable = tog.checked;
+  const sel = i.selector;
+  try {
+    if (enable) await api("POST", "/api/enabled", { skill: sel, target: currentTarget(), mode: "snapshot" });
+    else await api("DELETE", "/api/enabled", { skill: sel, target: currentTarget() });
+    const sum = await api("POST", "/api/apply"); // returns reconcile Summary
+    summaryToast(sum, i.name, enable);
+    await load();
+  } catch (e) {
+    tog.checked = !enable; tog.disabled = false;
+    banner((enable ? "启用" : "停用") + " " + i.name + " 失败：" + e.message, true);
+  }
+}
+
+async function adoptHandwritten(i, btn) {
+  if (!(await confirmModal("将 " + i.name + " 移入受管存储（~/.skillmanage/local）并在原位建软链？\n此操作会移动原目录。", "收编"))) return;
+  btn.disabled = true; btn.textContent = "收编中…";
+  try {
+    await doAdopt({ id: i.name, root: currentTarget() });
+    toast("已收编 " + i.name + "（原位已软链）");
+    await load();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "收编";
+    banner("收编 " + i.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
+  }
+}
+
+async function updateSkillSh(name, btn) {
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "更新中…";
+  try {
+    const r = await fetch("/api/dirsource/update", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    if (d.ok) toast("已更新 " + name);
+    else banner("更新 " + name + " 失败：" + (d.stderr || d.error || "未知错误"), true);
+  } catch (e) {
+    banner("更新 " + name + " 失败：" + e.message, true);
+  }
+  btn.disabled = false; btn.textContent = old;
+  await fetchInventory();
+}
+
+// doAdopt posts to /api/adopt and surfaces error_code for specific messaging.
 async function doAdopt(a) {
-  // Plugin skills are import-copied into the store and mapped into the active
-  // tab (the plugin original is left untouched); real skills relocate in place.
   const body = a.plugin
     ? { id: a.id, src: a.dir, target: currentTarget(), plugin: true }
     : { id: a.id, root: a.root };
@@ -395,85 +493,68 @@ async function doAdopt(a) {
   return data;
 }
 
-function renderSkills() {
-  const root = $("#skills"); root.innerHTML = "";
+// --- "+ 添加" drawer: enable catalog skills into the current tab (phase 3 U8) ---
+
+function openAddDrawer() {
+  if (state.targets.length === 0) { banner("先添加一个同步目录（点 tab 行的 +）", true); return; }
+  $("#add-target-name").textContent = targetLabel(currentTarget());
+  state.addSearch = "";
+  $("#add-search").value = "";
+  $("#add-modal").classList.remove("hidden");
+  $("#add-search").focus();
+  renderAddDrawer();
+}
+function closeAddDrawer() { $("#add-modal").classList.add("hidden"); }
+
+function renderAddDrawer() {
+  const box = $("#add-list"); box.innerHTML = "";
   const repos = state.status.repos || [];
-  const term = state.search.trim().toLowerCase();
-  // Sources = tracked repos, plus the @local store when it holds adopted skills.
   const sources = repos.map((r) => r.name);
   if ((state.skillsByRepo[LOCAL_NS] || []).length) sources.push(LOCAL_NS);
-  if (sources.length === 0) { root.append(ce("div", { className: "empty", textContent: "无仓库" })); return; }
-
-  // accordion: default to the first source only on first render (undefined).
-  // A user collapse sets null and must be respected (not re-expanded).
-  if (state.expanded === undefined) state.expanded = sources[0] || null;
-
-  let anyShown = false;
+  const term = (state.addSearch || "").trim().toLowerCase();
+  const present = new Set(state.inventory.filter((i) => i.managed).map((i) => i.name));
+  let any = false;
   sources.forEach((name) => {
     const isLocal = name === LOCAL_NS;
-    let skills = state.skillsByRepo[name] || [];
+    let skills = (state.skillsByRepo[name] || []).filter((s) => !present.has(s.linkName));
     if (term) skills = skills.filter((s) => s.linkName.toLowerCase().includes(term) || (s.description || "").toLowerCase().includes(term));
-    if (term && skills.length === 0) return;
-    anyShown = true;
-
-    const collapsed = name !== state.expanded;
-    const group = ce("div", { className: "group" + (collapsed ? " collapsed" : "") });
-
-    const head = ce("div", { className: "group-head" });
-    head.append(ce("span", { className: "caret", textContent: "▾" }));
-    head.append(ce("span", { className: "group-title", textContent: isLocal ? "@local · 已收编" : name }));
-    head.append(ce("span", { className: "badge count", textContent: skills.length + " skill" }));
-    head.append(ce("span", { className: "group-spacer" }));
     const follow = enabledFollow(name);
-    const fbtn = ce("button", { className: (follow ? "" : "ghost") + " small", textContent: follow ? "🔄 跟随中" : "全选并跟随" });
-    fbtn.onclick = async (e) => {
-      e.stopPropagation();
+    if (skills.length === 0 && !follow) return;
+    any = true;
+    const g = ce("div", { className: "add-group" });
+    const h = ce("div", { className: "add-group-head" });
+    h.append(ce("span", { className: "group-title", textContent: isLocal ? "@local · 已收编" : name }));
+    h.append(ce("span", { className: "group-spacer" }));
+    const fb = ce("button", { className: (follow ? "" : "ghost") + " small", textContent: follow ? "🔄 跟随中" : "整仓跟随" });
+    fb.onclick = async () => {
       if (follow) await api("DELETE", "/api/enabled", { skill: name + "/*", target: currentTarget() });
       else await api("POST", "/api/enabled", { skill: name + "/*", target: currentTarget(), mode: "follow" });
-      await apply();
+      await api("POST", "/api/apply");
+      toast(follow ? "已取消跟随 " + name : "已整仓跟随 " + name);
+      await load(); renderAddDrawer();
     };
-    head.append(fbtn);
-    head.onclick = () => {
-      state.expanded = (state.expanded === name) ? null : name; // toggle; others close
-      renderSkills();
-    };
-    group.append(head);
-
-    const body = ce("div", { className: "group-body" });
-    if (skills.length === 0) body.append(ce("div", { className: "empty", textContent: isLocal ? "暂无已收编 skill" : "此仓暂无 skill（可能尚未同步，点“立即更新”）" }));
-    skills.forEach((sk) => body.append(skillCard(name, sk, follow)));
-    group.append(body);
-    root.append(group);
+    h.append(fb); g.append(h);
+    skills.forEach((sk) => {
+      const r = ce("div", { className: "add-row" });
+      r.append(ce("span", { className: "skill-name", textContent: sk.linkName }));
+      if (sk.description) r.append(ce("span", { className: "add-desc skill-desc", textContent: sk.description }));
+      r.append(ce("span", { className: "group-spacer" }));
+      const sel = (isLocal ? LOCAL_NS : name) + "/" + sk.linkName;
+      const b = ce("button", { className: "small", textContent: "启用" });
+      b.disabled = follow;
+      b.title = follow ? "整仓跟随中，已自动包含" : "";
+      b.onclick = async () => {
+        b.disabled = true;
+        await api("POST", "/api/enabled", { skill: sel, target: currentTarget(), mode: "snapshot" });
+        const sum = await api("POST", "/api/apply");
+        summaryToast(sum, sk.linkName, true);
+        await load(); renderAddDrawer();
+      };
+      r.append(b); g.append(r);
+    });
+    box.append(g);
   });
-  if (!anyShown) root.append(ce("div", { className: "empty", textContent: term ? "没有匹配的 skill" : "暂无 skill" }));
-}
-
-function skillCard(repo, sk, follow) {
-  const row = ce("div", { className: "skill" });
-  const cb = ce("input", { type: "checkbox" });
-  cb.checked = follow || enabledSnapshot(repo, sk.linkName);
-  cb.disabled = follow;
-  cb.onchange = async () => {
-    if (cb.checked) await api("POST", "/api/enabled", { skill: repo + "/" + sk.linkName, target: currentTarget(), mode: "snapshot" });
-    else await api("DELETE", "/api/enabled", { skill: repo + "/" + sk.linkName, target: currentTarget() });
-    await apply();
-  };
-  row.append(cb);
-
-  const main = ce("div", { className: "skill-main" });
-  const r1 = ce("div", { className: "skill-row1" });
-  r1.append(ce("span", { className: "skill-name", textContent: sk.linkName }));
-  if (sk.logicalName !== sk.linkName) r1.append(ce("span", { className: "skill-logical", textContent: "(" + sk.logicalName + ")" }));
-  skillBadges(sk.linkName).forEach((b) => r1.append(ce("span", { className: "badge " + b.cls, textContent: b.text })));
-  const detail = ce("button", { className: "skill-detail-btn", textContent: "详情" });
-  detail.onclick = () => openDetail(repo, sk.linkName);
-  r1.append(detail);
-  // No per-card 停用: for a single-selected skill it is redundant with the
-  // checkbox (both withhold the link). Group-level 停用 (follow) stays on the head.
-  main.append(r1);
-  if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
-  row.append(main);
-  return row;
+  if (!any) box.append(ce("div", { className: "empty", textContent: term ? "没有匹配的 skill" : "库里的 skill 都已启用进此目录（或还没有仓库）" }));
 }
 
 function renderSummary() {
@@ -509,17 +590,16 @@ async function openDetail(repo, name) {
   }
 }
 
-async function apply() {
-  try { await api("POST", "/api/apply"); }
-  catch (e) { banner("应用失败：" + e.message, true); }
-  await load();
-}
-
 async function updateNow(force) {
   banner("同步中…");
-  try { await api("POST", "/api/update-now", { force: !!force }); banner(""); }
-  catch (e) { banner("同步失败：" + e.message, true); }
+  let sum = null;
+  try { sum = await api("POST", "/api/update-now", { force: !!force }); }
+  catch (e) { banner("同步失败：" + e.message, true); await load(); return; }
   await load();
+  // Report whether anything changed (R4.3).
+  const changed = sum && ((sum.created || []).length + (sum.removed || []).length + (sum.pruned || []).length);
+  if (changed) toast("更新完成：新增 " + (sum.created || []).length + " · 移除 " + (sum.removed || []).length + (sum.pruned && sum.pruned.length ? " · 清理 " + sum.pruned.length : ""));
+  else toast("已是最新，无变化");
 }
 
 async function loadAutostart() {
@@ -530,15 +610,17 @@ async function loadAutostart() {
 }
 
 // events
-$("#search").oninput = (e) => { state.search = e.target.value; renderSkills(); };
+$("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
+$("#add-search").oninput = (e) => { state.addSearch = e.target.value; renderAddDrawer(); };
+$("#add-skill").onclick = openAddDrawer;
+$("#add-modal-close").onclick = closeAddDrawer;
+$("#add-modal").onclick = (e) => { if (e.target.id === "add-modal") closeAddDrawer(); };
+
 $("#add-repo").onsubmit = async (e) => {
   e.preventDefault();
   const url = $("#repo-url").value.trim(), branch = $("#repo-branch").value.trim();
   if (!url) return;
   $("#repo-url").value = ""; $("#repo-branch").value = "";
-  // For a private-looking HTTPS repo on a host with no stored credential, ask
-  // for credentials FIRST (with a skip-for-public option) instead of cloning,
-  // failing on auth, then prompting.
   const host = httpsHost(url);
   if (host && !Object.prototype.hasOwnProperty.call(state.credHosts, host)) {
     openCredModal(host, "", { url, branch });
@@ -551,8 +633,6 @@ async function addRepoAndSync(url, branch) {
   try {
     await api("POST", "/api/repos", { url, branch });
     await updateNow(false);
-    // Fallback: if it still failed auth (wrong creds, or a "public" repo that
-    // turned out private and was skipped), prompt to (re)enter credentials.
     const host = httpsHost(url);
     if (host) {
       const repo = (state.status.repos || []).find((r) => r.url === url);
@@ -565,8 +645,6 @@ async function addRepoAndSync(url, branch) {
 }
 async function addTarget(dir, alias) {
   try {
-    // The selection may fan out into several real skill dirs (a project root
-    // with both cc and codex); focus the first one actually added.
     const res = await api("POST", "/api/targets", { dir, alias });
     if (res && res.added && res.added.length) state.activeTarget = res.added[0];
     await load();
@@ -580,16 +658,10 @@ $("#add-target").onsubmit = async (e) => {
   closeTargetModal();
   await addTarget(dir, alias);
 };
-// Enter in the path field navigates (validate + list), it does not commit —
-// the explicit 添加 button commits. Lets you paste a path and drill in.
 $("#target-path").onkeydown = (e) => {
   if (e.key === "Enter") { e.preventDefault(); browseTo($("#target-path").value.trim()); }
 };
-// Pasting a path should refresh the list too — defer one tick so the input
-// value reflects the pasted text before we navigate.
-$("#target-path").onpaste = () => {
-  setTimeout(() => browseTo($("#target-path").value.trim()), 0);
-};
+$("#target-path").onpaste = () => { setTimeout(() => browseTo($("#target-path").value.trim()), 0); };
 $("#cred-form").onsubmit = async (e) => {
   e.preventDefault();
   const host = $("#cred-host").dataset.host;
@@ -597,19 +669,12 @@ $("#cred-form").onsubmit = async (e) => {
   const token = $("#cred-token").value;
   if (!host || !token) { banner("密码 / 令牌不能为空（公开仓可点「跳过」）", true); return; }
   const pending = state.credPending;
-  try {
-    await api("POST", "/api/credentials", { host, username, token });
-  } catch (err) { banner("保存凭据失败：" + err.message, true); return; }
+  try { await api("POST", "/api/credentials", { host, username, token }); }
+  catch (err) { banner("保存凭据失败：" + err.message, true); return; }
   closeCredModal();
-  if (pending) {
-    await addRepoAndSync(pending.url, pending.branch); // creds saved → now clone
-  } else {
-    banner("凭据已保存，正在重试更新…");
-    await api("POST", "/api/update-now", {});
-    await load();
-  }
+  if (pending) { await addRepoAndSync(pending.url, pending.branch); }
+  else { banner("凭据已保存，正在重试更新…"); await api("POST", "/api/update-now", {}); await load(); }
 };
-// Skip (public repo): add without storing any credential.
 $("#cred-skip").onclick = async () => {
   const pending = state.credPending;
   closeCredModal();
@@ -628,26 +693,6 @@ $("#tab-add").onclick = openTargetModal;
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
-$("#ignore-plugins").onchange = async (e) => {
-  const ignore = e.target.checked;
-  try { await api("POST", "/api/ignore-plugins", { ignore }); state.ignorePlugins = ignore; await load(); }
-  catch (err) { banner("设置失败：" + err.message, true); e.target.checked = state.ignorePlugins; }
-};
-$("#adopt-all").onclick = async () => {
-  const items = state.adoptable.slice();
-  if (!items.length) return;
-  if (!(await confirmModal("全选收编 " + items.length + " 个未备份 skill？将逐个移入受管存储并原位软链。"))) return;
-  const btn = $("#adopt-all"); btn.disabled = true; btn.textContent = "收编中…";
-  let ok = 0; const errs = [];
-  for (const a of items) {
-    try { await doAdopt(a); ok++; }
-    catch (e) { errs.push(a.name + "：" + (ADOPT_ERR[e.code] || e.message)); }
-  }
-  btn.disabled = false; btn.textContent = "全选收编";
-  if (errs.length === 0) banner("已全部收编 " + ok + " 个");
-  else banner("收编完成 " + ok + " 个，失败 " + errs.length + " 个：" + errs.join("；"), true);
-  await load();
-};
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#autostart").onchange = async (e) => {
