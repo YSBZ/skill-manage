@@ -460,7 +460,7 @@ function inventoryCard(i) {
     r1.append(d);
     if (i.follow) {
       // covered by a whole-source follow — can't disable individually
-      r1.append(ce("span", { className: "inv-state following", title: "整仓跟随中——在「+ 添加」里取消该来源的「整仓跟随」", textContent: "跟随中" }));
+      r1.append(ce("span", { className: "inv-state following", title: "随来源整仓自动纳入——要停用请在「+ 添加」里取消该来源的「整仓跟随」", textContent: "随源" }));
     } else {
       const off = ce("button", { className: "ghost small inv-off", textContent: "停用", title: "拆除此目录下的软链（不影响真身与其它目录）" });
       off.onclick = () => disableSkill(i, off);
