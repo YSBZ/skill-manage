@@ -17,6 +17,7 @@ import (
 	"skillmanage/internal/linker"
 	"skillmanage/internal/reconcile"
 	"skillmanage/internal/scanner"
+	"skillmanage/internal/source"
 )
 
 // Handler builds the full HTTP handler: token-authed /api routes plus the
@@ -33,6 +34,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/skills", s.requireAuth(s.handleListSkills))
 	mux.HandleFunc("GET /api/skill", s.requireAuth(s.handleSkillDetail))
 	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
+	mux.HandleFunc("GET /api/inventory", s.requireAuth(s.handleInventory))
 	mux.HandleFunc("POST /api/ignore-plugins", s.requireAuth(s.handleSetIgnorePlugins))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
@@ -499,6 +501,192 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 		list = []adopt.Adoptable{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"skills": list, "includePlugins": includePlugins})
+}
+
+// --- inventory (目录现状视图, phase 3 U6) ---
+
+// inventoryItem is one skill physically present in a sync target, tagged with
+// where it came from (KTD2/KTD4). It unifies what the old split UI showed across
+// the repo catalog and the "未备份 skill" sidebar.
+type inventoryItem struct {
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Kind        source.SourceKind  `json:"kind"`
+	Repo        string             `json:"repo,omitempty"`
+	SourceURL   string             `json:"sourceUrl,omitempty"` // skills.sh only; http(s)-validated
+	Scope       harness.SkillScope `json:"scope"`
+	Selector    string             `json:"selector,omitempty"` // enabled selector for managed items (U9 toggle)
+	Managed     bool               `json:"managed"`            // owned by SkillManage (git/local)
+	Enabled     bool               `json:"enabled"`            // a managed link is materialized → enabled
+	Collision   bool               `json:"collision,omitempty"`
+}
+
+type inventoryResp struct {
+	Target string             `json:"target"`
+	Scope  harness.SkillScope `json:"scope"`
+	Items  []inventoryItem    `json:"items"`
+}
+
+// handleInventory lists the skills actually present in one sync target, each
+// attributed to a source (git / local / skills.sh / plugin / handwritten /
+// unknown). It replaces the old "list repo candidates" main panel (R3.1). The
+// manifest + config snapshot is taken under s.mu (consistent with reconcile, so
+// no TOCTOU); filesystem classification then runs on the snapshot.
+func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		http.Error(w, "missing target", http.StatusBadRequest)
+		return
+	}
+	want := harness.Expand(target)
+
+	s.mu.Lock()
+	configured := ""
+	for _, d := range s.cfg.Targets {
+		if harness.Expand(d) == want {
+			configured = d
+			break
+		}
+	}
+	manifest := config.Manifest{Links: append([]config.LinkRecord(nil), s.manifest.Links...)}
+	conflicts := append([]linker.Conflict(nil), s.lastSummary.Conflicts...)
+	dirSourcePaths := effectiveDirectorySources(s.cfg.DirectorySources)
+	reposRoot, personalStore := s.reposRoot, s.personalStore
+	targets := append([]string(nil), s.cfg.Targets...)
+	s.mu.Unlock()
+
+	if configured == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown sync target"})
+		return
+	}
+
+	// Build the classifier inputs (resolved once per request).
+	agentsSkillsRoot, lock := resolveAgentsLock(dirSourcePaths)
+	var pluginRoots, allowed []string
+	allowed = append(allowed, harness.Expand(reposRoot), harness.Expand(personalStore))
+	for _, p := range dirSourcePaths {
+		allowed = append(allowed, harness.Expand(p))
+	}
+	for _, t := range targets {
+		pr := harness.Expand(harness.PluginRootFor(t))
+		pluginRoots = append(pluginRoots, pr)
+		allowed = append(allowed, pr)
+	}
+	clf := source.Classifier{
+		Mgr:              linker.NewManager(reposRoot, personalStore),
+		Manifest:         &manifest,
+		AgentsSkillsRoot: agentsSkillsRoot,
+		Lock:             lock,
+		PluginRoots:      pluginRoots,
+		AllowedRoots:     allowed,
+	}
+	scope := harness.Scope(configured)
+
+	skills, err := scanner.ScanInventory(want)
+	if err != nil {
+		// target dir not present/readable → empty inventory, not an error.
+		writeJSON(w, http.StatusOK, inventoryResp{Target: configured, Scope: scope, Items: []inventoryItem{}})
+		return
+	}
+	items := make([]inventoryItem, 0, len(skills))
+	for _, sk := range skills {
+		res := clf.Classify(sk, configured)
+		it := inventoryItem{
+			Name:        sk.LinkName,
+			Description: sk.Description,
+			Kind:        res.Kind,
+			Repo:        res.Repo,
+			Scope:       scope,
+			Managed:     res.Kind == source.KindGit || res.Kind == source.KindLocal,
+			Collision:   shadowCollides(conflicts, sk.LinkName, configured),
+		}
+		if res.Kind == source.KindSkillsSh {
+			it.SourceURL = validHTTPURL(res.SourceURL) // strip non-http(s) (XSS guard)
+		}
+		if it.Managed {
+			it.Enabled = true // present + managed ⟹ the link is live
+			if res.Kind == source.KindGit && res.Repo != "" {
+				it.Selector = res.Repo + "/" + sk.LinkName
+			} else if res.Kind == source.KindLocal {
+				it.Selector = reconcile.LocalNamespace + "/" + sk.LinkName
+			}
+		}
+		items = append(items, it)
+	}
+	writeJSON(w, http.StatusOK, inventoryResp{Target: configured, Scope: scope, Items: items})
+}
+
+// effectiveDirectorySources returns the configured directory-source paths plus
+// any auto-discovered defaults (e.g. ~/.agents/skills), deduped by resolved path.
+func effectiveDirectorySources(configured []config.DirectorySource) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		e := harness.Expand(p)
+		if e == "" || seen[e] {
+			return
+		}
+		seen[e] = true
+		out = append(out, p)
+	}
+	for _, d := range configured {
+		add(d.Path)
+	}
+	for _, d := range harness.DiscoverDefaultDirectorySources() {
+		add(d)
+	}
+	return out
+}
+
+// resolveAgentsLock finds the ~/.agents/skills directory source (if any) and
+// loads its sibling .skill-lock.json. skills.sh canonical lives at <agents>/skills
+// with the lock at <agents>/.skill-lock.json.
+func resolveAgentsLock(dirSourcePaths []string) (agentsSkillsRoot string, lock source.SkillLock) {
+	lock = source.SkillLock{Skills: map[string]source.LockEntry{}}
+	for _, p := range dirSourcePaths {
+		e := harness.Expand(p)
+		if filepath.Base(e) == "skills" && filepath.Base(filepath.Dir(e)) == ".agents" {
+			agentsSkillsRoot = e
+			if l, err := source.LoadSkillLock(filepath.Dir(e)); err == nil {
+				lock = l
+			}
+			return
+		}
+	}
+	return
+}
+
+// shadowCollides reports whether name has a cross-target shadow conflict (U3 /
+// ConflictShadow) involving this target — i.e. the same name is mapped under
+// more than one target of the same harness, so the project-level one wins and
+// the user-level one is shadowed (R5.1, surfaced for display per AE3).
+func shadowCollides(conflicts []linker.Conflict, name, target string) bool {
+	want := harness.Expand(target)
+	for _, c := range conflicts {
+		if c.Kind != linker.ConflictShadow || c.LinkName != name {
+			continue
+		}
+		for _, t := range c.Targets {
+			if harness.Expand(t) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validHTTPURL returns raw only when it is an http(s) URL, else "". Lockfile
+// sourceUrl is third-party-written; this strips javascript:/data: payloads
+// before the value can reach the UI (XSS guard, U6/U8).
+func validHTTPURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		return raw
+	}
+	return ""
 }
 
 type pluginPrefReq struct {

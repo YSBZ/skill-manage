@@ -170,6 +170,49 @@ func ScanShallow(root string) ([]Skill, error) {
 	return skills, nil
 }
 
+// ScanInventory returns every direct child of root that holds a SKILL.md,
+// INCLUDING symlinked children. ScanShallow deliberately skips symlinks (adoption
+// only concerns real, unmanaged directories), but the inventory view (phase 3
+// U6) must surface managed links and foreign tool links (skills.sh) too — it
+// attributes each by source rather than only listing adoptable reals. Dir is the
+// child's path AS IT SITS in root (the symlink path, not its resolved target) so
+// the classifier can read the link. os.Stat follows the link to confirm it
+// resolves to a directory containing SKILL.md.
+func ScanInventory(root string) ([]Skill, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var skills []Skill
+	for _, e := range entries {
+		name := e.Name()
+		if name == ".git" {
+			continue
+		}
+		child := filepath.Join(root, name)
+		fi, statErr := os.Stat(child) // follows symlink
+		if statErr != nil || !fi.IsDir() {
+			continue
+		}
+		md, mdErr := os.Stat(filepath.Join(child, "SKILL.md"))
+		if mdErr != nil || md.IsDir() {
+			continue
+		}
+		abs, absErr := filepath.Abs(child) // keeps the symlink path; does not resolve it
+		if absErr != nil {
+			return nil, absErr
+		}
+		skills = append(skills, Skill{
+			LogicalName: name,
+			LinkName:    pathutil.SanitizePathName(name),
+			Dir:         abs,
+			Description: parseDescription(filepath.Join(child, "SKILL.md")),
+		})
+	}
+	sort.Slice(skills, func(i, j int) bool { return skills[i].LinkName < skills[j].LinkName })
+	return skills, nil
+}
+
 // hasNestedSkillMd reports whether skillDir contains a SKILL.md below its root
 // (i.e. inside a subdirectory). The root SKILL.md itself does not count.
 func hasNestedSkillMd(skillDir string) bool {
