@@ -77,6 +77,26 @@ func DiscoverDefaultTargets() []string {
 	return out
 }
 
+// DiscoverDefaultDirectorySources returns the conventional cross-tool directory
+// sources that actually exist on this machine, in canonical "~"-relative form.
+// Currently that is the Agent Skills convention ~/.agents/skills — where
+// skills.sh (npx skills) installs and other compliant tools share skills (phase
+// 3 R1.4). These are recognized READ-ONLY: they are never link targets, so they
+// are kept separate from DiscoverDefaultTargets. A location that isn't present
+// is left for the user to register manually (R2.3); nothing is hardcoded into
+// config. WSL needs no special handling — os.UserHomeDir() already returns the
+// WSL distro's own home, so we only ever look at the current environment's home
+// and never reach into a Windows host (/mnt/c).
+func DiscoverDefaultDirectorySources() []string {
+	var out []string
+	if home, err := os.UserHomeDir(); err == nil {
+		if dirExists(filepath.Join(home, ".agents", "skills")) {
+			out = append(out, "~/.agents/skills/")
+		}
+	}
+	return out
+}
+
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
