@@ -180,13 +180,29 @@ function renderStats() {
   el.append(c);
 }
 
-function stateBadge(st) { return ce("span", { className: "badge " + st, textContent: st }); }
+// REPO_STATE localizes each repo sync state to a Chinese badge label + class.
+// "stale" = cloned earlier but not pulled this session (auto-pull was removed),
+// so it shows 未更新 rather than the misleading 未克隆.
+const REPO_STATE = {
+  "cloned": { label: "已克隆", cls: "ok" },
+  "synced": { label: "已同步", cls: "ok" },
+  "stale": { label: "未更新", cls: "never-synced" },
+  "never-synced": { label: "未克隆", cls: "never-synced" },
+  "dirty-skip": { label: "有本地改动", cls: "dirty-skip" },
+  "failed": { label: "失败", cls: "failed" },
+  "cloning": { label: "克隆中", cls: "cloning" },
+  "sync-in-progress": { label: "同步中", cls: "sync-in-progress" },
+};
+function stateBadge(st) {
+  const m = REPO_STATE[st] || { label: st, cls: "" };
+  return ce("span", { className: "badge " + m.cls, textContent: m.label });
+}
 
 // repoDot classifies a repo's last-sync result into a status dot color.
 function repoDot(repo) {
   const st = repo.state || "never-synced";
   if (repo.error || st === "failed") return "err";
-  if (st === "never-synced" || st === "cloning" || st === "sync-in-progress") return "idle";
+  if (st === "never-synced" || st === "stale" || st === "cloning" || st === "sync-in-progress") return "idle";
   return "ok";
 }
 

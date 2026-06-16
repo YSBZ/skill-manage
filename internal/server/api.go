@@ -59,6 +59,12 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// dirHasContent reports whether dir exists and is non-empty — a cloned mirror.
+func dirHasContent(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -98,9 +104,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	for _, repo := range s.cfg.Repos {
 		if st, ok := s.repoStatus[repo.URL]; ok {
 			resp.Repos = append(resp.Repos, st)
-		} else {
-			resp.Repos = append(resp.Repos, RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: reconcile.RepoName(repo.URL), State: "never-synced"})
+			continue
 		}
+		// No in-memory status (e.g. fresh daemon start — repoStatus is in-memory and
+		// there is no launch auto-sync anymore). Look at disk: a populated mirror was
+		// cloned before, so report "stale" (已克隆·本会话未拉取 → UI 显示「未更新」)
+		// rather than the misleading "never-synced". Only a truly absent/empty mirror
+		// is never-synced.
+		name := reconcile.RepoName(repo.URL)
+		st := RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: "never-synced"}
+		if dirHasContent(filepath.Join(s.reposRoot, name)) {
+			st.State = "stale"
+		}
+		resp.Repos = append(resp.Repos, st)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
