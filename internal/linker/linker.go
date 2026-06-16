@@ -126,13 +126,21 @@ func (mgr *Manager) Link(d DesiredLink, manifest *config.Manifest) (created bool
 			removeRecord(manifest, d.Target, d.LinkName)
 			return mgr.createAndRecord(d, manifest)
 		}
-		// unowned link: adopt only if it carries our signature (points under reposRoot)
+		// unowned link: adopt only if it carries our signature (points under
+		// reposRoot/personalStore). This is the 4th ownership channel beyond the
+		// manifest (invariant ④, KTD6); it is safe because ~/.skillmanage/{repos,
+		// local} is SkillManage's PRIVATE canonical store — no external tool writes
+		// links there, so a signature match is necessarily our own leftover link
+		// (e.g. a manifest lost across a reinstall). A foreign tool's link (e.g.
+		// skills.sh's ~/.claude/skills/x → ~/.agents/skills/x) resolves OUTSIDE our
+		// store, so looksOurs is false and we refuse below — never clobbering it.
 		if mgr.looksOurs(tp) {
 			if err := os.Remove(tp); err != nil {
 				return false, fmt.Errorf("remove signature link for adoption: %w", err)
 			}
 			return mgr.createAndRecord(d, manifest)
 		}
+		// never-break (invariant ④): a foreign link is refused, never removed.
 		return false, fmt.Errorf("%w: %s is a foreign link", ErrTargetOccupied, tp)
 
 	default:
@@ -308,8 +316,13 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 // looksOurs reports whether the link at path resolves to a target under the
-// repos root — the signature for adopting an unowned link (KTD5). Best-effort:
-// platforms where the target cannot be read return false (conservative).
+// repos root or personal store — the signature for adopting an unowned link
+// (KTD5, invariant ④/KTD6). This is sound precisely because those roots are
+// SkillManage's private canonical store: a link resolving there is ours, a link
+// resolving anywhere else (a foreign tool's install) is not and must be left
+// untouched. Best-effort: platforms where the target cannot be read return
+// false (conservative — Windows junction whose target is unreadable is treated
+// as foreign, so we refuse rather than risk clobbering it).
 func (mgr *Manager) looksOurs(path string) bool {
 	target, err := readLinkTarget(path)
 	if err != nil || target == "" {
