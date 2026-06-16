@@ -198,12 +198,16 @@ function stateBadge(st) {
   return ce("span", { className: "badge " + m.cls, textContent: m.label });
 }
 
-// repoDot classifies a repo's last-sync result into a status dot color.
+// repoDot classifies a repo into a connectivity/usability dot color: green =
+// cloned & usable (its skills can be linked, even if not pulled this session),
+// red = auth/connection failure, grey = never cloned yet or in progress. Note
+// freshness ("未更新") is shown by the state BADGE, not the dot — a cloned repo
+// is green regardless of whether it was pulled this session.
 function repoDot(repo) {
   const st = repo.state || "never-synced";
   if (repo.error || st === "failed") return "err";
-  if (st === "never-synced" || st === "stale" || st === "cloning" || st === "sync-in-progress") return "idle";
-  return "ok";
+  if (st === "never-synced" || st === "cloning" || st === "sync-in-progress") return "idle";
+  return "ok"; // cloned / synced / stale(已克隆未更新) / dirty-skip → usable → green
 }
 
 function httpsHost(u) {
