@@ -796,17 +796,29 @@ $("#tab-add").onclick = openTargetModal;
 $("#target-modal-close").onclick = closeTargetModal;
 $("#target-modal-cancel").onclick = closeTargetModal;
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
-$("#check-updates").onclick = async () => {
-  banner("检查更新中…");
+// checkUpdates contacts each repo's remote (ls-remote, no pull). silent=true is
+// the on-page-load auto-check: no banners, only a toast if updates are found and
+// failures are swallowed; silent=false is the manual button with full feedback.
+async function checkUpdates(silent) {
+  if (!state.status || (state.status.repos || []).length === 0) {
+    if (!silent) toast("还没有仓库");
+    return;
+  }
+  const btn = $("#check-updates"); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "检查中…";
+  if (!silent) banner("检查更新中…");
   try {
     const r = await api("POST", "/api/check-updates");
-    if (r && r.error) { banner("检查更新失败（git 不可用）：" + r.error, true); return; }
+    if (r && r.error) { if (!silent) banner("检查更新失败（git 不可用）：" + r.error, true); return; }
     await load();
     const n = (r && r.updates) || 0;
-    toast(n > 0 ? n + " 个仓有更新，点「立即更新」拉取" : "所有仓都是最新");
-    banner("");
-  } catch (e) { banner("检查更新失败：" + e.message, true); }
-};
+    if (n > 0) toast(n + " 个仓有更新，点「立即更新」拉取");
+    else if (!silent) toast("所有仓都是最新");
+    if (!silent) banner("");
+  } catch (e) { if (!silent) banner("检查更新失败：" + e.message, true); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+$("#check-updates").onclick = () => checkUpdates(false);
 $("#update-now").onclick = () => updateNow(false);
 $("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 $("#export").onclick = async () => {
@@ -832,4 +844,5 @@ $("#import").onclick = () => {
 $("#modal-close").onclick = () => $("#modal").classList.add("hidden");
 $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); };
 
-load();
+// On page entry: render, then auto-check updates once (ls-remote only, no pull).
+load().then(() => checkUpdates(true));
