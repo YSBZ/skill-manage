@@ -421,8 +421,10 @@ function groupOf(i) {
     case "local": return { key: "local", title: "本地（已备份）", order: 0 };
     case "git": return { key: "git:" + (i.repo || ""), title: i.repo || "git 仓", order: 1 };
     case "skills.sh": {
+      // Group title is just the source repo; provenance (skills.sh) shows on each
+      // card's source badge, matching how git repos are titled by repo name.
       const repo = repoFromUrl(i.sourceUrl);
-      return { key: "skillssh:" + repo, title: (repo || "skills.sh") + " · skills.sh", order: 2 };
+      return { key: "skillssh:" + repo, title: repo || "skills.sh", order: 2 };
     }
     case "plugin": return { key: "plugin", title: "插件", order: 3 };
     case "handwritten": return { key: "hand", title: "未备份（可备份）", order: 4 };
