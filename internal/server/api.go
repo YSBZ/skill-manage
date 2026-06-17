@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"skillmanage/internal/adopt"
+	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
 	"skillmanage/internal/gitsync"
 	"skillmanage/internal/harness"
@@ -52,17 +53,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
 	mux.HandleFunc("DELETE /api/targets", s.requireAuth(s.handleRemoveTarget))
 	mux.HandleFunc("POST /api/targets/reorder", s.requireAuth(s.handleReorderTargets))
+	mux.HandleFunc("POST /api/targets/alias", s.requireAuth(s.handleSetTargetAlias))
 	mux.HandleFunc("GET /api/browse", s.requireAuth(s.handleBrowse))
 	mux.HandleFunc("GET /api/credentials", s.requireAuth(s.handleListCredentials))
 	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
 	mux.HandleFunc("DELETE /api/credentials", s.requireAuth(s.handleDeleteCredential))
 	mux.HandleFunc("POST /api/dirsource/update", s.requireAuth(s.handleDirSourceUpdate))
+	mux.HandleFunc("POST /api/plugin/update", s.requireAuth(s.handlePluginUpdate))
+	mux.HandleFunc("GET /api/plugins/installed", s.requireAuth(s.handlePluginsInstalled))
 	mux.HandleFunc("GET /api/skillssh", s.requireAuth(s.handleListSkillsSh))
 	mux.HandleFunc("GET /api/plugins", s.requireAuth(s.handleListPlugins))
 	mux.HandleFunc("GET /api/plugin-skill", s.requireAuth(s.handlePluginSkillDetail))
 	mux.HandleFunc("GET /api/skill-at", s.requireAuth(s.handleSkillAt))
 	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
+	mux.HandleFunc("GET /api/conflicts", s.requireAuth(s.handleConflicts))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/repos/update", s.requireAuth(s.handleUpdateRepo))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
@@ -98,6 +103,7 @@ type statusResp struct {
 	LastSummary  reconcile.Summary     `json:"lastSummary"`
 	GitError     string                `json:"gitError,omitempty"`     // set when git is unavailable
 	NpxAvailable bool                  `json:"npxAvailable,omitempty"` // true → UI offers one-click skills.sh update (U7)
+	ClaudeCLI    bool                  `json:"claudeCli,omitempty"`    // true → UI offers delegated plugin update (claude plugin update)
 	SkillsSh     *skillsShInfo         `json:"skillsSh,omitempty"`     // skills.sh (vercel-labs/skills) directory source, if present
 	PluginCount  int                   `json:"pluginCount,omitempty"`  // number of plugin-provided skills (read-only category)
 	LocalSources []dirSourceInfo       `json:"localSources,omitempty"` // user-registered local folder sources (each its own card)
@@ -131,6 +137,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		LastSummary:  s.lastSummary,
 		GitError:     s.gitErr,
 		NpxAvailable: s.npxPath != "",
+		ClaudeCLI:    s.claudePath != "",
 	}
 	// repo status in config order
 	for _, repo := range s.cfg.Repos {
@@ -400,10 +407,60 @@ func (s *Server) handleDeleteLocalSkill(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleExportRepos writes the git-repo list to a JSON file on disk and reveals
+// it in the OS file manager, returning {path, count}. It does NOT stream the
+// bytes for a browser download: the desktop app's WKWebView has no download
+// support, so the old Blob + <a download> path silently no-ops there. Writing
+// server-side works identically in the desktop window and the browser daemon
+// (both run on the same machine).
 func (s *Server) handleExportRepos(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	writeJSON(w, http.StatusOK, s.cfg.Repos)
+	repos := s.cfg.Repos
+	s.mu.Unlock()
+	data, err := json.MarshalIndent(repos, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Optional ?dir= lets the user pick the destination folder (via the in-app
+	// directory browser); empty falls back to Downloads / the central dir.
+	var path string
+	if dir := strings.TrimSpace(r.URL.Query().Get("dir")); dir != "" {
+		p := harness.Expand(dir)
+		if !filepath.IsAbs(p) {
+			if abs, e := filepath.Abs(p); e == nil {
+				p = abs
+			}
+		}
+		p = filepath.Clean(p)
+		if info, e := os.Stat(p); e != nil || !info.IsDir() {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "导出目录不存在或不是文件夹"})
+			return
+		}
+		path = filepath.Join(p, "skillmanage-repos.json")
+	} else {
+		path = exportFilePath(s.centralDir)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = browser.Reveal(path) // best-effort; the path is also returned as text
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "count": len(repos)})
+}
+
+// exportFilePath picks where the repo-list export lands: the user's Downloads
+// folder when it exists (most discoverable for "move to another machine"),
+// otherwise the central dir (always writable).
+func exportFilePath(centralDir string) string {
+	const name = "skillmanage-repos.json"
+	if home, err := os.UserHomeDir(); err == nil {
+		dl := filepath.Join(home, "Downloads")
+		if fi, err := os.Stat(dl); err == nil && fi.IsDir() {
+			return filepath.Join(dl, name)
+		}
+	}
+	return filepath.Join(centralDir, name)
 }
 
 type importReq struct {
@@ -597,11 +654,14 @@ func (s *Server) handleSkillAt(w http.ResponseWriter, r *http.Request) {
 	for _, sk := range inv {
 		if sk.LinkName == name || sk.LogicalName == name {
 			content, _ := os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+			src, url := s.skillsShSource(sk.Dir, sk.LinkName)
 			writeJSON(w, http.StatusOK, skillDetail{
 				LinkName:    sk.LinkName,
 				LogicalName: sk.LogicalName,
 				Description: sk.Description,
 				Content:     string(content),
+				Source:      src,
+				SourceURL:   url,
 			})
 			return
 		}
@@ -822,6 +882,33 @@ type skillDetail struct {
 	LogicalName string `json:"logicalName"`
 	Description string `json:"description"`
 	Content     string `json:"content"`
+	// Source / SourceURL are set only for skills.sh-managed skills: the lockfile
+	// "owner/repo" and validated source URL, shown as 台账来源 in the detail view.
+	Source    string `json:"source,omitempty"`
+	SourceURL string `json:"sourceUrl,omitempty"`
+}
+
+// skillsShSource returns the skills.sh lockfile source ("owner/repo") and a
+// validated source URL for a skill, but ONLY when its real path resolves under
+// the skills.sh-managed agents root — so a git/local skill that happens to share
+// a name with a lockfile entry never picks up a foreign source. Empty strings
+// for non-skills.sh skills.
+func (s *Server) skillsShSource(skillDir, name string) (src, url string) {
+	s.mu.Lock()
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	s.mu.Unlock()
+	root, lock := resolveAgentsLock(dirSources)
+	if root == "" {
+		return "", ""
+	}
+	real, err := filepath.EvalSymlinks(skillDir)
+	if err != nil || !strings.HasPrefix(real, harness.Expand(root)) {
+		return "", ""
+	}
+	if e, ok := lock.Has(name); ok {
+		return e.Source, validHTTPURL(e.SourceURL)
+	}
+	return "", ""
 }
 
 func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
@@ -839,11 +926,14 @@ func (s *Server) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
 	for _, sk := range skills {
 		if sk.LinkName == name || sk.LogicalName == name {
 			content, _ := os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+			src, url := s.skillsShSource(sk.Dir, sk.LinkName)
 			writeJSON(w, http.StatusOK, skillDetail{
 				LinkName:    sk.LinkName,
 				LogicalName: sk.LogicalName,
 				Description: sk.Description,
 				Content:     string(content),
+				Source:      src,
+				SourceURL:   url,
 			})
 			return
 		}
@@ -896,6 +986,7 @@ func (s *Server) handleAdoptable(w http.ResponseWriter, r *http.Request) {
 type inventoryItem struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
+	Version     string             `json:"version,omitempty"` // SKILL.md frontmatter version, shown as a tag
 	Kind        source.SourceKind  `json:"kind"`
 	Repo        string             `json:"repo,omitempty"`
 	SourceURL   string             `json:"sourceUrl,omitempty"` // skills.sh only; http(s)-validated
@@ -1000,6 +1091,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		it := inventoryItem{
 			Name:        sk.LinkName,
 			Description: sk.Description,
+			Version:     sk.Version,
 			Kind:        res.Kind,
 			Repo:        res.Repo,
 			Scope:       scope,
@@ -1039,6 +1131,122 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, it)
 	}
 	writeJSON(w, http.StatusOK, inventoryResp{Target: configured, Scope: scope, Items: items})
+}
+
+// --- conflicts (撞名 / 遮蔽 / 嵌套 resolution) ---
+
+type conflictCandidate struct {
+	Selector    string `json:"selector"`    // verbatim enabled selector (for DELETE /api/enabled)
+	Target      string `json:"target"`      // verbatim enabled target (config form)
+	TargetLabel string `json:"targetLabel"` // alias or path, for display
+	SourceLabel string `json:"sourceLabel"` // ns label (git repo / local / skills.sh / dir id)
+	Follow      bool   `json:"follow"`      // selector is a whole-source follow (ns/*) — disabling drops the whole source
+	Scope       string `json:"scope"`       // "user" (父/全局) or "project" (子/项目级) — drives 父/子 grouping
+}
+
+type conflictItem struct {
+	Kind       string              `json:"kind"`
+	LinkName   string              `json:"linkName"`
+	Candidates []conflictCandidate `json:"candidates"`
+}
+
+// handleConflicts maps each detected conflict to the concrete enabled entries
+// that produced it, so the UI can offer "keep one, disable the rest". Candidates
+// are matched from cfg.Enabled (exact name or whole-source follow) within the
+// conflict's target(s); selector/target are returned verbatim so DELETE
+// /api/enabled removes exactly that entry.
+func (s *Server) handleConflicts(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	conflicts := append([]linker.Conflict(nil), s.lastSummary.Conflicts...)
+	enabled := append([]config.EnabledEntry(nil), s.cfg.Enabled...)
+	aliases := map[string]string{}
+	for k, v := range s.cfg.TargetAliases {
+		aliases[k] = v
+	}
+	dirLabels := map[string]string{}
+	for _, d := range s.cfg.DirectorySources {
+		dirLabels[reconcile.DirSelector(d.ID)] = d.Label
+	}
+	s.mu.Unlock()
+
+	out := []conflictItem{}
+	for _, c := range conflicts {
+		item := conflictItem{Kind: string(c.Kind), LinkName: c.LinkName, Candidates: []conflictCandidate{}}
+		tset := map[string]bool{}
+		for _, t := range c.Targets {
+			tset[harness.Expand(t)] = true
+		}
+		for _, e := range enabled {
+			if !tset[harness.Expand(e.Target)] {
+				continue
+			}
+			ns, name, ok := splitSelector(e.Skill)
+			if !ok {
+				continue
+			}
+			follow := name == "*"
+			produces := false
+			if follow {
+				produces = s.sourceHasLink(ns, c.LinkName)
+			} else {
+				produces = pathutil.SanitizePathName(name) == c.LinkName
+			}
+			if !produces {
+				continue
+			}
+			label := e.Target
+			if a := aliases[e.Target]; a != "" {
+				label = a
+			}
+			item.Candidates = append(item.Candidates, conflictCandidate{
+				Selector: e.Skill, Target: e.Target, TargetLabel: label,
+				SourceLabel: conflictSourceLabel(ns, dirLabels), Follow: follow,
+				Scope: string(harness.Scope(e.Target)),
+			})
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// splitSelector splits "ns/name" on the last slash; name "*" means whole-source.
+func splitSelector(sel string) (ns, name string, ok bool) {
+	i := strings.LastIndexByte(sel, '/')
+	if i <= 0 || i == len(sel)-1 {
+		return "", "", false
+	}
+	return sel[:i], sel[i+1:], true
+}
+
+func (s *Server) sourceHasLink(ns, linkName string) bool {
+	root, ok := s.sourceRoot(ns)
+	if !ok {
+		return false
+	}
+	skills, err := scanner.Scan(root)
+	if err != nil {
+		return false
+	}
+	for _, sk := range skills {
+		if sk.LinkName == linkName {
+			return true
+		}
+	}
+	return false
+}
+
+func conflictSourceLabel(ns string, dirLabels map[string]string) string {
+	switch {
+	case ns == reconcile.LocalNamespace:
+		return "local"
+	case ns == reconcile.AgentsNamespace:
+		return "skills.sh"
+	default:
+		if l, ok := dirLabels[ns]; ok {
+			return l
+		}
+		return ns // git repo name
+	}
 }
 
 type strayLinkReq struct {
@@ -1310,6 +1518,15 @@ func validHTTPURL(raw string) string {
 type skillsRunner interface {
 	UpdateSkill(ctx context.Context, npxPath, name string) (stdout, stderr string, err error)
 	UpdateAll(ctx context.Context, npxPath string) (stdout, stderr string, err error)
+	// UpdatePlugin delegates a harness plugin update to its own CLI
+	// (`<cliPath> plugin update <plugin> -s <scope>`); we never take ownership.
+	UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (stdout, stderr string, err error)
+	// ListPlugins runs `<cliPath> plugin list --json` to resolve each installed
+	// plugin's id + scope for delegated update.
+	ListPlugins(ctx context.Context, cliPath string) (stdout, stderr string, err error)
+	// ListMarketplaces runs `<cliPath> plugin marketplace list --json` to tell
+	// remote marketplaces from local directory ones.
+	ListMarketplaces(ctx context.Context, cliPath string) (stdout, stderr string, err error)
 }
 
 // skillNameRe bounds the skill name passed to npx: a leading alnum/underscore
@@ -1318,6 +1535,55 @@ type skillsRunner interface {
 // gates; the second is the on-disk allowlist (the name must be a real directory
 // directly under ~/.agents/skills).
 var skillNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+
+// pluginRefRe additionally allows the "name@marketplace" form used by
+// `claude plugin update` (a bare name OR name@marketplace). No shell metachars.
+var pluginRefRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*(@[A-Za-z0-9._-]+)?$`)
+
+// ansiRe strips terminal color escapes; the claude CLI may wrap JSON output in a
+// colored proxy banner, which would otherwise break json.Unmarshal.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// validPluginScope is the allowlist for `claude plugin update -s <scope>`.
+var validPluginScope = map[string]bool{"user": true, "project": true, "local": true, "managed": true}
+
+// extractJSON pulls the JSON object/array out of CLI output that may carry a
+// leading banner and trailing ANSI reset codes (strip ANSI, slice first {/[ to
+// last }/]). Returns "" when no JSON span is found.
+func extractJSON(s string) string {
+	s = ansiRe.ReplaceAllString(s, "")
+	i := strings.IndexAny(s, "{[")
+	j := strings.LastIndexAny(s, "}]")
+	if i < 0 || j < i {
+		return ""
+	}
+	return s[i : j+1]
+}
+
+// installedPlugin is one entry of `claude plugin list` we care about.
+type installedPlugin struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+	Scope   string `json:"scope"`
+}
+
+// pluginNameOf returns the name part of a "name@marketplace" id.
+func pluginNameOf(id string) string {
+	if at := strings.IndexByte(id, '@'); at > 0 {
+		return id[:at]
+	}
+	return id
+}
+
+// pluginMarketplaceOf returns the marketplace part of a "name@marketplace" id, or
+// "" when absent. A marketplace of "local" marks a locally-developed plugin with
+// no upstream — those are not delegate-updatable.
+func pluginMarketplaceOf(id string) string {
+	if at := strings.IndexByte(id, '@'); at > 0 && at+1 < len(id) {
+		return id[at+1:]
+	}
+	return ""
+}
 
 type dirSourceUpdateReq struct {
 	Name string `json:"name"`
@@ -1367,6 +1633,131 @@ func (s *Server) handleDirSourceUpdate(w http.ResponseWriter, r *http.Request) {
 		resp["error"] = err.Error()
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type pluginUpdateReq struct {
+	ID      string `json:"id"`    // full "name@marketplace" id
+	Scope   string `json:"scope"` // install scope (user/project/local/managed)
+	Harness string `json:"harness"`
+}
+
+// handlePluginUpdate delegates a plugin update to the harness's own CLI
+// (`claude plugin update <id> -s <scope>`). We never take ownership of plugins
+// (invariant ④) — this only invokes their native update. The UI only offers this
+// for plugins the outdated check confirmed are updatable, so it passes the exact
+// id + scope (a bare name or wrong scope makes the CLI report "not found").
+func (s *Server) handlePluginUpdate(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req pluginUpdateReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(req.ID)
+	if !pluginRefRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid plugin id"})
+		return
+	}
+	if req.Harness != "" && req.Harness != "cc" {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "暂仅支持 Claude Code 插件的委托更新"})
+		return
+	}
+	scope := strings.TrimSpace(req.Scope)
+	if !validPluginScope[scope] {
+		scope = "user"
+	}
+	s.mu.Lock()
+	cli, runner := s.claudePath, s.runner
+	s.mu.Unlock()
+	if cli == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "未找到 claude CLI，无法委托更新（确保 claude 在 PATH 中）"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 120*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.UpdatePlugin(ctx, cli, id, scope)
+	// Classify the outcome so the UI can be honest: "already latest" (nothing
+	// changed — why the version tag stays put) vs an actual update (restart to
+	// apply). The CLI prints "already at the latest version" for the no-op case.
+	status := "updated"
+	if err == nil && strings.Contains(ansiRe.ReplaceAllString(stdout, ""), "already at the latest") {
+		status = "current"
+	}
+	resp := map[string]any{"ok": err == nil, "status": status, "stdout": stdout, "stderr": stderr}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handlePluginsInstalled returns the installed Claude Code plugins with the exact
+// id + scope a delegated update needs. We do NOT attempt update DETECTION: the
+// CLI's marketplace data does not expose a comparable version for these plugins
+// (their `source` is a path, not a versioned ref), so "is an update available"
+// can't be answered reliably. Per the user's choice this is a manual-update model
+// (like skills.sh): offer update for each plugin, don't claim which need it.
+// {available:false} on any failure so the UI offers nothing rather than guessing.
+func (s *Server) handlePluginsInstalled(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	cli, runner := s.claudePath, s.runner
+	s.mu.Unlock()
+	if cli == "" || runner == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 30*time.Second)
+	defer cancel()
+	stdout, _, err := runner.ListPlugins(ctx, cli)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	var list []installedPlugin
+	if err := json.Unmarshal([]byte(extractJSON(stdout)), &list); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	// Determine which marketplaces are local (source "directory") so we only track
+	// plugins from real remote marketplaces. Known-local names seed the set so a
+	// failed/absent marketplace listing still excludes the obvious self-made ones.
+	localMk := map[string]bool{"local": true, "skills-dir": true}
+	if mkOut, _, mErr := runner.ListMarketplaces(ctx, cli); mErr == nil {
+		var mks []struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		}
+		if json.Unmarshal([]byte(extractJSON(mkOut)), &mks) == nil {
+			for _, m := range mks {
+				if m.Source == "directory" {
+					localMk[m.Name] = true
+				}
+			}
+		}
+	}
+	type plug struct {
+		Name  string `json:"name"`
+		ID    string `json:"id"`
+		Scope string `json:"scope"`
+	}
+	out := []plug{}
+	seen := map[string]bool{}
+	for _, p := range list {
+		name := pluginNameOf(p.ID)
+		if name == "" || seen[name] {
+			continue
+		}
+		// Only track plugins from a real (remote) marketplace — self-made local /
+		// skills-dir plugins have no upstream to update from.
+		if mk := pluginMarketplaceOf(p.ID); mk == "" || localMk[mk] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, plug{Name: name, ID: p.ID, Scope: p.Scope})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "plugins": out})
 }
 
 // isDirectChildDir reports whether name is a real directory sitting directly
@@ -1801,6 +2192,12 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "directory is guarded"})
 		return
 	}
+	// A freshly-created project may have .claude (or .codex) but no skills/ child
+	// yet, so SkillDirsFor would find nothing and fall back to the bare root. Fill
+	// in the conventional skills/ under any agent home that already exists, so the
+	// project can be added as a proper labeled target. Only existing homes are
+	// touched — a project without .codex does not gain one.
+	harness.ScaffoldSkillDirs(dir)
 	// Expand the selection into the concrete cc/codex skills dirs it implies, so
 	// picking a project root (or a .claude home) adds the real skill dirs with
 	// correct labels instead of an unlabeled "unknown" parent. Picking a project
@@ -1854,6 +2251,47 @@ func (s *Server) handleAddTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string][]string{"added": added})
+}
+
+// handleSetTargetAlias renames a sync-target tab's display alias (dir → alias).
+// An empty alias clears it (the tab falls back to showing the path). Used by the
+// double-click-to-rename inline edit on tabs.
+func (s *Server) handleSetTargetAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Dir   string `json:"dir"`
+		Alias string `json:"alias"`
+	}
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Dir) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	dir := strings.TrimSpace(req.Dir)
+	alias := strings.TrimSpace(req.Alias)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	known := false
+	for _, d := range s.cfg.Targets {
+		if d == dir {
+			known = true
+			break
+		}
+	}
+	if !known {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown target"})
+		return
+	}
+	if s.cfg.TargetAliases == nil {
+		s.cfg.TargetAliases = map[string]string{}
+	}
+	if alias == "" {
+		delete(s.cfg.TargetAliases, dir)
+	} else {
+		s.cfg.TargetAliases[dir] = alias
+	}
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleRemoveTarget(w http.ResponseWriter, r *http.Request) {
@@ -2102,17 +2540,27 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	sum := s.SyncOne(s.detachedCtx(), strings.TrimSpace(req.URL), req.Force)
-	writeJSON(w, http.StatusOK, sum)
+	url := strings.TrimSpace(req.URL)
+	sum := s.SyncOne(s.detachedCtx(), url, req.Force)
+	// SyncOne records the git-sync outcome (including a dirty-skip) in repoStatus,
+	// not in the reconcile summary. Surface the dirty flag so the UI can offer a
+	// "discard local changes and update" (force) confirmation instead of silently
+	// reporting success when the mirror was left untouched.
+	s.mu.Lock()
+	st := s.repoStatus[url]
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"summary": sum,
+		"dirty":   st.Dirty && st.State == string(gitsync.ActionDirtySkip),
+		"state":   st.State,
+		"error":   st.Error,
+	})
 }
 
-// handleUpdateNow is the「全量更新」action: it updates EVERY source the user can
-// update. Git sources are pulled + reconciled by SyncAll (we own those mirrors);
-// skills.sh (npx) sources are refreshed by delegating to `npx skills update`
-// (invariant ④ — we never take ownership, only trigger their native updater).
-// The npx leg is best-effort: it only runs when npx is available and the request
-// is same-origin (it spawns a subprocess), and its outcome rides along in the
-// response under "npx" without failing the git sync.
+// handleUpdateNow is the GIT update-all endpoint: it fetches + re-syncs every git
+// source via SyncAll. npx/skills.sh is a separate concern with its own endpoint
+// (handleUpdateSkillsShAll) — there is exactly one git update path and one npx
+// update path, never a combined one. dirtyRepos lets the UI offer 还原并更新.
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	var req updateReq
 	_ = readJSON(r, &req) // empty body is fine (force defaults false)
@@ -2121,35 +2569,25 @@ func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	// half-fetched), but daemon shutdown still cancels so the sync drains.
 	sum := s.SyncAll(s.detachedCtx(), req.Force)
 
-	resp := map[string]any{
-		"created":   sum.Created,
-		"removed":   sum.Removed,
-		"pruned":    sum.Pruned,
-		"conflicts": sum.Conflicts,
-		"errors":    sum.Errors,
+	// Collect repos left untouched because their mirror was dirty (force=false).
+	// The UI uses this to offer a "还原并更新" (force) confirmation.
+	s.mu.Lock()
+	dirtyRepos := []string{}
+	for _, repo := range s.cfg.Repos {
+		if st, ok := s.repoStatus[repo.URL]; ok && st.Dirty && st.State == string(gitsync.ActionDirtySkip) {
+			dirtyRepos = append(dirtyRepos, st.Name)
+		}
 	}
-	if npx := s.updateSkillsShInline(r); npx != nil {
-		resp["npx"] = npx
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
+	s.mu.Unlock()
 
-// updateSkillsShInline runs `npx skills update` as part of 全量更新 and returns a
-// small result map ({ran, ok, error}), or nil when there is nothing to do (no npx
-// available, or the request is not same-origin so we won't spawn a subprocess).
-func (s *Server) updateSkillsShInline(r *http.Request) map[string]any {
-	if !originLoopbackOK(r) {
-		return nil
-	}
-	ran, err := s.UpdateSkillsShAll(s.detachedCtx())
-	if !ran {
-		return nil
-	}
-	res := map[string]any{"ran": true, "ok": err == nil}
-	if err != nil {
-		res["error"] = err.Error()
-	}
-	return res
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created":    sum.Created,
+		"removed":    sum.Removed,
+		"pruned":     sum.Pruned,
+		"conflicts":  sum.Conflicts,
+		"errors":     sum.Errors,
+		"dirtyRepos": dirtyRepos,
+	})
 }
 
 // UpdateSkillsShAll delegates to `npx skills update` (no skill arg) to refresh

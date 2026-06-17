@@ -85,7 +85,12 @@ type Server struct {
 	// present the UI offers a one-click skills.sh update (U7). runner executes it
 	// (platform default; injectable in tests).
 	npxPath string
-	runner  skillsRunner
+	// claudePath is the resolved `claude` CLI ("" when not installed); when present
+	// the UI offers a delegated plugin update (`claude plugin update <name>`). We
+	// never take ownership of plugins (invariant ④) — this only invokes the
+	// harness's own update command.
+	claudePath string
+	runner     skillsRunner
 
 	// baseCtx is the daemon-lifetime context used as the parent for syncs that
 	// must outlive the originating HTTP request (update-now: closing the tab
@@ -239,7 +244,8 @@ func New(centralDir string) (*Server, error) {
 		// HTTPS PATs feed auto-update fetches (GIT_ASKPASS).
 		syncer.SetAskpass(exe, centralDir)
 	}
-	npxPath, _ := exec.LookPath("npx") // "" when not installed → UI hides one-click update
+	npxPath, _ := exec.LookPath("npx")       // "" when not installed → UI hides one-click update
+	claudePath, _ := exec.LookPath("claude") // "" → UI hides delegated plugin update
 	return &Server{
 		centralDir:    centralDir,
 		reposRoot:     reposRoot,
@@ -251,6 +257,7 @@ func New(centralDir string) (*Server, error) {
 		gitErr:        gitErrMsg,
 		reconciler:    reconcile.New(reposRoot, personalStore),
 		npxPath:       npxPath,
+		claudePath:    claudePath,
 		runner:        defaultSkillsRunner(),
 		cfg:           cfg,
 		manifest:      manifest,

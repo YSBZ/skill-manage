@@ -83,6 +83,8 @@ const state = {
   skillsByRepo: {}, // catalog for the "+ 添加" drawer
   inventory: [], // current tab's directory inventory (phase 3 U6)
   pluginSkills: [], // plugin-provided skills (harness-tagged), injected into inventory
+  pluginInstalled: null, // null=未加载；{available, list:[{name,id,scope}]} 已装插件（用于委托更新）
+  pluginInstalledLoading: false,
   invScope: "",
   invLoading: false,
   invError: "",
@@ -120,11 +122,17 @@ const SRC = {
   unknown: { label: "未知软链", cls: "src-unknown" },
 };
 
+let bannerTimer = null;
 function banner(msg, isErr) {
   const b = $("#banner");
+  if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
   if (!msg) { b.classList.add("hidden"); return; }
   b.textContent = msg;
+  b.title = "点击关闭";
   b.className = "banner" + (isErr ? " err" : "");
+  b.onclick = () => b.classList.add("hidden");
+  // 浮层提示自动消失，避免长期遮挡（错误停留更久）。点击可立即关闭。
+  bannerTimer = setTimeout(() => b.classList.add("hidden"), isErr ? 8000 : 4000);
 }
 
 // toast shows a transient confirmation (build/teardown link feedback, R4.2).
@@ -202,7 +210,6 @@ async function load(sync) {
 function renderStats() {
   const el = $("#stats");
   const repos = (state.status.repos || []).length;
-  const conflicts = ((state.status.lastSummary && state.status.lastSummary.conflicts) || []).length;
   // 「收录」= SkillManage 一共管控/识别了多少个 skill，跨全部源汇总：git 源 + 本地源
   // （@local 受管存储 + @dir 登记目录，都在 skillsByRepo 里）+ npx skills.sh 源。
   // 比「某个目录里链接了几个」更能体现这个工具的整体盘子。
@@ -210,11 +217,15 @@ function renderStats() {
   for (const arr of Object.values(state.skillsByRepo || {})) catalog += (arr || []).length;
   const npx = (state.skillsShSkills || []).length;
   const total = catalog + npx;
+  // 顶部「冲突」是库内跨源体检：名称重复 + 关键词重叠（与页脚「健康度」是两件事）。
+  const cf = computeLibraryConflicts();
+  const cfN = cf.dups.length + cf.overlaps.length;
   el.innerHTML = "";
   el.append(ce("span", { innerHTML: `仓库 <b>${repos}</b>`, title: "已登记的 git 仓数量" }));
   el.append(ce("span", { innerHTML: `收录 skills <b>${total}</b>`, title: `SkillManage 一共收录管控的 skill 数：git 源 + 本地源 ${catalog} 个，npx(skills.sh) 源 ${npx} 个。` }));
-  const c = ce("span", { innerHTML: `冲突 <b>${conflicts}</b>`, title: "撞名 / 嵌套等需要你处理的冲突数量" });
-  if (conflicts) c.className = "stat-warn";
+  const c = ce("span", { innerHTML: cfN ? `冲突 <b>${cfN}</b>` : `冲突 <b>无</b>`, title: "跨源体检：名称重复 / 关键词重叠——点击查看" });
+  c.className = (cfN ? "stat-warn " : "") + "clickable-stat";
+  c.onclick = openConflictModal;
   el.append(c);
 }
 
@@ -286,28 +297,20 @@ function renderRepos() {
   const ul = $("#repo-list"); ul.innerHTML = "";
   // 三类源平级展示：git 仓 / npx skills / 本地源（都是「源」）。每类一个分隔标题，
   // 该来源专属的动作放在标题行右侧。
+  // git 仓分区标题行：全量更新（仅 git）。说明统一在「使用指南」里，不再单独放 ?。
+  const gitFullUpdate = ce("button", { className: "ghost small", textContent: "全量更新", title: "更新全部 git 仓：拉取上游并重新同步（不含 npx）；有本地改动会提示是否还原并更新" });
+  gitFullUpdate.onclick = (e) => { e.stopPropagation(); updateNow(false); };
+  ul.append(sourceDivider("git 仓", [gitFullUpdate]));
+  // 添加行：导出 / 导入 / 添加（「添加」点击打开弹窗输入 URL + 分支）。
+  const addRow = ce("li", { className: "repo-addrow" });
   const gitExport = ce("button", { className: "ghost small", textContent: "导出", title: "导出 git 仓库列表（用于在另一台机器重建来源）" });
   gitExport.onclick = exportRepos;
   const gitImport = ce("button", { className: "ghost small", textContent: "导入", title: "从文件导入 git 仓库列表" });
   gitImport.onclick = importRepos;
-  const gitHelp = ce("button", { className: "help-btn", textContent: "?", title: "私有仓更新与鉴权" });
-  gitHelp.onclick = (e) => { e.stopPropagation(); $("#repo-hint-modal").classList.remove("hidden"); };
-  ul.append(sourceDivider("git 仓", [gitExport, gitImport], gitHelp));
-  // git 源的添加表单（URL + 分支 + 添加）属于 git，放在 git 仓分区里。
-  const addRow = ce("li", { className: "repo-addrow" });
-  const form = ce("form", { id: "add-repo" });
-  const urlIn = ce("input", { id: "repo-url", placeholder: "git 仓 URL (https / ssh / git@…)", required: true });
-  const brIn = ce("input", { id: "repo-branch", placeholder: "分支(可选)", className: "branch" });
-  const addBtn = ce("button", { type: "submit", textContent: "添加" });
-  form.append(urlIn, brIn, addBtn);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const url = urlIn.value.trim(), branch = brIn.value.trim();
-    if (!url) return;
-    urlIn.value = ""; brIn.value = "";
-    await submitGitRepo(url, branch);
-  };
-  addRow.append(form);
+  const addBtn = ce("button", { className: "small", textContent: "添加", title: "添加一个 git 仓作为源（弹窗输入地址与分支）" });
+  addBtn.onclick = openGitRepoModal;
+  // 导入 / 导出 / 添加 归到一起、都靠左。
+  addRow.append(gitImport, gitExport, addBtn);
   ul.append(addRow);
   (state.status.repos || []).forEach((repo) => {
     const host = httpsHost(repo.url);
@@ -358,7 +361,14 @@ function renderRepos() {
   // 归 npx skills 管。我们只读识别，更新转交其原生命令，绝不接管（第④不变式）。
   const sh = state.status.skillsSh;
   if (sh && sh.count > 0) {
-    ul.append(sourceDivider("npx skills"));
+    // npx 分区标题行：全量更新（代调 npx skills update），与 git 仓的全量更新对齐。
+    let npxActions = [];
+    if (state.npxAvailable) {
+      const npxUpdate = ce("button", { className: "ghost small", textContent: "全量更新", title: "npx skills update：更新全部 skills.sh skill" });
+      npxUpdate.onclick = (e) => { e.stopPropagation(); updateSkillsShAll(npxUpdate); };
+      npxActions = [npxUpdate];
+    }
+    ul.append(sourceDivider("npx skills", npxActions));
     const shLi = ce("li", { className: "repo-card repo-skillssh clickable", title: "查看 skills.sh 管理的 skill" });
     shLi.onclick = () => openSkillsShModal();
     const stop = ce("div", { className: "repo-top" });
@@ -369,12 +379,8 @@ function renderRepos() {
     shLi.append(ce("div", { className: "repo-url", textContent: (sh.root || "~/.agents/skills") + " · vercel-labs/skills（npx skills 管理）" }));
     const smeta = ce("div", { className: "repo-meta" });
     smeta.append(ce("span", { className: "badge count", textContent: sh.count + " skill" }));
-    smeta.append(ce("span", { className: "group-spacer" }));
-    if (state.npxAvailable) {
-      const su = ce("button", { className: "ghost small", textContent: "更新", title: "npx skills update：更新全部 skills.sh skill" });
-      su.onclick = (e) => { e.stopPropagation(); updateSkillsShAll(su); };
-      smeta.append(su);
-    } else {
+    if (!state.npxAvailable) {
+      smeta.append(ce("span", { className: "group-spacer" }));
       smeta.append(ce("span", { className: "inv-hint", textContent: "npx 不可用" }));
     }
     shLi.append(smeta);
@@ -432,7 +438,7 @@ function renderRepos() {
 
 // openSkillsShModal lists skills.sh-managed skills. They are read-only at the
 // source (updates go through the sidebar card's「更新」/ npx), but you CAN enable
-// them into the current target / 整仓跟随 here (selector namespace "@agents"),
+// them into the current target / 自动同步 here (selector namespace "@agents"),
 // same as any other source.
 async function openSkillsShModal() {
   $("#repo-skills-title").textContent = "skills.sh · npx skills";
@@ -447,15 +453,15 @@ async function openSkillsShModal() {
       bar.append(ce("span", { className: "group-spacer" }));
       const fb = ce("button", {
         className: (follow ? "" : "ghost") + " small",
-        textContent: follow ? "🔄 跟随中" : "整仓跟随",
-        title: follow ? "取消整仓跟随" : "整仓跟随：skills.sh 现有及将来的全部 skill 自动启用进当前目录",
+        textContent: follow ? "🔄 同步中" : "自动同步",
+        title: follow ? "关闭自动同步" : "自动同步：skills.sh 现有及将来的全部 skill 自动启用进当前目录",
       });
       fb.onclick = async () => {
         fb.disabled = true;
         if (follow) await api("DELETE", "/api/enabled", { skill: AGENTS_NS + "/*", target });
         else await api("POST", "/api/enabled", { skill: AGENTS_NS + "/*", target, mode: "follow" });
         await api("POST", "/api/apply");
-        toast(follow ? "已取消整仓跟随" : "已整仓跟随 skills.sh");
+        toast(follow ? "已关闭自动同步" : "已开启自动同步");
         await load(); render(skills);
       };
       bar.append(fb);
@@ -477,6 +483,7 @@ async function openSkillsShModal() {
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
       r1.append(ce("span", { className: "skill-name", textContent: name }));
+      if (sk.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + sk.version, title: "版本 " + sk.version }));
       // 来源徽章：lockfile 里的 owner/repo（hover 看完整 URL）。
       const srcText = sk.source || repoFromUrl(sk.sourceUrl) || hostOf(sk.sourceUrl || "");
       if (srcText) {
@@ -521,35 +528,35 @@ async function updateSkillsShAll(btn) {
 }
 
 // openRepoSkills shows a modal listing every skill in a source, and IS the place
-// to enable skills / 整仓跟随 into the current target (replacing the old top「管理」
+// to enable skills / 自动同步 into the current target (replacing the old top「管理」
 // drawer). opts.ns overrides the selector namespace (defaults to repoName);
 // opts.local → @local store skills are also deletable; opts.title overrides the
 // heading. Enable/follow act on the current target tab.
 function openRepoSkills(repoName, opts) {
   opts = opts || {};
-  const ns = opts.ns || repoName; // selector namespace for enable / 整仓跟随
+  const ns = opts.ns || repoName; // selector namespace for enable / 自动同步
   $("#repo-skills-title").textContent = opts.title || (opts.local ? "local · 本地源" : repoName);
   const body = $("#repo-skills-body");
   const render = () => {
     body.innerHTML = "";
     const target = currentTarget();
     const follow = enabledFollow(ns);
-    // Toolbar: which target we enable into + the 整仓跟随 toggle for this source.
+    // Toolbar: which target we enable into + the 自动同步 toggle for this source.
     const bar = ce("div", { className: "rs-toolbar" });
     if (target) {
       bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "启用到当前目录：" + targetLabel(target) }));
       bar.append(ce("span", { className: "group-spacer" }));
       const fb = ce("button", {
         className: (follow ? "" : "ghost") + " small",
-        textContent: follow ? "🔄 跟随中" : "整仓跟随",
-        title: follow ? "取消整仓跟随：不再自动纳入该源的 skill" : "整仓跟随：该源现有及将来新增的全部 skill 自动启用进当前目录",
+        textContent: follow ? "🔄 同步中" : "自动同步",
+        title: follow ? "关闭自动同步：不再自动纳入该源的 skill" : "自动同步：该源现有及将来新增的全部 skill 自动启用进当前目录",
       });
       fb.onclick = async () => {
         fb.disabled = true;
         if (follow) await api("DELETE", "/api/enabled", { skill: ns + "/*", target });
         else await api("POST", "/api/enabled", { skill: ns + "/*", target, mode: "follow" });
         await api("POST", "/api/apply");
-        toast(follow ? "已取消整仓跟随" : "已整仓跟随");
+        toast(follow ? "已关闭自动同步" : "已开启自动同步");
         await load(); render();
       };
       bar.append(fb);
@@ -573,6 +580,7 @@ function openRepoSkills(repoName, opts) {
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
       r1.append(ce("span", { className: "skill-name", textContent: nm }));
+      if (sk.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + sk.version, title: "版本 " + sk.version }));
       r1.append(ce("span", { className: "group-spacer" }));
       if (opts.local) {
         const del = ce("button", { className: "danger small", textContent: "删除", title: "永久删除该本地 skill 的受管副本，并拆除它建立的所有软链（不可恢复）" });
@@ -594,12 +602,12 @@ function openRepoSkills(repoName, opts) {
 // SINGLE button that reflects the current state and flips it — 「停用」when the
 // skill is enabled in the target (click → tear down the link), 「启用」when it is
 // not (click → build the link, with same-name shadow confirmation). The two are
-// mutually exclusive: only one shows at a time. Under 整仓跟随 (or with no target)
+// mutually exclusive: only one shows at a time. Under 自动同步 (or with no target)
 // individual toggling is unavailable, so a hint shows instead. render re-renders
 // the modal.
 function enableControl(ns, name, follow, enabled, target, render) {
   if (!target) return ce("span", { className: "inv-hint", textContent: "未选目录" });
-  if (follow) return ce("span", { className: "inv-hint", textContent: "整仓跟随中" });
+  if (follow) return ce("span", { className: "inv-hint", textContent: "自动同步中" });
   const sel = ns + "/" + name;
   if (enabled) {
     const off = ce("button", { className: "danger small", textContent: "停用", title: "拆除当前目录下的软链（不影响真身与其它目录）" });
@@ -626,12 +634,25 @@ function enableControl(ns, name, follow, enabled, target, render) {
 
 // updateRepo pulls a single git repo's upstream and re-syncs (per-repo manual
 // update). Header「全量更新」does all repos; this does just one.
-async function updateRepo(repo, btn) {
+async function updateRepo(repo, btn, force) {
   const old = btn.textContent; btn.disabled = true; btn.textContent = "更新中…";
   try {
-    const sum = await api("POST", "/api/repos/update", { url: repo.url });
+    const resp = await api("POST", "/api/repos/update", { url: repo.url, force: !!force });
+    // The mirror is a read-only clone, but local drift can happen (e.g. a file
+    // deleted through a symlink that pointed into the mirror). git refuses to
+    // reset over it unless forced — so ask before discarding.
+    if (resp && resp.dirty) {
+      btn.disabled = false; btn.textContent = old;
+      const ok = await confirmModal(
+        "镜像「" + repo.name + "」有本地改动，更新已暂停以免覆盖：\n\n" + (resp.error || "working tree has local modifications") +
+        "\n\n镜像是只读副本，正常不该有本地改动。点「恢复并更新」将丢弃这些改动（git reset --hard + clean -fd），把镜像恢复成上游最新。",
+        "恢复并更新", true);
+      if (ok) await updateRepo(repo, btn, true);
+      return;
+    }
+    const sum = (resp && resp.summary) || resp;
     if (sum && sum.errors && sum.errors.length) banner("更新 " + repo.name + "：" + sum.errors.join("；"), true);
-    else toast("已更新 " + repo.name);
+    else toast(force ? "已恢复并更新 " + repo.name : "已更新 " + repo.name);
     await load();
   } catch (e) {
     btn.disabled = false; btn.textContent = old;
@@ -657,6 +678,48 @@ async function deleteLocalSkill(name, btn, rerender) {
 
 // renderTabs draws one tab per sync directory. Switching a tab re-scans that
 // directory's inventory.
+// defaultTabLabel derives a meaningful default name from a target path: the
+// dir is always ".../<harness>/skills", so the leaf "skills" is useless — drop
+// it and the harness folder (.claude/.codex/.agents) and use the parent (the
+// project / home dir name) instead.
+function defaultTabLabel(dir) {
+  const parts = dir.replace(/\/+$/, "").split("/").filter(Boolean);
+  if (parts.length && parts[parts.length - 1].toLowerCase() === "skills") parts.pop();
+  if (parts.length && /^\.(claude|codex|agents)$/.test(parts[parts.length - 1])) parts.pop();
+  return parts[parts.length - 1] || dir;
+}
+
+// startAliasEdit turns a tab's label into an inline text input (no native prompt,
+// which WKWebView blocks). Enter / blur saves via /api/targets/alias; Esc cancels.
+// An empty value clears the alias (tab reverts to showing the path).
+function startAliasEdit(t, tab) {
+  const span = tab.querySelector(".tab-dir");
+  if (!span || tab.querySelector(".tab-alias-input")) return;
+  const input = ce("input", { className: "tab-alias-input", value: t.alias || "" });
+  input.placeholder = defaultTabLabel(t.dir);
+  span.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const commit = async (save) => {
+    if (done) return; done = true;
+    if (save) {
+      try { await api("POST", "/api/targets/alias", { dir: t.dir, alias: input.value.trim() }); await load(); return; }
+      catch (err) { banner("保存别名失败：" + err.message, true); }
+    }
+    renderTabs();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(true); }
+    else if (e.key === "Escape") { e.preventDefault(); commit(false); }
+  };
+  input.onblur = () => commit(true);
+  // Keep clicks inside the input from bubbling to the tab (which would switch
+  // tabs and re-render, destroying the input mid-edit).
+  input.onclick = (e) => e.stopPropagation();
+  input.onmousedown = (e) => e.stopPropagation();
+  input.ondblclick = (e) => e.stopPropagation();
+}
+
 function renderTabs() {
   const bar = $("#target-tabs"); bar.innerHTML = "";
   const active = currentTarget();
@@ -678,7 +741,18 @@ function renderTabs() {
       await load();
     };
     tab.append(rm);
-    tab.onclick = () => { state.activeTarget = t.dir; renderTabs(); fetchInventory(); };
+    // Switch active in place (don't rebuild the bar): a full renderTabs() here
+    // would destroy this element before a double-click could land on it, so
+    // dblclick-to-rename never fired. Swap the active class instead.
+    tab.onclick = () => {
+      if (state.activeTarget === t.dir) return;
+      state.activeTarget = t.dir;
+      $("#target-tabs").querySelectorAll(".tab.active").forEach((el) => el.classList.remove("active"));
+      tab.classList.add("active");
+      fetchInventory();
+    };
+    // Double-click the tab to rename its alias inline (path still shows on hover).
+    tab.ondblclick = (e) => { e.stopPropagation(); startAliasEdit(t, tab); };
     // Drag to reorder tabs (persisted via /api/targets/reorder).
     tab.draggable = true;
     tab.ondragstart = (e) => { state.dragDir = t.dir; tab.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
@@ -778,6 +852,71 @@ async function fetchInventory() {
   renderInventory();
 }
 
+// abbrevLabel shortens a long source label to its hyphen-segment initials
+// (compound-engineering → ce), per the team convention. Only labels longer than
+// 10 chars that actually contain a hyphen are abbreviated; everything else is
+// returned as-is. Callers keep the full label in the element's title (hover).
+function abbrevLabel(s) {
+  if (!s || s.length <= 10 || !s.includes("-")) return s;
+  return s.split("-").filter(Boolean).map((p) => p[0]).join("");
+}
+
+// sourceMeta maps a source namespace to a display label + badge class.
+function sourceMeta(ns) {
+  if (ns === AGENTS_NS) return { label: "skills.sh", cls: "src-skillssh" };
+  if (ns === LOCAL_NS) return { label: "local", cls: "src-local" };
+  if (ns.startsWith("@dir:")) return { label: dirLabel(ns.slice(5)), cls: "src-local" };
+  return { label: ns, cls: "src-git" }; // git repo name
+}
+
+// renderSearchResults is the GLOBAL skill search: instead of filtering only the
+// current directory, it searches every enable-able skill across all sources
+// (git mirrors + local sources + skills.sh) and lets you enable/disable each
+// into the current target in real time. Driven by the search box (non-empty term).
+function renderSearchResults(root, term) {
+  const target = currentTarget();
+  // selectors already enabled (linked) in the current target.
+  const enabledSel = new Set((state.inventory || []).filter((i) => i.managed && i.selector).map((i) => i.selector));
+  const all = [];
+  for (const [ns, skills] of Object.entries(state.skillsByRepo || {})) {
+    (skills || []).forEach((sk) => all.push({ ns, name: sk.linkName || sk.logicalName, description: sk.description, version: sk.version }));
+  }
+  (state.skillsShSkills || []).forEach((sk) => all.push({ ns: AGENTS_NS, name: sk.linkName || sk.logicalName, description: sk.description, version: sk.version }));
+  const items = all
+    .filter((r) => r.name.toLowerCase().includes(term) || (r.description || "").toLowerCase().includes(term))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.ns.localeCompare(b.ns));
+
+  const head = ce("div", { className: "search-head" });
+  head.append(ce("span", { className: "group-title", textContent: "搜索结果" }));
+  head.append(ce("span", { className: "badge count", textContent: items.length + " skill" }));
+  head.append(ce("span", { className: "group-spacer" }));
+  head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: target ? "启用到当前目录：" + targetLabel(target) : "先选一个目录 tab 才能启用" }));
+  root.append(head);
+
+  if (!items.length) { root.append(ce("div", { className: "empty", textContent: "没有匹配的 skill（已搜索全部 git / 本地 / skills.sh 源）" })); return; }
+
+  const body = ce("div", { className: "inv-group-body" });
+  items.forEach((r) => {
+    const enabled = enabledSel.has(r.ns + "/" + r.name);
+    const follow = enabledFollow(r.ns);
+    const meta = sourceMeta(r.ns);
+    const card = ce("div", { className: "skill inv clickable", title: "查看详情" });
+    card.onclick = (e) => { if (e.target.closest("button, a")) return; openDetail(r.ns, r.name); };
+    const main = ce("div", { className: "skill-main" });
+    const r1 = ce("div", { className: "skill-row1" });
+    r1.append(ce("span", { className: "skill-name", textContent: r.name }));
+    if (r.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + r.version, title: "版本 " + r.version }));
+    r1.append(ce("span", { className: "src-badge " + meta.cls, textContent: meta.label }));
+    r1.append(ce("span", { className: "group-spacer" }));
+    r1.append(enableControl(r.ns, r.name, follow, enabled, target, renderInventory));
+    main.append(r1);
+    if (r.description) main.append(ce("div", { className: "skill-desc", textContent: r.description }));
+    card.append(main);
+    body.append(card);
+  });
+  root.append(body);
+}
+
 function renderInventory() {
   renderStats(); // keep the header「收录 skills」count in sync on every re-render
   const root = $("#skills"); root.innerHTML = "";
@@ -796,6 +935,9 @@ function renderInventory() {
     return;
   }
   const term = state.search.trim().toLowerCase();
+  // A search term switches to GLOBAL search across all sources (not just this
+  // directory) with real-time enable; empty term shows the current directory.
+  if (term) { renderSearchResults(root, term); return; }
   let items = state.inventory.slice();
   // 注入当前 tab 所属 harness 的插件 skill（只读），作为「目录现状」底部「插件」组。
   const curHarness = (state.targets.find((t) => t.dir === currentTarget()) || {}).harness;
@@ -803,12 +945,10 @@ function renderInventory() {
     if (curHarness && p.harness && p.harness !== curHarness) return;
     items.push({ kind: "plugin", name: p.name, description: p.description, plugin: p.plugin, version: p.version, harness: p.harness });
   });
-  if (term) items = items.filter((i) => i.name.toLowerCase().includes(term) || (i.description || "").toLowerCase().includes(term));
   if (items.length === 0) {
-    if (term) { root.append(ce("div", { className: "empty", textContent: "没有匹配的 skill" })); return; }
     const box = ce("div", { className: "empty" });
     box.append(ce("div", { textContent: "该目录暂无 skill。" }));
-    box.append(ce("div", { className: "muted", style: "margin-top:6px", textContent: "点上方「管理」从库选取，或在目录里创建 SKILL.md 后刷新。" }));
+    box.append(ce("div", { className: "muted", style: "margin-top:6px", textContent: "用上方搜索框跨所有源查找并启用，或在目录里创建 SKILL.md 后刷新。" }));
     root.append(box);
     return;
   }
@@ -839,6 +979,10 @@ function renderInventory() {
       head.append(q);
     }
     head.append(ce("span", { className: "badge count", textContent: g.items.length + " skill" }));
+    // 插件组：在标题后说明「无法检测更新」，与 skills.sh 的组说明同位置。
+    if (g.key === "plugin" && state.status && state.status.claudeCli) {
+      head.append(ce("span", { className: "group-note", textContent: "无法检测是否有更新，按需手动委托更新（第一行）" }));
+    }
     // skills.sh 组：它归 npx skills 自己的台账管理，本工具只读、不主动联网比对，
     // 因此无法显示「是否有更新」。在组头给出说明 + 一个手动「更新」入口（代调 npx）。
     if (g.key === "skillssh") {
@@ -858,6 +1002,7 @@ function renderInventory() {
     grp.append(head);
     if (!collapsed) {
       const body = ce("div", { className: "inv-group-body" });
+      if (g.key === "plugin") body.append(pluginToolbar(g.items)); // 第一行：逐插件更新 + 全部更新
       g.items.forEach((i) => body.append(inventoryCard(i)));
       grp.append(body);
     }
@@ -927,6 +1072,7 @@ function inventoryCard(i) {
   const main = ce("div", { className: "skill-main" });
   const r1 = ce("div", { className: "skill-row1" });
   r1.append(ce("span", { className: "skill-name", textContent: i.name }));
+  if (i.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + i.version, title: "版本 " + i.version }));
 
   // 徽章默认显示全名——位置够就不缩写（CSS 在真正放不下时才 ellipsis 截断，全名见 hover）。
   let badgeText = s.label;
@@ -935,7 +1081,9 @@ function inventoryCard(i) {
   // 本地源合并成一个组后，徽章带上各自来源：local（受管存储）或某个本地源文件夹名。
   if (i.kind === "local") badgeText = "local";
   if (i.kind === "dir") badgeText = dirLabel(i.repo);
-  const badge = ce("span", { className: "src-badge " + s.cls, textContent: badgeText });
+  // 缩写只针对 plugin（名字常含连字符且偏长，如 compound-engineering → ce）；npx /
+  // git / 本地源标签本身不长，保持全名。全名见 hover（plugin 的 title 在下面设置）。
+  const badge = ce("span", { className: "src-badge " + s.cls, textContent: i.kind === "plugin" ? abbrevLabel(badgeText) : badgeText });
   if (i.kind === "skills.sh" && i.sourceUrl) badge.title = i.sourceUrl; // title is text-safe (no innerHTML)
   if (i.kind === "plugin" && i.plugin) badge.title = i.plugin;
   if (i.kind === "dir") badge.title = dirLabel(i.repo) + "（本地源）";
@@ -1117,7 +1265,7 @@ async function doAdopt(a) {
   return data;
 }
 
-// --- enable / 整仓跟随 helpers (used by the per-source skill modals) ---
+// --- enable / 自动同步 helpers (used by the per-source skill modals) ---
 
 // shadowTargetForEnable returns the dir of an already-enabled same-name skill in
 // another target of the SAME harness — i.e. enabling linkName into `target` now
@@ -1158,31 +1306,14 @@ function renderSummary() {
   if (s.removed && s.removed.length) parts.push("移除 " + s.removed.length);
   if (s.pruned && s.pruned.length) parts.push("清理悬空 " + s.pruned.length);
   f.append(ce("span", { textContent: parts.length ? "上次同步：" + parts.join("，") : "上次同步：无变化" }));
-  // 我们的链被「占用」跳过的名字：这些链根本没建成，就不能再报它「遮蔽」（否则与下方 ✗ 自相矛盾）。
-  const skipped = new Set();
-  (s.errors || []).forEach((e) => {
-    const m = String(e).match(/^link\s+(.+?)\s+->/);
-    if (m) skipped.add(m[1].split("/").pop());
-  });
-  // collision/nested 逐条列（少且可操作）；shadow 折叠成一条汇总——逐项处理在「目录现状」里做，
-  // footer 不糊一墙重复告警（每张卡片已有「遮蔽」标记 + 停用按钮）。
-  let shadowN = 0;
-  (s.conflicts || []).forEach((c) => {
-    if (c.kind === "collision") f.append(ce("div", { className: "conflict", textContent: "⚠ 撞名 " + c.linkName + "（多个仓，需起别名）" }));
-    else if (c.kind === "nested") f.append(ce("div", { className: "conflict", textContent: "⚠ 嵌套 " + c.linkName + "（已链接到 Codex，含嵌套子 skill，可能污染 Codex 列表）" }));
-    else if (!skipped.has(c.linkName)) shadowN++; // 链未建成的不计（避免与下方 ✗ 矛盾）
-  });
-  if (shadowN) {
-    f.append(ce("div", { className: "conflict", textContent:
-      "⚠ " + shadowN + " 个 skill 在同一 harness 的全局与项目目录重复（遮蔽，项目级生效、另一份冗余）——在「目录现状」里把多余的一份「停用」即可消除（外部工具装的用其原生方式移除）。" }));
+  // 不再在页脚堆砌每条冲突/错误（无价值的一墙告警）。只在有问题时显示一个可点击的
+  // 「健康度」入口，详情与解决都在弹窗里完成。
+  const issues = ((s.conflicts || []).length) + ((s.errors || []).length);
+  if (issues) {
+    const h = ce("span", { className: "health-warn", textContent: "⚠ 健康度 " + issues + " 项待处理", title: "撞名 / 遮蔽 / 嵌套 / 同步错误——点击查看并解决" });
+    h.onclick = openHealthModal;
+    f.append(h);
   }
-  (s.errors || []).forEach((e) => {
-    const h = humanizeSyncError(e);
-    const row = ce("div", { className: "error", title: e });
-    row.append(ce("span", { className: "err-why", textContent: "✗ " + h.why }));
-    if (h.fix) row.append(ce("span", { className: "err-fix", textContent: "建议：" + h.fix }));
-    f.append(row);
-  });
 }
 
 // humanizeSyncError turns a raw reconcile error into a clear cause + suggestion.
@@ -1220,14 +1351,124 @@ function humanizeSyncError(raw) {
   return { why: r, fix: "" };
 }
 
+// setDetailSource shows the skills.sh lockfile source (台账来源) in the detail
+// modal, or hides the line for skills that have none (git / local / plugin).
+function setDetailSource(d) {
+  const el = $("#modal-source");
+  el.innerHTML = "";
+  if (d && d.source) {
+    el.append(ce("span", { className: "ms-label", textContent: "台账来源" }));
+    el.append(ce("span", { className: "ms-val", textContent: d.source }));
+    if (d.sourceUrl) {
+      el.append(ce("span", { className: "ms-sep", textContent: "·" }));
+      el.append(ce("span", { className: "ms-url", textContent: d.sourceUrl }));
+    }
+    el.title = d.sourceUrl || d.source;
+    el.classList.remove("hidden");
+  } else {
+    el.classList.add("hidden");
+  }
+}
+
+// setPluginActions fills the detail modal's action row for a plugin skill: a
+// delegated「更新插件」button (only when the claude CLI is available, cc only)
+// plus a note. Hidden / cleared for non-plugin skills.
+function setPluginActions(plugin, harness) {
+  const el = $("#modal-actions");
+  el.innerHTML = "";
+  if (!plugin) { el.classList.add("hidden"); return; }
+  // 更新入口统一放在「插件」组第一行的工具条（只对确有更新的插件显示），详情里不再放
+  // 按钮，避免对无法检测/无法更新的插件给出无效操作。
+  el.append(ce("span", { className: "ma-note", textContent: "只读 · 由 harness 插件系统管理。有更新时在「插件」组第一行委托更新。" }));
+  el.classList.remove("hidden");
+}
+function clearModalActions() { const el = $("#modal-actions"); el.innerHTML = ""; el.classList.add("hidden"); }
+
+// updatePlugin delegates a plugin update to the harness CLI (claude plugin update
+// <id> -s <scope>). It never takes ownership; effect applies after a Claude Code
+// restart. `t` is {name,id,scope} from the outdated check — the exact id + scope
+// the CLI needs (a bare name / wrong scope makes it report "not found").
+async function updatePlugin(t, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "更新中…";
+  try {
+    const d = await api("POST", "/api/plugin/update", { id: t.id, scope: t.scope, harness: "cc" });
+    if (d && d.ok) toast(d.status === "current" ? t.name + " 已是最新版本，无需更新" : "已更新 " + t.name + "，重启 Claude Code 后生效");
+    else banner("更新插件 " + t.name + " 失败：" + ((d && (d.stderr || d.error)) || "未知错误"), true);
+  } catch (e) {
+    banner("更新插件 " + t.name + " 失败：" + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+// pluginToolbar is the first row of the「插件」组: one「更新」button per installed
+// plugin in this group + 「全部更新」right-aligned. This is a MANUAL model (like
+// skills.sh): the CLI can't tell us which plugins have updates (no comparable
+// marketplace version), so we don't claim — we just offer to委托 update each, with
+// a note. id + scope come from `claude plugin list`.
+function pluginToolbar(items) {
+  const bar = ce("div", { className: "plugin-toolbar" });
+  if (!(state.status && state.status.claudeCli)) {
+    bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "未找到 claude CLI，无法在此更新插件（可用 /plugin 更新）" }));
+    return bar;
+  }
+  const pi = state.pluginInstalled;
+  if (pi === null) { fetchPluginInstalled(); bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "加载插件信息中…" })); return bar; }
+  if (!pi.available) { bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "无法获取插件信息，暂不提供委托更新" })); return bar; }
+  const names = new Set(items.filter((x) => x.harness === "cc" && x.plugin).map((x) => x.plugin));
+  const targets = (pi.list || []).filter((t) => names.has(t.name));
+  if (!targets.length) { bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "本组无可委托更新的 Claude Code 插件" })); return bar; }
+  // 逐插件按钮放在一个会换行的容器里（占满左侧），「全部更新」固定在最右、不随换行下移。
+  const btns = ce("div", { className: "plugin-toolbar-btns" });
+  targets.forEach((t) => {
+    const b = ce("button", { className: "ghost small", textContent: "更新 " + abbrevLabel(t.name), title: "委托 claude plugin update 更新「" + t.name + "」插件，重启后生效" });
+    b.onclick = () => updatePlugin(t, b);
+    btns.append(b);
+  });
+  bar.append(btns);
+  const allBtn = ce("button", { className: "small", textContent: "全部更新", title: "逐个委托更新这 " + targets.length + " 个插件" });
+  allBtn.onclick = () => updateAllPlugins(targets, allBtn);
+  bar.append(allBtn);
+  return bar;
+}
+
+async function fetchPluginInstalled() {
+  if (state.pluginInstalledLoading) return;
+  state.pluginInstalledLoading = true;
+  try {
+    const d = await api("GET", "/api/plugins/installed");
+    state.pluginInstalled = d && d.available ? { available: true, list: d.plugins || [] } : { available: false, list: [] };
+  } catch { state.pluginInstalled = { available: false, list: [] }; }
+  finally { state.pluginInstalledLoading = false; renderInventory(); }
+}
+
+async function updateAllPlugins(targets, btn) {
+  if (!targets || !targets.length) return;
+  const names = targets.map((t) => t.name);
+  if (!(await confirmModal("将逐个委托 claude plugin update 更新 " + targets.length + " 个插件：\n" + names.join("、") + "\n更新后重启 Claude Code 生效。继续？", "全部更新"))) return;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "更新中…";
+  let updated = 0, current = 0; const fail = [];
+  for (const t of targets) {
+    try { const d = await api("POST", "/api/plugin/update", { id: t.id, scope: t.scope, harness: "cc" }); if (d && d.ok) { if (d.status === "current") current++; else updated++; } else fail.push(t.name); }
+    catch { fail.push(t.name); }
+  }
+  btn.disabled = false; btn.textContent = old;
+  if (fail.length) banner("插件更新：更新 " + updated + " 个，已最新 " + current + " 个，失败 " + fail.length + "（" + fail.join("、") + "）", true);
+  else if (updated) toast("已更新 " + updated + " 个插件（另 " + current + " 个已最新），重启 Claude Code 后生效");
+  else toast(current + " 个插件均已是最新，无需更新");
+}
+
 async function openDetail(repo, name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  setDetailSource(null);
+  clearModalActions();
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {
     const d = await api("GET", "/api/skill?repo=" + encodeURIComponent(repo) + "&name=" + encodeURIComponent(name));
     $("#modal-desc").textContent = d.description || "";
+    setDetailSource(d);
     $("#modal-content").textContent = d.content || "(空)";
   } catch (e) {
     $("#modal-content").textContent = "加载失败：" + e.message;
@@ -1238,6 +1479,8 @@ async function openDetail(repo, name) {
 async function openPluginDetail(plugin, name, harness) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  setDetailSource(null);
+  setPluginActions(plugin, harness);
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {
@@ -1255,50 +1498,360 @@ async function openPluginDetail(plugin, name, harness) {
 async function openDetailAt(name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  setDetailSource(null);
+  clearModalActions();
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {
     const d = await api("GET", "/api/skill-at?target=" + encodeURIComponent(currentTarget()) + "&name=" + encodeURIComponent(name));
     $("#modal-desc").textContent = d.description || "";
+    setDetailSource(d);
     $("#modal-content").textContent = d.content || "(空)";
   } catch (e) {
     $("#modal-content").textContent = "加载失败：" + e.message;
   }
 }
 
+// updateNow is the GIT update-all action (git 仓 group's「全量更新」). npx/skills.sh
+// has its own update (updateSkillsShAll) — one git path, one npx path.
 async function updateNow(force) {
-  banner("同步中…");
+  toast("同步中…", "info");
   let sum = null;
   try { sum = await api("POST", "/api/update-now", { force: !!force }); }
   catch (e) { banner("同步失败：" + e.message, true); await load(); return; }
   await load();
-  // Report whether anything changed (R4.3). 全量更新 covers BOTH git sources
-  // (sum.created/removed/pruned) AND npx/skills.sh (sum.npx — delegated update).
+  // Dirty mirrors were skipped (force=false) → offer to restore + update them
+  // (this replaced the old separate 强制更新 button). Skip when already forcing.
+  if (!force && sum && sum.dirtyRepos && sum.dirtyRepos.length) {
+    if (await confirmModal(
+      "以下镜像有本地改动，已跳过未更新：\n\n" + sum.dirtyRepos.join("、") +
+      "\n\n镜像是只读副本，正常不该有本地改动。是否还原本地改动并更新（git reset --hard + clean -fd）？",
+      "还原并更新", true)) {
+      await updateNow(true);
+      return;
+    }
+  }
   const changed = sum && ((sum.created || []).length + (sum.removed || []).length + (sum.pruned || []).length);
-  const npx = sum && sum.npx;
-  let msg;
-  if (changed) msg = "更新完成：新增 " + (sum.created || []).length + " · 移除 " + (sum.removed || []).length + (sum.pruned && sum.pruned.length ? " · 清理 " + sum.pruned.length : "");
-  else msg = "git 源已是最新，无变化";
-  if (npx && npx.ran) msg += npx.ok ? " · npx 源已更新" : " · npx 更新失败";
-  toast(msg, npx && npx.ran && !npx.ok ? "err" : "ok");
-  if (npx && npx.ran && !npx.ok && npx.error) banner("npx skills update 失败：" + npx.error, true);
+  if (changed) toast("更新完成：新增 " + (sum.created || []).length + " · 移除 " + (sum.removed || []).length + (sum.pruned && sum.pruned.length ? " · 清理 " + sum.pruned.length : ""));
+  else toast("git 源已是最新，无变化");
 }
 
 // events
 $("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
 
-// submitGitRepo handles the git-source add form (rendered inside the git 仓
-// section by renderRepos). Private https hosts without stored creds route through
-// the credential modal first; everything else adds + syncs immediately.
+// submitGitRepo handles the git-source add form. The HTTPS credential is entered
+// INLINE in the same modal (no second popup): if the URL is an https host we have
+// no stored cred for and the user typed a token, save it first so the very first
+// sync authenticates. A host we already have a cred for is reused silently. Empty
+// token = treat as public — the per-repo「填写凭据」button remains the fallback if
+// it turns out private (addRepoAndSync surfaces authHint).
 async function submitGitRepo(url, branch) {
   if (!url) return;
   const host = httpsHost(url);
   if (host && !Object.prototype.hasOwnProperty.call(state.credHosts, host)) {
-    openCredModal(host, "", { url, branch });
-    return;
+    const token = $("#repo-cred-token").value;
+    if (token) {
+      const username = $("#repo-cred-user").value.trim();
+      try { await api("POST", "/api/credentials", { host, username, token }); }
+      catch (err) { banner("保存凭据失败：" + err.message, true); return; }
+    }
   }
   await addRepoAndSync(url, branch);
 }
+
+// updateRepoCredSection reacts to the URL field: shows the inline credential
+// inputs only for an https host without a stored cred, a reuse note when one
+// already exists, and nothing for SSH/git@ (which authenticates via SSH key).
+function updateRepoCredSection() {
+  const host = httpsHost($("#repo-url").value.trim());
+  const sec = $("#repo-cred-section"), fields = $("#repo-cred-fields"), status = $("#repo-cred-status");
+  if (!host) { sec.classList.add("hidden"); return; }
+  sec.classList.remove("hidden");
+  if (Object.prototype.hasOwnProperty.call(state.credHosts, host)) {
+    status.textContent = "将复用 " + host + " 的已存凭据，无需重复填写。";
+    fields.classList.add("hidden");
+  } else {
+    status.textContent = host + "：私有仓在下面填令牌；公开仓留空直接添加。";
+    fields.classList.remove("hidden");
+  }
+}
+
+function openGitRepoModal() {
+  $("#repo-url").value = "";
+  $("#repo-branch").value = "";
+  $("#repo-cred-user").value = "";
+  $("#repo-cred-token").value = "";
+  updateRepoCredSection();
+  $("#git-repo-modal").classList.remove("hidden");
+  $("#repo-url").focus();
+}
+function closeGitRepoModal() { $("#git-repo-modal").classList.add("hidden"); }
+
+// --- 健康度 (health): 同步层冲突 撞名 / 遮蔽 / 嵌套 + 同步错误 ---
+// 这些是「手动启用/自动同步」操作落到目标目录后才会出现的链接层问题，可在弹窗里
+// 逐条停用解决。与顶部「冲突」（库内跨源重复/重叠，见下方）是两件事。
+const CONFLICT_KIND = {
+  collision: "撞名（多个源争用同一目录下的同名 skill，只能保留一份）",
+  shadow: "遮蔽（同一 harness 的全局与项目目录都有同名，项目级生效、另一份冗余）",
+  nested: "嵌套（链到 Codex 的源含子 skill，可能污染 Codex 列表）",
+};
+function badgeClassForLabel(label) {
+  return label === "skills.sh" ? "src-skillssh" : label === "local" ? "src-local" : "src-git";
+}
+async function openHealthModal() {
+  const body = $("#health-body");
+  body.innerHTML = "加载中…";
+  $("#health-modal").classList.remove("hidden");
+  try { renderHealthBody(await api("GET", "/api/conflicts")); }
+  catch (e) { body.innerHTML = ""; body.append(ce("div", { className: "empty", textContent: "加载失败：" + e.message })); }
+}
+function closeHealthModal() { $("#health-modal").classList.add("hidden"); }
+function renderHealthBody(list) {
+  const body = $("#health-body"); body.innerHTML = "";
+  const errors = (state.status.lastSummary && state.status.lastSummary.errors) || [];
+  list = list || [];
+  if (!list.length && !errors.length) { body.append(ce("div", { className: "empty", textContent: "一切正常 🎉" })); return; }
+  // 遮蔽冲突（父↔子成对）按【文件夹对】分组：每组是「父 ⇄ 一个子」的关系，框里列出
+  // 这一对之间所有同名 skill，并给两个一键取舍按钮（保留父 / 保留子）。撞名（同目录
+  // 多源）、嵌套不属于文件夹对，仍按单条处理。
+  const shadowPairs = list.filter((c) => c.kind === "shadow" && c.candidates && new Set(c.candidates.map((x) => x.target)).size === 2);
+  const others = list.filter((c) => !shadowPairs.includes(c));
+
+  // group shadow conflicts by their unordered (父,子) target pair.
+  const groups = new Map();
+  shadowPairs.forEach((c) => {
+    const ts = [...new Set(c.candidates.map((x) => x.target))].sort();
+    const key = ts.join(" ");
+    let g = groups.get(key);
+    if (!g) {
+      const meta = {};
+      c.candidates.forEach((x) => { meta[x.target] = { label: x.targetLabel, scope: x.scope, follow: x.follow, source: x.sourceLabel }; });
+      g = { targets: ts, meta, items: [] };
+      groups.set(key, g);
+    }
+    g.items.push(c);
+  });
+
+  // roleOf maps a target's scope to a 父/子 label, or "" when scope is unknown
+  // (defensive: a normal shadow pair is always one user + one project, but stale
+  // or malformed data must not mislabel both sides — then we show paths only).
+  const roleOf = (scope) => (scope === "user" ? "父" : scope === "project" ? "子" : "");
+  for (const g of groups.values()) {
+    // order父(user) first, 子(project) second; fall back to given order.
+    const ordered = g.targets.slice().sort((a, b) => (g.meta[a].scope === "user" ? -1 : 1) - (g.meta[b].scope === "user" ? -1 : 1));
+    const box = ce("div", { className: "cf-pair" });
+    const head = ce("div", { className: "cf-pair-head" });
+    ordered.forEach((t, i) => {
+      if (i) head.append(ce("span", { className: "cf-pair-arrow", textContent: "⇄" }));
+      const tag = ce("span", { className: "cf-pair-folder" });
+      const role = roleOf(g.meta[t].scope);
+      if (role) tag.append(ce("span", { className: "cf-pair-role", textContent: role }));
+      tag.append(ce("span", { textContent: g.meta[t].label }));
+      head.append(tag);
+    });
+    box.append(head);
+    box.append(ce("div", { className: "cf-pair-sub", textContent: g.items.length + " 个同名 skill 在这两处重复（项目级生效，另一份冗余）" }));
+    const btns = ce("div", { className: "cf-batch-btns" });
+    ordered.forEach((t) => {
+      const role = roleOf(g.meta[t].scope);
+      const b = ce("button", { className: "small", textContent: "全部保留 " + (role ? role + "（" + g.meta[t].label + "）" : g.meta[t].label) });
+      b.onclick = () => resolveHealthBatch(g.items, t);
+      btns.append(b);
+    });
+    box.append(btns);
+    const sk = ce("div", { className: "cf-pair-skills" });
+    g.items.forEach((c) => {
+      const row = ce("div", { className: "cf-pair-skill" });
+      const src = (c.candidates[0] && c.candidates[0].sourceLabel) || "";
+      row.append(ce("span", { className: "cf-skill-name", textContent: c.linkName }));
+      if (src) row.append(ce("span", { className: "src-badge " + badgeClassForLabel(src), textContent: src }));
+      if (g.meta[g.targets[0]].follow || g.meta[g.targets[1]].follow) row.append(ce("span", { className: "muted", style: "font-size:11px", textContent: "自动同步" }));
+      sk.append(row);
+    });
+    box.append(sk);
+    body.append(box);
+  }
+
+  // collision (撞名) / nested / anything not a folder-pair → per-item resolution.
+  others.forEach((c) => {
+    const sec = ce("div", { className: "cf-item" });
+    const head = ce("div", { className: "cf-head" });
+    head.append(ce("span", { className: "cf-name", textContent: c.linkName }));
+    head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: CONFLICT_KIND[c.kind] || c.kind }));
+    sec.append(head);
+    if (!c.candidates || !c.candidates.length) {
+      sec.append(ce("div", { className: "muted", style: "font-size:12px;margin-top:6px", textContent: "找不到可操作的来源条目（可能来自整仓自动同步，请到对应源弹窗里调整）。" }));
+      body.append(sec); return;
+    }
+    const multi = c.candidates.length > 1;
+    c.candidates.forEach((cand) => {
+      const row = ce("div", { className: "cf-cand" });
+      const info = ce("div", { className: "cf-cand-info" });
+      info.append(ce("span", { className: "src-badge " + badgeClassForLabel(cand.sourceLabel), textContent: cand.sourceLabel }));
+      info.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "→ " + cand.targetLabel + (cand.follow ? " · 自动同步" : "") }));
+      row.append(info);
+      const btn = ce("button", { className: multi ? "small" : "danger small", textContent: multi ? "保留这个" : "停用", title: multi ? "保留这一份，停用其余" : "停用这一份" });
+      btn.onclick = () => resolveConflict(c, cand);
+      row.append(btn);
+      sec.append(row);
+    });
+    body.append(sec);
+  });
+}
+async function resolveConflict(c, keep) {
+  const drop = c.candidates.length > 1
+    ? c.candidates.filter((x) => !(x.selector === keep.selector && x.target === keep.target))
+    : [keep];
+  const followDrop = drop.find((d) => d.follow);
+  if (followDrop && !(await confirmModal(
+    "「" + followDrop.sourceLabel + "」是整仓自动同步，停用它会移除该源在「" + followDrop.targetLabel + "」的全部 skill（不止这一个）。继续？",
+    "继续停用", true))) return;
+  try {
+    for (const d of drop) await api("DELETE", "/api/enabled", { skill: d.selector, target: d.target });
+    await api("POST", "/api/apply");
+  } catch (e) { banner("解决冲突失败：" + e.message, true); return; }
+  toast("已处理冲突 " + c.linkName);
+  await load();
+  try { renderHealthBody(await api("GET", "/api/conflicts")); }
+  catch { closeHealthModal(); }
+}
+// resolveHealthBatch keeps one target folder across many cross-folder conflicts and
+// drops the same-named candidates in every other folder in one pass.
+async function resolveHealthBatch(batchable, keepTarget) {
+  const keepLabel = (batchable[0].candidates.find((x) => x.target === keepTarget) || {}).targetLabel || keepTarget;
+  const drop = [];
+  batchable.forEach((c) => {
+    if (!c.candidates.some((x) => x.target === keepTarget)) return; // 该冲突不含保留目录，跳过
+    c.candidates.filter((x) => x.target !== keepTarget).forEach((d) => drop.push({ ...d, linkName: c.linkName }));
+  });
+  if (!drop.length) { toast("没有可批量停用的项"); return; }
+  const follows = drop.filter((d) => d.follow);
+  const followNote = follows.length ? "\n其中 " + follows.length + " 项来自整仓自动同步，停用会移除该源在对应目录的全部 skill。" : "";
+  if (!(await confirmModal(
+    "将保留「" + keepLabel + "」中的同名 skill，停用其它文件夹里的 " + drop.length + " 项。" + followNote + "\n继续？",
+    "批量停用", true))) return;
+  let ok = 0;
+  try {
+    for (const d of drop) { await api("DELETE", "/api/enabled", { skill: d.selector, target: d.target }); ok++; }
+    await api("POST", "/api/apply");
+  } catch (e) { banner("批量处理失败（已停用 " + ok + " 项）：" + e.message, true); }
+  toast("已批量保留「" + keepLabel + "」，停用 " + ok + " 项");
+  await load();
+  try { renderHealthBody(await api("GET", "/api/conflicts")); }
+  catch { closeHealthModal(); }
+}
+
+// --- 冲突 (conflict): 库内跨源「重复 / 重叠」检测 ---
+// 针对全部数据源（git 源 + 本地源 + npx skills.sh）汇总后的 skill 库，纯前端启发式
+// 识别两类问题：① 名称重复（同名 skill 来自 ≥2 个不同源）；② 关键词重叠（名称+描述
+// 分词后 Jaccard ≥ 0.5 的不同名 skill 对，可能功能/提示词重叠）。这是「库里有没有冗余」
+// 的体检，和「健康度」（链接层撞名/遮蔽）不同——这里只识别+指引，不自动改库（只读镜像）。
+const OVERLAP_THRESHOLD = 0.5;
+const STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "of", "to", "for", "in", "on", "with", "skill",
+  "this", "that", "use", "used", "using", "when", "你", "的", "了", "和", "与",
+]);
+function tokenSet(s) {
+  const out = new Set();
+  for (const t of (s || "").toLowerCase().split(/[^a-z0-9一-鿿]+/)) {
+    if (t && t.length > 1 && !STOPWORDS.has(t)) out.add(t);
+  }
+  return out;
+}
+function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+// computeLibraryConflicts gathers every skill across all sources (same shape as
+// the global search) and returns { dups, overlaps } for the top「冲突」stat + modal.
+function computeLibraryConflicts() {
+  const all = [];
+  for (const [ns, skills] of Object.entries(state.skillsByRepo || {})) {
+    (skills || []).forEach((sk) => all.push({ ns, name: sk.linkName || sk.logicalName, description: sk.description }));
+  }
+  (state.skillsShSkills || []).forEach((sk) => all.push({ ns: AGENTS_NS, name: sk.linkName || sk.logicalName, description: sk.description }));
+  // ① 名称重复：同一 lowercase 名称、来自 ≥2 个不同源。
+  const byName = new Map();
+  for (const r of all) {
+    const k = (r.name || "").toLowerCase();
+    if (!k) continue;
+    (byName.get(k) || byName.set(k, []).get(k)).push(r);
+  }
+  const dups = [];
+  const dupNames = new Set();
+  for (const [k, items] of byName) {
+    const sources = new Set(items.map((i) => i.ns));
+    if (items.length > 1 && sources.size > 1) { dups.push({ name: items[0].name, items }); dupNames.add(k); }
+  }
+  // ② 关键词重叠：不同名 skill 对，Jaccard(名称+描述分词) ≥ 阈值。
+  const toks = all.map((r) => tokenSet((r.name || "") + " " + (r.description || "")));
+  const overlaps = [];
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length; j++) {
+      if ((all[i].name || "").toLowerCase() === (all[j].name || "").toLowerCase()) continue; // 同名归入 dup
+      const score = jaccard(toks[i], toks[j]);
+      if (score >= OVERLAP_THRESHOLD) overlaps.push({ a: all[i], b: all[j], score });
+    }
+  }
+  overlaps.sort((x, y) => y.score - x.score);
+  return { dups, overlaps };
+}
+function openConflictModal() {
+  const body = $("#conflict-body"); body.innerHTML = "";
+  $("#conflict-modal").classList.remove("hidden");
+  const { dups, overlaps } = computeLibraryConflicts();
+  if (!dups.length && !overlaps.length) {
+    body.append(ce("div", { className: "empty", textContent: "库里没有发现跨源重复或明显重叠 🎉" }));
+    return;
+  }
+  const srcChip = (ns) => { const m = sourceMeta(ns); return ce("span", { className: "src-badge " + m.cls, textContent: m.label }); };
+  if (dups.length) {
+    body.append(ce("div", { className: "cf-sec-head", textContent: "名称重复（" + dups.length + "）" }));
+    body.append(ce("div", { className: "muted", style: "font-size:12px;margin:-4px 0 8px", textContent: "同名 skill 来自多个源，启用时只能保留一份。" }));
+    dups.forEach((d) => {
+      const sec = ce("div", { className: "cf-item" });
+      const dh = ce("div", { className: "cf-head" });
+      dh.append(ce("span", { className: "cf-name", textContent: d.name }));
+      sec.append(dh);
+      d.items.forEach((it) => {
+        const row = ce("div", { className: "cf-cand clickable" });
+        row.onclick = () => { closeConflictModal(); openDetail(it.ns, it.name); };
+        const info = ce("div", { className: "cf-cand-info" });
+        info.append(srcChip(it.ns));
+        if (it.description) info.append(ce("span", { className: "muted", style: "font-size:12px", textContent: it.description.slice(0, 60) }));
+        row.append(info);
+        row.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "查看 ›" }));
+        sec.append(row);
+      });
+      body.append(sec);
+    });
+  }
+  if (overlaps.length) {
+    body.append(ce("div", { className: "cf-sec-head", textContent: "可能重叠（" + overlaps.length + "）" }));
+    body.append(ce("div", { className: "muted", style: "font-size:12px;margin:-4px 0 8px", textContent: "名称/描述关键词高度重合，可能功能或提示词重复，建议人工确认。" }));
+    overlaps.forEach((o) => {
+      const sec = ce("div", { className: "cf-item" });
+      const oh = ce("div", { className: "cf-head" });
+      oh.append(ce("span", { className: "cf-name", textContent: o.a.name + "  ⇄  " + o.b.name }));
+      oh.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "重合 " + Math.round(o.score * 100) + "%" }));
+      sec.append(oh);
+      [o.a, o.b].forEach((it) => {
+        const row = ce("div", { className: "cf-cand clickable" });
+        row.onclick = () => { closeConflictModal(); openDetail(it.ns, it.name); };
+        const info = ce("div", { className: "cf-cand-info" });
+        info.append(srcChip(it.ns));
+        info.append(ce("span", { className: "muted", style: "font-size:12px", textContent: it.name }));
+        row.append(info);
+        row.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "查看 ›" }));
+        sec.append(row);
+      });
+      body.append(sec);
+    });
+  }
+}
+function closeConflictModal() { $("#conflict-modal").classList.add("hidden"); }
 
 async function addRepoAndSync(url, branch) {
   try {
@@ -1333,6 +1886,34 @@ $("#target-path").onkeydown = (e) => {
   if (e.key === "Enter") { e.preventDefault(); browseTo($("#target-path").value.trim()); }
 };
 $("#target-path").onpaste = () => { setTimeout(() => browseTo($("#target-path").value.trim()), 0); };
+$("#do-export").onsubmit = async (e) => {
+  e.preventDefault();
+  const dir = $("#export-path").value.trim();
+  closeExportModal();
+  await doExport(dir);
+};
+$("#export-path").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); browseTo($("#export-path").value.trim(), "#export-browser", "#export-path"); }
+};
+$("#export-path").onpaste = () => { setTimeout(() => browseTo($("#export-path").value.trim(), "#export-browser", "#export-path"), 0); };
+$("#export-modal-close").onclick = closeExportModal;
+$("#export-modal-cancel").onclick = closeExportModal;
+$("#export-modal").onclick = (e) => { if (e.target.id === "export-modal") closeExportModal(); };
+$("#add-repo").onsubmit = async (e) => {
+  e.preventDefault();
+  const url = $("#repo-url").value.trim(), branch = $("#repo-branch").value.trim();
+  if (!url) return;
+  closeGitRepoModal();
+  await submitGitRepo(url, branch);
+};
+$("#repo-url").oninput = updateRepoCredSection;
+$("#git-repo-modal-close").onclick = closeGitRepoModal;
+$("#git-repo-modal-cancel").onclick = closeGitRepoModal;
+$("#git-repo-modal").onclick = (e) => { if (e.target.id === "git-repo-modal") closeGitRepoModal(); };
+$("#health-modal-close").onclick = closeHealthModal;
+$("#health-modal").onclick = (e) => { if (e.target.id === "health-modal") closeHealthModal(); };
+$("#conflict-modal-close").onclick = closeConflictModal;
+$("#conflict-modal").onclick = (e) => { if (e.target.id === "conflict-modal") closeConflictModal(); };
 $("#cred-form").onsubmit = async (e) => {
   e.preventDefault();
   const host = $("#cred-host").dataset.host;
@@ -1358,15 +1939,6 @@ $("#info-close").onclick = () => $("#info-modal").classList.add("hidden");
 $("#info-modal").onclick = (e) => { if (e.target.id === "info-modal") $("#info-modal").classList.add("hidden"); };
 $("#repo-skills-close").onclick = () => $("#repo-skills-modal").classList.add("hidden");
 $("#repo-skills-modal").onclick = (e) => { if (e.target.id === "repo-skills-modal") $("#repo-skills-modal").classList.add("hidden"); };
-$("#repo-hint-btn").onclick = () => infoModal("什么是「源」？", [
-  { text: "「源」是 skill 的来源。SkillManage 把各来源的 skill 映射（建软链）进你的目标目录，统一管理，绝不改动别家工具与你的原文件。共三类，侧栏平级展示：" },
-  { h: "git 仓", text: "git 仓库作为来源，受 SkillManage 管理；点「更新」拉取上游。私有仓需先配好免交互鉴权（见 git 仓分区的 ? 说明）。" },
-  { h: "npx skills（skills.sh）", text: "别家工具 npx skills 装在 ~/.agents/skills 的 skill，只读识别——绝不接管，更新交给它自己（卡片上的「更新」代调 npx skills update）。" },
-  { h: "本地源", text: "本地文件夹里的 skill，能力相同、只是来源不同：「local」是 SkillManage 创建的受管存储（备份 / 手写归此，可删 skill）；「添加本地源」可把你选的任意文件夹登记为源（实时识别、不复制，软链直接指向原文件）。" },
-  { h: "怎么用", text: "选好目标目录（顶部 tab）后，点开左侧任一源卡片，在弹窗里点「启用」做单个映射，或「整仓跟随」让整个源自动跟随（源里增删 skill 自动加 / 清软链）。" },
-]);
-$("#repo-hint-close").onclick = () => $("#repo-hint-modal").classList.add("hidden");
-$("#repo-hint-modal").onclick = (e) => { if (e.target.id === "repo-hint-modal") $("#repo-hint-modal").classList.add("hidden"); };
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
@@ -1389,37 +1961,42 @@ $("#localsrc-modal-close").onclick = closeLocalSrcModal;
 $("#localsrc-modal-cancel").onclick = closeLocalSrcModal;
 $("#localsrc-modal").onclick = (e) => { if (e.target.id === "localsrc-modal") closeLocalSrcModal(); };
 $("#target-modal").onclick = (e) => { if (e.target.id === "target-modal") closeTargetModal(); };
-// checkUpdates contacts each repo's remote (ls-remote, no pull). silent=true is
-// the on-page-load auto-check: no banners, only a toast if updates are found and
-// failures are swallowed; silent=false is the manual button with full feedback.
-async function checkUpdates(silent) {
-  if (!state.status || (state.status.repos || []).length === 0) {
-    if (!silent) toast("还没有仓库");
-    return;
-  }
-  const btn = $("#check-updates"); const old = btn.textContent;
-  btn.disabled = true; btn.textContent = "检查中…";
-  if (!silent) toast("检查更新中…", "info");
+// checkUpdates contacts each repo's remote (ls-remote, no pull) to populate the
+// 「有更新」badges. There is no manual button anymore: it runs once on page load
+// and then automatically every hour while the app is open (see the interval at
+// the bottom). Always silent — passive, failures swallowed, a toast only when
+// updates are found.
+async function checkUpdates() {
+  if (!state.status || (state.status.repos || []).length === 0) return;
   try {
     const r = await api("POST", "/api/check-updates");
-    if (r && r.error) { if (!silent) toast("检查更新失败（git 不可用）：" + r.error, "err"); return; }
+    if (r && r.error) return;
     await load();
     const n = (r && r.updates) || 0;
     if (n > 0) toast(n + " 个仓有更新，点「全量更新」拉取");
-    else if (!silent) toast("所有仓都是最新");
-  } catch (e) { if (!silent) toast("检查更新失败：" + e.message, "err"); }
-  finally { btn.disabled = false; btn.textContent = old; }
+  } catch (e) { /* passive check — swallow */ }
 }
-$("#check-updates").onclick = () => checkUpdates(false);
-$("#update-now").onclick = () => updateNow(false);
-$("#update-force").onclick = async () => { if (await confirmModal("强制更新会丢弃所有本地改动，与上游一致。继续？")) updateNow(true); };
 // 导出 / 导入仅针对 git 仓库列表（用于在另一台机器重建来源）——属于 git 源的能力，
 // 故渲染在「git 仓」分区里（见 renderRepos），不挂在顶层「源」标题上。
-async function exportRepos() {
-  const repos = await api("GET", "/api/repos/export");
-  const blob = new Blob([JSON.stringify(repos, null, 2)], { type: "application/json" });
-  const a = ce("a", { href: URL.createObjectURL(blob), download: "skillmanage-repos.json" });
-  a.click();
+// exportRepos opens a folder-picker (same in-app directory browser as「添加同步目录」)
+// so the user chooses where the export lands. The backend writes the file and
+// reveals it in the file manager — we do NOT build a Blob + <a download>, which
+// the desktop app's WKWebView silently ignores.
+function exportRepos() {
+  $("#export-path").value = "";
+  $("#export-modal").classList.remove("hidden");
+  $("#export-path").focus();
+  browseTo("~/Downloads", "#export-browser", "#export-path");
+}
+function closeExportModal() { $("#export-modal").classList.add("hidden"); }
+async function doExport(dir) {
+  try {
+    const q = dir ? "?dir=" + encodeURIComponent(dir) : "";
+    const res = await api("GET", "/api/repos/export" + q);
+    banner("已导出 " + res.count + " 个 git 源到 " + res.path + "（已在文件管理器中显示）");
+  } catch (err) {
+    banner("导出失败：" + err.message, true);
+  }
 }
 function importRepos() {
   const inp = ce("input", { type: "file", accept: ".json" });
@@ -1449,5 +2026,7 @@ $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").classLis
 })();
 
 // On page entry: reconcile-then-render so the footer is current, then auto-check
-// updates once (ls-remote only, no pull).
-load(true).then(() => checkUpdates(true));
+// updates once (ls-remote only, no pull). While the app stays open, re-check
+// every hour so the「有更新」badges stay current without a manual button.
+load(true).then(() => checkUpdates());
+setInterval(() => checkUpdates(), 60 * 60 * 1000);

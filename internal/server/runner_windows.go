@@ -39,3 +39,34 @@ func (windowsRunner) UpdateAll(ctx context.Context, npxPath string) (string, str
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// UpdatePlugin delegates to `claude plugin update <plugin> -s <scope>` via cmd /c
+// (claude is a .cmd shim on Windows). plugin/scope validated by the caller.
+func (windowsRunner) UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", cliPath, "plugin", "update", plugin, "-s", scope)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// ListPlugins runs `claude plugin list --json` (local, no marketplace) via cmd /c.
+func (windowsRunner) ListPlugins(ctx context.Context, cliPath string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", cliPath, "plugin", "list", "--json")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// ListMarketplaces runs `claude plugin marketplace list --json` via cmd /c.
+func (windowsRunner) ListMarketplaces(ctx context.Context, cliPath string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", cliPath, "plugin", "marketplace", "list", "--json")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}

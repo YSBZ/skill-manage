@@ -13,13 +13,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
+	"skillmanage/internal/daemon"
 	"skillmanage/internal/lock"
 	"skillmanage/internal/pathenv"
 	"skillmanage/internal/server"
@@ -117,79 +117,6 @@ func fatal(dir string, err error) {
 	os.Exit(1)
 }
 
-// writePid records this process's id so a later launch can stop us and take over.
-func writePid(dir string) {
-	_ = os.WriteFile(config.PidPath(dir), []byte(strconv.Itoa(os.Getpid())), 0o644)
-}
-
-// readPid returns the recorded PID of the running instance, or 0 if absent/invalid.
-func readPid(dir string) int {
-	b, err := os.ReadFile(config.PidPath(dir))
-	if err != nil {
-		return 0
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil || pid <= 0 {
-		return 0
-	}
-	return pid
-}
-
-// takeOver stops the running instance (recorded PID) and acquires the lock once
-// its flock releases. SIGTERM first (clean shutdown drains syncs + releases the
-// lock); escalate to Kill if it does not exit promptly. Returns ErrLocked if the
-// predecessor cannot be identified or refuses to die.
-func takeOver(dir, lockPath string) (*lock.Lock, error) {
-	pid := readPid(dir)
-	if pid <= 0 || pid == os.Getpid() {
-		return nil, lock.ErrLocked // no one to stop / stale-without-pid → defer
-	}
-	signalPid(pid, false) // graceful
-	deadline := time.Now().Add(8 * time.Second)
-	escalated := false
-	for time.Now().Before(deadline) {
-		lk, err := lock.Acquire(lockPath)
-		if err == nil {
-			return lk, nil
-		}
-		if !errors.Is(err, lock.ErrLocked) {
-			return nil, err
-		}
-		if !escalated && time.Now().Add(4*time.Second).After(deadline) {
-			signalPid(pid, true) // still alive past the grace window → force-kill
-			escalated = true
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	return nil, lock.ErrLocked
-}
-
-// signalPid sends a stop signal to pid. force=false asks for a graceful shutdown
-// (SIGTERM on unix); force=true kills outright. On Windows SIGTERM is unsupported,
-// so both paths fall back to Kill.
-func signalPid(pid int, force bool) {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	if force {
-		_ = p.Kill()
-		return
-	}
-	if err := p.Signal(syscall.SIGTERM); err != nil {
-		_ = p.Kill()
-	}
-}
-
-// readAddressURL returns the UI URL the running instance recorded, or "".
-func readAddressURL(dir string) string {
-	b, err := os.ReadFile(config.AddressPath(dir))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
 func run(dir string, openBrowser bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -207,8 +134,8 @@ func run(dir string, openBrowser bool) error {
 		// predecessor and become the live instance, so re-launching the package
 		// "just restarts" instead of deferring to a stale window. If we cannot
 		// identify/stop it, fall back to pointing at the existing instance.
-		if lk, err = takeOver(dir, lockPath); err != nil {
-			if url := readAddressURL(dir); url != "" {
+		if lk, err = daemon.TakeOver(dir, lockPath); err != nil {
+			if url := daemon.ReadAddressURL(dir); url != "" {
 				fmt.Printf("skillmanage: 已在运行且无法接管，控制台 %s\n", url)
 				if openBrowser {
 					_ = browser.Open(url)
@@ -225,8 +152,8 @@ func run(dir string, openBrowser bool) error {
 	defer lk.Release()
 
 	// Record our PID so the next launch can find and stop us to take over.
-	writePid(dir)
-	defer os.Remove(config.PidPath(dir))
+	daemon.WritePid(dir)
+	defer daemon.RemovePid(dir)
 
 	srv, err := server.New(dir)
 	if err != nil {

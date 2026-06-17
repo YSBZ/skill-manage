@@ -287,8 +287,31 @@ func DetectConflicts(desired []DesiredLink) []Conflict {
 		}
 	}
 	for sk, tgts := range targetsByShadow {
-		if len(tgts) > 1 {
-			out = append(out, Conflict{Kind: ConflictShadow, LinkName: sk.name, Targets: sortedKeys(tgts)})
+		if len(tgts) < 2 {
+			continue
+		}
+		// Shadowing is a USER↔PROJECT relationship: a project-level skills dir wins
+		// over the user-global one only while you work inside that project. Sibling
+		// project dirs are independent contexts and never shadow each other. So emit
+		// one conflict per (user, project) pair — NOT a single N-way conflict — and
+		// emit none when there is no user-level copy to be shadowed (two project
+		// dirs sharing a name is not a conflict). With one user + two project copies
+		// this yields two pairs (父–子1, 父–子2); resolving either by disabling the
+		// shared user copy clears both, while disabling one project leaves the other.
+		var users, projects []string
+		for t := range tgts {
+			if harness.Scope(t) == harness.ScopeUser {
+				users = append(users, t)
+			} else {
+				projects = append(projects, t)
+			}
+		}
+		sort.Strings(users)
+		sort.Strings(projects)
+		for _, u := range users {
+			for _, p := range projects {
+				out = append(out, Conflict{Kind: ConflictShadow, LinkName: sk.name, Targets: []string{u, p}})
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

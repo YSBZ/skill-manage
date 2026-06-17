@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"skillmanage/internal/config"
+	"skillmanage/internal/harness"
 )
 
 type fixture struct {
@@ -318,12 +319,13 @@ func TestLooksOursPersonalStore(t *testing.T) {
 }
 
 func TestDetectConflicts(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	desired := []DesiredLink{
 		// collision: same target+name, two sources
 		{LinkName: "dup", Target: "/skills", Source: "/repos/a/dup"},
 		{LinkName: "dup", Target: "/skills", Source: "/repos/b/dup"},
-		// shadow: same name under two targets of the same harness (both cc)
-		{LinkName: "shadowed", Target: "/work/.claude/skills", Source: "/repos/a/shadowed"},
+		// shadow: same name at user scope (~/.claude) + a project scope, same harness
+		{LinkName: "shadowed", Target: "~/.claude/skills/", Source: "/repos/a/shadowed"},
 		{LinkName: "shadowed", Target: "/proj/.claude/skills", Source: "/repos/a/shadowed"},
 		// clean
 		{LinkName: "fine", Target: "/skills", Source: "/repos/a/fine"},
@@ -381,7 +383,62 @@ func TestDetectConflictsCrossHarnessNotShadow(t *testing.T) {
 			shadow = true
 		}
 	}
+	// two PROJECT-level CC targets with no user-level copy do NOT shadow: sibling
+	// projects are independent contexts and never coexist in skill resolution.
+	siblings := []DesiredLink{
+		{LinkName: "y", Target: "/proj-a/.claude/skills", Source: "/repos/a/y"},
+		{LinkName: "y", Target: "/proj-b/.claude/skills", Source: "/repos/a/y"},
+	}
+	for _, c := range DetectConflicts(siblings) {
+		if c.Kind == ConflictShadow {
+			t.Errorf("two sibling project dirs must not shadow, got %+v", c)
+		}
+	}
 	if !shadow {
 		t.Errorf("same name under two CC targets should shadow")
+	}
+}
+
+// TestDetectConflictsShadowPairwise verifies the user↔project pairwise model: one
+// user-global copy + two project copies of the same name yields TWO shadow pairs
+// (父–子1, 父–子2), each pairing the user dir with a single project dir — never a
+// single 3-way conflict, and never a 子1–子2 pair (siblings don't shadow).
+func TestDetectConflictsShadowPairwise(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	user := "~/.claude/skills/"
+	child1 := "/work/dev/.claude/skills"
+	child2 := "/work/other/.claude/skills"
+	desired := []DesiredLink{
+		{LinkName: "shared", Target: user, Source: "/repos/a/shared"},
+		{LinkName: "shared", Target: child1, Source: "/repos/a/shared"},
+		{LinkName: "shared", Target: child2, Source: "/repos/a/shared"},
+	}
+	var shadows []Conflict
+	for _, c := range DetectConflicts(desired) {
+		if c.Kind == ConflictShadow {
+			shadows = append(shadows, c)
+		}
+	}
+	if len(shadows) != 2 {
+		t.Fatalf("want 2 shadow pairs, got %d: %+v", len(shadows), shadows)
+	}
+	has := func(targets []string, a, b string) bool {
+		return len(targets) == 2 &&
+			((targets[0] == a && targets[1] == b) || (targets[0] == b && targets[1] == a))
+	}
+	var sawC1, sawC2 bool
+	for _, c := range shadows {
+		exp := harness.Expand(user)
+		got := []string{harness.Expand(c.Targets[0]), harness.Expand(c.Targets[1])}
+		if has(got, exp, harness.Expand(child1)) {
+			sawC1 = true
+		} else if has(got, exp, harness.Expand(child2)) {
+			sawC2 = true
+		} else {
+			t.Errorf("unexpected shadow pair (not user↔child): %+v", c.Targets)
+		}
+	}
+	if !sawC1 || !sawC2 {
+		t.Errorf("want both 父–子1 and 父–子2 pairs, got %+v", shadows)
 	}
 }

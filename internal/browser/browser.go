@@ -6,6 +6,7 @@ package browser
 
 import (
 	"os/exec"
+	"path/filepath"
 	"runtime"
 )
 
@@ -21,6 +22,24 @@ func Open(url string) error {
 		cmd = exec.Command("open", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
+}
+
+// Reveal opens the OS file manager with path selected (or, on Linux where
+// selecting isn't portable, opens the containing folder). Best-effort: a
+// failure is non-fatal — callers also surface the path as text. This is how the
+// desktop app (WKWebView, which has no browser download support) hands an
+// exported file back to the user.
+func Reveal(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", "/select,"+path)
+	case "darwin":
+		cmd = exec.Command("open", "-R", path)
+	default:
+		cmd = exec.Command("xdg-open", filepath.Dir(path))
 	}
 	return cmd.Start()
 }

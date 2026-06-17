@@ -47,6 +47,29 @@ header {
 .stats { display: flex; gap: 18px; flex: 1; color: var(--muted); font-size: 13px; }
 .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
 .stats .stat-warn b { color: var(--warn); }
+.stats .clickable-stat { cursor: pointer; }
+.stats .clickable-stat:hover { color: var(--text); }
+/* conflict modal */
+.cf-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.cf-item:last-child { border-bottom: 0; }
+.cf-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cf-name { font-weight: 600; font-size: 14px; }
+.cf-cand { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.cf-cand-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cf-cand.clickable { cursor: pointer; }
+.cf-cand.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.cf-sec-head { font-weight: 600; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+.cf-sec-head:first-child { margin-top: 0; }
+.cf-batch-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.cf-pair { margin: 0 0 16px; padding: 14px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.cf-pair-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.cf-pair-arrow { color: var(--muted); font-weight: 700; }
+.cf-pair-folder { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
+.cf-pair-role { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.cf-pair-sub { font-size: 12px; color: var(--muted); margin: 8px 0 10px; }
+.cf-pair-skills { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+.cf-pair-skill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.cf-skill-name { font-size: 13px; }
 .actions { display: flex; align-items: center; gap: 10px; }
 .toggle { color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
@@ -58,6 +81,17 @@ header {
 .help-body b { color: var(--text); }
 .help-body code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
 .help-body .lead { color: var(--text); font-size: 13.5px; }
+.changelog { margin: 14px 0 8px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+/* 更新日志会越来越长——标题固定在框顶（在滚动区外，天然常驻，不用 sticky），
+   记录区固定高度单独滚动，避免挤占指南正文。 */
+.changelog-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.changelog-scroll { max-height: 180px; overflow-y: auto; padding-right: 4px; }
+.changelog .cl-ver { font-weight: 700; font-size: 15px; color: var(--accent); }
+.changelog .cl-date { font-size: 12px; color: var(--muted); }
+.changelog .cl-rel { margin-top: 8px; }
+.changelog .cl-rel-head { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.changelog ul { margin: 0; padding-left: 18px; }
+.changelog li { font-size: 12.5px; line-height: 1.65; color: color-mix(in srgb, var(--text) 80%, transparent); }
 
 /* layout: the grid row fills the remaining viewport height; min-height:0 lets
    the two columns become independent scroll containers instead of growing the
@@ -118,8 +152,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 #repo-list li.repo-divider.with-actions::after { display: none; }
 #repo-list li.repo-divider .divider-line { flex: 1; height: 1px; background: var(--line); }
 /* The git add-repo form sits inside the git section as a borderless row. */
-#repo-list li.repo-addrow { border: none; background: none; padding: 2px 0 0; margin-bottom: 10px; }
-#repo-list li.repo-addrow form { margin-bottom: 0; }
+#repo-list li.repo-addrow { border: none; background: none; padding: 2px 0 0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .repo-top { display: flex; align-items: center; gap: 8px; }
 .repo-top.clickable { cursor: pointer; border-radius: 6px; margin: -2px -4px; padding: 2px 4px; }
 .repo-top.clickable:hover { background: var(--bg); }
@@ -160,7 +193,7 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .path { font-size: 12px; word-break: break-all; }
 
 /* badges */
-.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; color: var(--muted); }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; color: var(--muted); display: inline-flex; align-items: center; line-height: 1; }
 .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .badge.failed { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .badge.cloning, .badge.sync-in-progress { color: var(--accent); border-color: var(--accent-dim); }
@@ -179,8 +212,8 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
    全宽不透明背景盖住下方滚动的卡片，底部一道分隔线。 */
 /* Fixed header inside main (not sticky): the tab row + search never move; only
    #skills below scrolls. Sticky caused jitter during drag/momentum scroll. */
-.pinned { flex: 0 0 auto; z-index: 7; background: var(--bg); margin: 0 -22px; padding: 12px 22px 10px; box-shadow: 0 1px 0 var(--line); }
-.targets-bar { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.pinned { flex: 0 0 auto; z-index: 7; background: var(--bg); margin: 0 -22px; padding: 12px 22px; box-shadow: 0 1px 0 var(--line); }
+.targets-bar { margin: 0; display: flex; align-items: center; gap: 8px; }
 /* single scrollable row — tabs never wrap, overflow scrolls horizontally with
    no visible scrollbar */
 .tabs { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
@@ -215,6 +248,12 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .tab:hover { background: var(--panel-2); }
 .tab.active { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
 .tab-dir { font-size: 12.5px; white-space: nowrap; }
+.tab-alias-input {
+  font-size: 12.5px; font-family: inherit; line-height: 1.2;
+  width: 9ch; min-width: 6ch; padding: 0 2px; margin: 0;
+  color: var(--text); background: transparent;
+  border: 0; border-bottom: 1px solid var(--accent); border-radius: 0; outline: none;
+}
 .tab-x { background: none; border: 0; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; }
 .tab-x:hover { color: var(--err); }
 
@@ -242,12 +281,19 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 /* 短状态徽章（只读/本地/git/未备份）完整显示，不收缩；只有长来源（skills.sh 仓 /
    插件名）才允许省略号截断。 */
 .skill-row1 .src-badge { flex-shrink: 0; white-space: nowrap; }
-/* Source badges show their FULL label when the row has room, and only shrink +
-   ellipsis when genuinely cramped (位置够就不缩写). The flex spacer absorbs slack,
-   so these reach full width first and degrade gracefully when the row overflows. */
-.skill-row1 .src-badge.src-skillssh,
-.skill-row1 .src-badge.src-plugin,
-.skill-row1 .src-badge.src-local { flex-shrink: 8; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 版本标签：紧跟名字，完整显示（永不收缩 / 不省略），便于一眼看清是哪个版本。 */
+.skill-row1 .ver-tag {
+  flex-shrink: 0; white-space: nowrap; margin-left: 6px;
+  display: inline-flex; align-items: center; line-height: 1;
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent); border: 1px solid var(--accent-dim);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Source badges never shrink or truncate — labels are short (plugin names are
+   abbreviated to hyphen-initials like「ce」, others are「local」/「skills.sh」/repo
+   names). The skill NAME (flex-shrink:1 + ellipsis above) absorbs all the squeeze,
+   so a tiny badge is never clipped to「c…」. */
 .skill-row1 .skill-detail-btn, .skill-row1 button { flex-shrink: 0; }
 /* 卡片上的功能按钮统一为「文字按钮」风格：无底色无边框，仅文字，盒模型一致以对齐。 */
 .skill-row1 button, .skill-row1 .skill-detail-btn {
@@ -266,12 +312,27 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 
 /* misc */
 .muted { color: var(--muted); }
-.banner { flex: 0 0 auto; padding: 10px 22px; background: #2a2110; color: var(--warn); border-bottom: 1px solid var(--line); }
-.banner.err { background: #2a1414; color: var(--err); }
+/* 浮层提示：固定定位、悬浮在内容上方，绝不挤占布局（所有提示都不影响布局）。点击关闭。 */
+.banner {
+  position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
+  z-index: 300; max-width: min(900px, 92vw);
+  padding: 10px 18px; border-radius: 10px; cursor: pointer;
+  background: #2a2110; color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  box-shadow: 0 8px 28px rgba(0,0,0,.45);
+}
+.banner.err { background: #2a1414; color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .hidden { display: none !important; }
 footer { flex: 0 0 auto; padding: 10px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; max-height: 30vh; overflow-y: auto; overflow-wrap: anywhere; }
 footer .conflict { color: var(--warn); }
 footer .error { color: var(--err); margin-top: 4px; }
+.health-warn {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: 12px;
+  padding: 3px 12px; border-radius: 999px; cursor: pointer; font-weight: 600;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.health-warn:hover { background: color-mix(in srgb, var(--warn) 24%, transparent); }
 footer .error .err-why { display: inline; }
 footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; margin-left: 6px; }
 
@@ -297,21 +358,43 @@ footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; 
 .modal-x { background: transparent; border: 0; color: var(--muted); font-size: 22px; line-height: 0; width: 30px; height: 30px; padding: 0; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .modal-x:hover { background: transparent; color: var(--text); filter: none; }
 #modal-desc { padding: 12px 18px 0; margin: 0; }
+.modal-source { padding: 8px 18px 0; margin: 0; font-size: 12px; word-break: break-all; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.modal-source.hidden { display: none; }
+/* 台账来源用 skills.sh 主题色区分，和上方灰色描述拉开层次。 */
+.modal-source .ms-label {
+  font-weight: 600; color: var(--accent);
+  display: inline-flex; align-items: center; line-height: 1;
+  border: 1px solid var(--accent-dim); border-radius: 999px; padding: 3px 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.modal-source .ms-val { color: var(--accent); font-weight: 600; }
+.modal-source .ms-sep { color: var(--muted); }
+.modal-source .ms-url { color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.modal-actions { padding: 10px 18px 0; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.modal-actions.hidden { display: none; }
+.modal-actions button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.modal-actions button:hover { opacity: .9; }
+.modal-actions button:disabled { opacity: .5; cursor: default; }
+.modal-actions .ma-note { color: var(--muted); font-size: 12px; }
 #modal-content { margin: 12px 18px 18px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
 /* --- phase 3: 目录现状视图 + 添加抽屉 + toast --- */
-.main-head { display: flex; gap: 10px; align-items: center; }
+/* search + skill list are one module: tabs stay pinned above, this pane fills the
+   rest with the search as its fixed header and the list scrolling beneath. */
+.list-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.main-head { display: flex; gap: 10px; align-items: center; flex: 0 0 auto; margin-top: 12px; }
 .main-head #search { flex: 1; }
 #add-skill { flex: 0 0 auto; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent); }
 #add-skill:hover { background: var(--accent); color: #fff; }
 
 /* The only scroll container in the right panel: drag/scroll stays inside here,
-   the pinned header above stays put. min-height:0 lets it shrink within main's flex. */
-#skills { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 14px; }
+   the search header above it stays put. min-height:0 lets it shrink in the pane's flex. */
+#skills { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 10px; }
 
 /* inventory grouped by source (按仓库分类) */
 .inv-group { margin-bottom: 20px; }
 .inv-group.collapsed { margin-bottom: 10px; }
+.search-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
 .inv-group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
 .inv-group-head:hover { border-bottom-color: var(--accent); }
 .inv-group-head .group-help { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; cursor: pointer; }
@@ -320,6 +403,10 @@ footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; 
 .inv-group-head:hover .group-chevron { color: var(--accent); }
 .inv-group-head .group-note { color: var(--muted); font-size: 11.5px; font-weight: 400; }
 .inv-group-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+/* 插件组第一行的更新工具条：横跨整行，一插件一按钮 +「全部更新」居右。 */
+.plugin-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+/* 逐插件按钮在左侧占满并可换行；「全部更新」在 flex 末尾、永远靠最右、不随换行下移。 */
+.plugin-toolbar-btns { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 
 .inv-hint { color: var(--muted); font-size: 11.5px; }
 .rs-card .inv-hint { color: color-mix(in srgb, var(--muted) 65%, transparent); font-style: italic; white-space: nowrap; }
@@ -327,7 +414,7 @@ footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; 
 .inv-off:hover { color: var(--err); border-color: var(--err); }
 
 /* source badges — color carries meaning but text/border also distinguishes */
-.src-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+.src-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; display: inline-flex; align-items: center; line-height: 1; }
 /* 来源徽章保留颜色（柔和、低饱和），但取消左侧彩色竖条，避免整页过花 */
 .src-badge.src-git { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .src-badge.src-local { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }

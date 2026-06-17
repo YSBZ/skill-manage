@@ -188,3 +188,36 @@ func TestScanLinkNameSanitized(t *testing.T) {
 		t.Errorf("link name should be sanitized to ce-plan, got %q", skills[0].LinkName)
 	}
 }
+
+func TestScanParsesVersion(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		dir := filepath.Join(root, rel)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("str-ver", "---\nname: a\nversion: 1.2.0\n---\n")     // quoted-style string
+	write("num-ver", "---\nname: b\nversion: 2.5\n---\n")       // bare float
+	write("int-ver", "---\nname: c\nversion: 3\n---\n")         // bare int
+	write("no-ver", "---\nname: d\ndescription: hi\n---\n")     // absent → ""
+
+	skills, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range skills {
+		got[s.LinkName] = s.Version
+	}
+	want := map[string]string{"str-ver": "1.2.0", "num-ver": "2.5", "int-ver": "3", "no-ver": ""}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s version: got %q, want %q", name, got[name], w)
+		}
+	}
+}

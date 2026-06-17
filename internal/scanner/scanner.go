@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -37,6 +38,9 @@ type Skill struct {
 	// Description is the SKILL.md frontmatter `description`, surfaced in the UI
 	// so cards show what each skill does. Empty when absent or unparseable.
 	Description string `json:"description"`
+	// Version is the SKILL.md frontmatter `version`, surfaced as a tag in the UI.
+	// Empty when the skill declares no version.
+	Version string `json:"version,omitempty"`
 	// HasNested is true when the skill directory contains a SKILL.md in a
 	// subdirectory (a "compound" skill). Codex recursively scans a linked skill
 	// dir and registers nested SKILL.md as independent skills (#22275), so a
@@ -48,20 +52,23 @@ type Skill struct {
 // frontmatter is the subset of SKILL.md YAML frontmatter the scanner reads.
 type frontmatter struct {
 	Description string `yaml:"description"`
+	// version may be authored as a string ("1.2.0") or a bare number (1.2 / 1) in
+	// YAML, so it is decoded leniently and stringified by parseFrontmatter.
+	Version any `yaml:"version"`
 }
 
-// parseDescription extracts the `description` from a SKILL.md frontmatter block
-// (the YAML between a leading `---` line and the next `---`). Returns "" when
-// there is no frontmatter or it cannot be parsed — a missing description is not
-// an error.
-func parseDescription(skillMdPath string) string {
+// parseFrontmatter extracts `description` and `version` from a SKILL.md
+// frontmatter block (the YAML between a leading `---` line and the next `---`).
+// Returns empty strings when there is no frontmatter or it cannot be parsed — a
+// missing field is not an error.
+func parseFrontmatter(skillMdPath string) (description, version string) {
 	data, err := os.ReadFile(skillMdPath)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	trimmed := bytes.TrimLeft(data, "\ufeff \t\r\n")
 	if !bytes.HasPrefix(trimmed, []byte("---")) {
-		return ""
+		return "", ""
 	}
 	// drop the opening fence line, then split on the closing fence
 	rest := trimmed[3:]
@@ -70,13 +77,30 @@ func parseDescription(skillMdPath string) string {
 	}
 	end := bytes.Index(rest, []byte("\n---"))
 	if end < 0 {
-		return ""
+		return "", ""
 	}
 	var fm frontmatter
 	if err := yaml.Unmarshal(rest[:end], &fm); err != nil {
+		return "", ""
+	}
+	return fm.Description, stringifyVersion(fm.Version)
+}
+
+// stringifyVersion renders a frontmatter version (string, int, or float) as a
+// trimmed string; anything else (or absent) yields "".
+func stringifyVersion(v any) string {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	default:
 		return ""
 	}
-	return fm.Description
 }
 
 // Scan walks repoRoot and returns its skill units, sorted by LinkName for
@@ -114,11 +138,13 @@ func Scan(repoRoot string) ([]Skill, error) {
 				return absErr
 			}
 			name := filepath.Base(path)
+			desc, version := parseFrontmatter(filepath.Join(path, "SKILL.md"))
 			skills = append(skills, Skill{
 				LogicalName: name,
 				LinkName:    pathutil.SanitizePathName(name),
 				Dir:         abs,
-				Description: parseDescription(filepath.Join(path, "SKILL.md")),
+				Description: desc,
+				Version:     version,
 				HasNested:   hasNestedSkillMd(path),
 			})
 			return filepath.SkipDir // do not descend into a skill (KTD4)
@@ -158,11 +184,13 @@ func ScanShallow(root string) ([]Skill, error) {
 			return nil, absErr
 		}
 		name := e.Name()
+		desc, version := parseFrontmatter(filepath.Join(dir, "SKILL.md"))
 		skills = append(skills, Skill{
 			LogicalName: name,
 			LinkName:    pathutil.SanitizePathName(name),
 			Dir:         abs,
-			Description: parseDescription(filepath.Join(dir, "SKILL.md")),
+			Description: desc,
+			Version:     version,
 			HasNested:   hasNestedSkillMd(dir),
 		})
 	}
@@ -202,11 +230,13 @@ func ScanInventory(root string) ([]Skill, error) {
 		if absErr != nil {
 			return nil, absErr
 		}
+		desc, version := parseFrontmatter(filepath.Join(child, "SKILL.md"))
 		skills = append(skills, Skill{
 			LogicalName: name,
 			LinkName:    pathutil.SanitizePathName(name),
 			Dir:         abs,
-			Description: parseDescription(filepath.Join(child, "SKILL.md")),
+			Description: desc,
+			Version:     version,
 		})
 	}
 	sort.Slice(skills, func(i, j int) bool { return skills[i].LinkName < skills[j].LinkName })

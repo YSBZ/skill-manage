@@ -226,6 +226,40 @@ func SkillDirsFor(dir string) []string {
 	return out
 }
 
+// ScaffoldSkillDirs creates the missing skills/ subdirectory under any agent home
+// (.claude/.codex/.agents) that already exists at dir (when dir IS such a home) or
+// directly beneath it (when dir is a project root). This lets a freshly-created
+// project that has .claude but no .claude/skills be added as a sync target — we
+// fill in the conventional skills/ child rather than rejecting it or adding the
+// project root as an unknown dir. It NEVER creates an agent home that is absent
+// (so a project without .codex does not gain one) and never touches guarded
+// locations. Returns the dirs it created, in canonical absolute form.
+func ScaffoldSkillDirs(dir string) []string {
+	base := expand(dir)
+	var roots []string
+	switch filepath.Base(base) {
+	case ".claude", ".codex", ".agents":
+		roots = append(roots, base) // dir itself is an agent home
+	}
+	for _, name := range []string{".claude", ".codex", ".agents"} {
+		roots = append(roots, filepath.Join(base, name)) // homes nested under a project root
+	}
+	var created []string
+	for _, root := range roots {
+		if !dirExists(root) {
+			continue
+		}
+		sk := filepath.Join(root, "skills")
+		if dirExists(sk) || Guarded(sk) {
+			continue
+		}
+		if err := os.MkdirAll(sk, 0o755); err == nil {
+			created = append(created, sk)
+		}
+	}
+	return created
+}
+
 // PluginRootFor returns the agent plugin tree associated with a skills dir: the
 // sibling "plugins" dir of the skills dir's parent (e.g. ~/.claude/skills →
 // ~/.claude/plugins, /work/.codex/skills → /work/.codex/plugins). Plugin skills

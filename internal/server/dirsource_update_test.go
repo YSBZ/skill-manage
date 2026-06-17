@@ -30,6 +30,19 @@ func (f *fakeRunner) UpdateAll(ctx context.Context, npxPath string) (string, str
 	return f.stdout, f.stderr, f.err
 }
 
+func (f *fakeRunner) UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (string, string, error) {
+	f.calls++
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) ListPlugins(ctx context.Context, cliPath string) (string, string, error) {
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) ListMarketplaces(ctx context.Context, cliPath string) (string, string, error) {
+	return f.stdout, f.stderr, f.err
+}
+
 // setupDirSource wires a server with a fake npx + a ~/.agents/skills holding one
 // real skill dir named "find-skills".
 func setupDirSource(t *testing.T) (*Server, *fakeRunner) {

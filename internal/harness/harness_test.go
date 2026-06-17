@@ -132,6 +132,63 @@ func TestSkillDirsFor(t *testing.T) {
 	}
 }
 
+func TestScaffoldSkillDirs(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	exists := func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }
+
+	// project root with .claude (no skills/) and .codex (no skills/) → both filled,
+	// and SkillDirsFor now fans out to both because the children exist.
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	created := ScaffoldSkillDirs(proj)
+	if len(created) != 2 {
+		t.Fatalf("want 2 created skills dirs, got %v", created)
+	}
+	if !exists(filepath.Join(proj, ".claude", "skills")) || !exists(filepath.Join(proj, ".codex", "skills")) {
+		t.Errorf("skills/ should now exist under both homes")
+	}
+	if got := SkillDirsFor(proj); len(got) != 2 {
+		t.Errorf("after scaffold SkillDirsFor should fan out to 2, got %v", got)
+	}
+
+	// absent home is NOT created: a project with only .claude must not gain .codex.
+	only := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(only, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ScaffoldSkillDirs(only)
+	if exists(filepath.Join(only, ".codex")) {
+		t.Errorf(".codex must not be created when absent")
+	}
+	if !exists(filepath.Join(only, ".claude", "skills")) {
+		t.Errorf(".claude/skills should be created")
+	}
+
+	// idempotent: an existing skills/ is left alone (nothing created on 2nd pass).
+	if c := ScaffoldSkillDirs(only); len(c) != 0 {
+		t.Errorf("second pass should create nothing, got %v", c)
+	}
+
+	// picking the .claude home directly also fills its skills/ child.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if c := ScaffoldSkillDirs(filepath.Join(home, ".claude")); len(c) != 1 {
+		t.Errorf("picking .claude home should create its skills child, got %v", c)
+	}
+
+	// plain project with no agent home → nothing created.
+	if c := ScaffoldSkillDirs(t.TempDir()); len(c) != 0 {
+		t.Errorf("plain dir should scaffold nothing, got %v", c)
+	}
+}
+
 func TestGuarded(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	codexSkills := filepath.Join(home, ".codex", "skills")

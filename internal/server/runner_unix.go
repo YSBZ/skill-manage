@@ -36,3 +36,36 @@ func (unixRunner) UpdateAll(ctx context.Context, npxPath string) (string, string
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// UpdatePlugin delegates to the harness CLI: `claude plugin update <plugin> -s
+// <scope>`. plugin/scope are validated by the caller; discrete argv (no shell).
+func (unixRunner) UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, cliPath, "plugin", "update", plugin, "-s", scope)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// ListPlugins runs `claude plugin list --json` (local, no marketplace fetch) so
+// the server can resolve each installed plugin's full id + scope for delegated
+// update. The marketplace (--available) is not used: it does not expose a
+// comparable version for these plugins, so update detection isn't possible.
+func (unixRunner) ListPlugins(ctx context.Context, cliPath string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, cliPath, "plugin", "list", "--json")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// ListMarketplaces runs `claude plugin marketplace list --json` so the server can
+// tell remote marketplaces (source github/git → updatable) from local directory
+// marketplaces (source directory → self-made, not tracked).
+func (unixRunner) ListMarketplaces(ctx context.Context, cliPath string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, cliPath, "plugin", "marketplace", "list", "--json")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
