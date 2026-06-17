@@ -28,6 +28,12 @@ func AddressPath(centralDir string) string {
 	return filepath.Join(centralDir, "address")
 }
 
+// PidPath is where the running daemon records its OS process id so a new launch
+// can terminate the predecessor and take over the single-instance lock.
+func PidPath(centralDir string) string {
+	return filepath.Join(centralDir, "pid")
+}
+
 // TokenPath is where the API bearer token is stored (0600), generated on first
 // run (KTD11/R23).
 func TokenPath(centralDir string) string {
@@ -38,11 +44,4 @@ func TokenPath(centralDir string) string {
 // machine-local and NEVER part of export/import (like the manifest and token).
 func CredentialsPath(centralDir string) string {
 	return filepath.Join(centralDir, "credentials.yaml")
-}
-
-// LastSyncPath records the timestamp of the last successful sync, so the
-// scheduler's startup missed-run check has a real value to compare against
-// (KTD7) instead of assuming "just ran".
-func LastSyncPath(centralDir string) string {
-	return filepath.Join(centralDir, "last-sync")
 }

@@ -128,9 +128,58 @@ func (s *Server) Schedule() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cfg.Schedule.DailyAt == "" {
-		return "09:00"
+		return defaultDailyAt
 	}
 	return s.cfg.Schedule.DailyAt
+}
+
+// defaultDailyAt is the fallback daily-sync time when config carries none.
+const defaultDailyAt = "09:40"
+
+// RunScheduler runs the daily update loop until ctx is cancelled. Each day at the
+// configured wall-clock time (Schedule(), local) it performs a full update: pull
+// git sources (SyncAll) AND delegate to `npx skills update` for skills.sh sources
+// — the same coverage as the「全量更新」button. The schedule is re-read every
+// cycle so a config change takes effect on the next fire without a restart.
+func (s *Server) RunScheduler(ctx context.Context) {
+	for {
+		next := nextDailyFire(time.Now(), s.Schedule())
+		timer := time.NewTimer(time.Until(next))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		// Detached from any single request; still cancels on daemon shutdown.
+		s.SyncAll(ctx, false)
+		if _, err := s.UpdateSkillsShAll(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "skillmanage: scheduled npx skills update failed:", err)
+		}
+	}
+}
+
+// nextDailyFire returns the next local time strictly after `now` matching the
+// "HH:MM" daily time. A malformed/empty spec falls back to defaultDailyAt.
+func nextDailyFire(now time.Time, hhmm string) time.Time {
+	h, m, ok := parseHHMM(hhmm)
+	if !ok {
+		h, m, _ = parseHHMM(defaultDailyAt)
+	}
+	fire := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, now.Location())
+	if !fire.After(now) {
+		fire = fire.Add(24 * time.Hour)
+	}
+	return fire
+}
+
+// parseHHMM parses a "HH:MM" 24-hour time. ok=false on any malformed input.
+func parseHHMM(s string) (hour, min int, ok bool) {
+	t, err := time.Parse("15:04", strings.TrimSpace(s))
+	if err != nil {
+		return 0, 0, false
+	}
+	return t.Hour(), t.Minute(), true
 }
 
 // New builds a Server rooted at centralDir.
@@ -197,7 +246,7 @@ func New(centralDir string) (*Server, error) {
 		personalStore: personalStore,
 		token:         token,
 		uiFS:          uiFS,
-		indexHTML:     bytes.ReplaceAll(rawIndex, []byte(tokenPlaceholder), []byte(token)),
+		indexHTML:     bustAssetCache(bytes.ReplaceAll(rawIndex, []byte(tokenPlaceholder), []byte(token)), token),
 		syncer:        syncer,
 		gitErr:        gitErrMsg,
 		reconciler:    reconcile.New(reposRoot, personalStore),
@@ -315,27 +364,65 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 	for url, st := range statuses {
 		s.repoStatus[url] = st
 	}
+	s.reconciler.SetAgentsRoot(s.agentsRootLocked())
+	s.reconciler.SetDirSources(s.dirSourceMapLocked())
 	sum := s.reconciler.Apply(s.cfg, &s.manifest)
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
 	}
 	s.lastSummary = sum
-	_ = os.WriteFile(config.LastSyncPath(s.centralDir), []byte(time.Now().Format(time.RFC3339)), 0o644)
 	return sum
 }
 
-// LastSync returns the timestamp of the last successful sync, or the zero time
-// if none is recorded — used by the scheduler's startup missed-run check.
-func (s *Server) LastSync() time.Time {
-	b, err := os.ReadFile(config.LastSyncPath(s.centralDir))
-	if err != nil {
-		return time.Time{}
+// SyncOne fetches a single repo (by URL) and reconciles. Mirrors SyncAll but
+// scoped to one repo — backs the per-repo「更新」button. Network I/O runs
+// unlocked; state write is under the lock.
+func (s *Server) SyncOne(ctx context.Context, url string, force bool) reconcile.Summary {
+	s.syncWG.Add(1)
+	defer s.syncWG.Done()
+	s.mu.Lock()
+	var target *config.RepoConfig
+	for i := range s.cfg.Repos {
+		if s.cfg.Repos[i].URL == url {
+			target = &s.cfg.Repos[i]
+			break
+		}
 	}
-	t, err := time.Parse(time.RFC3339, string(bytes.TrimSpace(b)))
-	if err != nil {
-		return time.Time{}
+	noGit := s.syncer == nil
+	gitErr := s.gitErr
+	reposRoot := s.reposRoot
+	s.mu.Unlock()
+	if target == nil {
+		return reconcile.Summary{Errors: []string{"unknown repo: " + url}}
 	}
-	return t
+	repo := *target
+	name := reconcile.RepoName(repo.URL)
+	var st RepoStatus
+	if noGit {
+		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: "failed", Error: gitErr}
+	} else {
+		dir := filepath.Join(reposRoot, name)
+		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
+		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty}
+		if res.Err != nil {
+			st.Error = res.Err.Error()
+			if e := strings.TrimSpace(res.Stderr); e != "" {
+				st.Error = e
+			}
+			st.AuthHint = isAuthError(res.Stderr + " " + res.Err.Error())
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repoStatus[repo.URL] = st
+	s.reconciler.SetAgentsRoot(s.agentsRootLocked())
+	s.reconciler.SetDirSources(s.dirSourceMapLocked())
+	sum := s.reconciler.Apply(s.cfg, &s.manifest)
+	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
+		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
+	}
+	s.lastSummary = sum
+	return sum
 }
 
 // ReconcileOnly re-applies links from the current config without pulling git.
@@ -344,6 +431,8 @@ func (s *Server) LastSync() time.Time {
 func (s *Server) ReconcileOnly() reconcile.Summary {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconciler.SetAgentsRoot(s.agentsRootLocked())
+	s.reconciler.SetDirSources(s.dirSourceMapLocked())
 	sum := s.reconciler.Apply(s.cfg, &s.manifest)
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
@@ -391,11 +480,24 @@ func (s *Server) spaHandler() http.HandlerFunc {
 			s.serveIndex(w)
 			return
 		}
+		// 本地单机工具、资源随二进制内嵌：禁用浏览器缓存，避免重新构建后
+		// 浏览器仍加载旧 app.js/app.css（「改了不生效」的根因）。
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		fileServer.ServeHTTP(w, r)
 	}
 }
 
+// bustAssetCache appends a per-process version query to the embedded asset URLs
+// so a rebuilt/restarted daemon never serves a UI that pairs new index.html with
+// a browser-cached old app.js/app.css. The token already varies每次启动.
+func bustAssetCache(html []byte, version string) []byte {
+	html = bytes.ReplaceAll(html, []byte(`href="/app.css"`), []byte(`href="/app.css?v=`+version+`"`))
+	html = bytes.ReplaceAll(html, []byte(`src="/app.js"`), []byte(`src="/app.js?v=`+version+`"`))
+	return html
+}
+
 func (s *Server) serveIndex(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(s.indexHTML)
 }

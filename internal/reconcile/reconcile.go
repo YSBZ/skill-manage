@@ -33,10 +33,28 @@ type Summary struct {
 // name because ValidRepoName rejects any name starting with `@`.
 const LocalNamespace = "@local"
 
+// AgentsNamespace is the reserved selector namespace for skills.sh-managed skills
+// living in the shared ~/.agents/skills directory. `@agents/<skill>` links the
+// skill into a target WITHOUT touching skills.sh's own files (we only create our
+// own link, recorded in the manifest). The canonical content stays owned by
+// skills.sh (invariant ④ never-break); we just point at it.
+const AgentsNamespace = "@agents"
+
+// DirNamespacePrefix tags a selector that resolves to a user-registered local
+// directory source: "@dir:<id>/<skill>" (or "@dir:<id>/*" to follow). The id maps
+// to an on-disk path via the dirSources registry (SetDirSources). We link FROM
+// these folders but never modify them (invariant ②/④) — same posture as @agents.
+const DirNamespacePrefix = "@dir:"
+
+// DirSelector builds the namespace token for a local directory source id.
+func DirSelector(id string) string { return DirNamespacePrefix + id }
+
 // Reconciler applies enabled[] to the filesystem under a central repos root.
 type Reconciler struct {
 	reposRoot     string
 	personalStore string
+	agentsRoot    string            // ~/.agents/skills, resolved at runtime (skills.sh source)
+	dirSources    map[string]string // local directory source id → on-disk path
 	mgr           *linker.Manager
 }
 
@@ -46,11 +64,26 @@ func New(reposRoot, personalStore string) *Reconciler {
 	return &Reconciler{reposRoot: reposRoot, personalStore: personalStore, mgr: linker.NewManager(reposRoot, personalStore)}
 }
 
-// sourceRoot resolves a selector namespace to its on-disk root: the reserved
-// `@local` maps to the personal store, every other name to reposRoot/<name>.
+// SetAgentsRoot wires the resolved ~/.agents/skills path so `@agents/<skill>`
+// selectors resolve. Empty disables the namespace (scan returns nothing).
+func (r *Reconciler) SetAgentsRoot(root string) { r.agentsRoot = root }
+
+// SetDirSources wires the local directory-source registry (id → on-disk path) so
+// `@dir:<id>/<skill>` selectors resolve. Replace it before each Apply.
+func (r *Reconciler) SetDirSources(m map[string]string) { r.dirSources = m }
+
+// sourceRoot resolves a selector namespace to its on-disk root: `@local` → the
+// personal store, `@agents` → the skills.sh shared dir, `@dir:<id>` → that
+// registered local folder, every other name to reposRoot/<name>.
 func (r *Reconciler) sourceRoot(repo string) string {
-	if repo == LocalNamespace {
+	switch repo {
+	case LocalNamespace:
 		return r.personalStore
+	case AgentsNamespace:
+		return r.agentsRoot
+	}
+	if id, ok := strings.CutPrefix(repo, DirNamespacePrefix); ok {
+		return r.dirSources[id] // "" if unknown → scan yields nothing, links pruned
 	}
 	return filepath.Join(r.reposRoot, repo)
 }
@@ -217,7 +250,8 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 
 	for _, e := range cfg.Enabled {
 		repo, sel := splitSkill(e.Skill)
-		if repo == "" || (repo != LocalNamespace && !ValidRepoName(repo)) {
+		isDir := strings.HasPrefix(repo, DirNamespacePrefix)
+		if repo == "" || (repo != LocalNamespace && repo != AgentsNamespace && !isDir && !ValidRepoName(repo)) {
 			errs = append(errs, fmt.Sprintf("invalid enabled skill selector %q", e.Skill))
 			continue
 		}

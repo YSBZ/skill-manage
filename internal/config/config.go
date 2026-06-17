@@ -56,6 +56,10 @@ type RepoConfig struct {
 type DirectorySource struct {
 	Path  string `yaml:"path" json:"path"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// ID is a stable, slug-like handle (set for user-registered LocalSources). It
+	// forms the reconcile selector namespace "@dir:<id>". Empty for the read-only
+	// skills.sh/.agents directory sources, which are not linked from.
+	ID string `yaml:"id,omitempty" json:"id,omitempty"`
 }
 
 // EnabledEntry maps a skill selection to a link target.
@@ -98,7 +102,13 @@ type Config struct {
 	// whose skills are recognized/displayed but never owned (phase 3). omitempty so
 	// pre-phase-3 configs round-trip unchanged and load with this nil.
 	DirectorySources []DirectorySource `yaml:"directory_sources,omitempty"`
-	Schedule         Schedule          `yaml:"schedule"`
+	// LocalSources are user-registered local folders treated as first-class skill
+	// sources: each gets its own sidebar card, its skills are scanned live (no
+	// copy) and can be enabled/followed into targets via the "@dir:<id>" selector
+	// namespace. We link FROM them but never modify the originals (invariant ②/④).
+	// omitempty so older configs round-trip unchanged.
+	LocalSources []DirectorySource `yaml:"local_sources,omitempty"`
+	Schedule     Schedule          `yaml:"schedule"`
 }
 
 // LinkRecord is one daemon-owned link.
@@ -129,7 +139,7 @@ const (
 // user to add manually.
 func DefaultConfig() Config {
 	return Config{
-		Schedule: Schedule{DailyAt: "09:00"},
+		Schedule: Schedule{DailyAt: "09:40"},
 	}
 }
 

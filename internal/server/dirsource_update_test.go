@@ -25,6 +25,11 @@ func (f *fakeRunner) UpdateSkill(ctx context.Context, npxPath, name string) (str
 	return f.stdout, f.stderr, f.err
 }
 
+func (f *fakeRunner) UpdateAll(ctx context.Context, npxPath string) (string, string, error) {
+	f.calls++
+	return f.stdout, f.stderr, f.err
+}
+
 // setupDirSource wires a server with a fake npx + a ~/.agents/skills holding one
 // real skill dir named "find-skills".
 func setupDirSource(t *testing.T) (*Server, *fakeRunner) {

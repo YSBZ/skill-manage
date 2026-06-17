@@ -126,7 +126,7 @@ func TestLoadConfigMissingIsFirstRun(t *testing.T) {
 	if !firstRun {
 		t.Fatal("missing config should report firstRun=true")
 	}
-	if cfg.Schedule.DailyAt != "09:00" {
+	if cfg.Schedule.DailyAt != "09:40" {
 		t.Errorf("missing config should yield DefaultConfig, got %+v", cfg)
 	}
 }

@@ -19,7 +19,9 @@ func TestDeleteStrayLinkRemovesOnlySymlink(t *testing.T) {
 	os.WriteFile(filepath.Join(external, "SKILL.md"), []byte("---\nname: stray\n---\n"), 0o644)
 	link := filepath.Join(target, "stray")
 	symlinkT(t, external, link)
-	s.mu.Lock(); s.cfg.Targets = []string{target}; s.mu.Unlock()
+	s.mu.Lock()
+	s.cfg.Targets = []string{target}
+	s.mu.Unlock()
 
 	w := httptest.NewRecorder()
 	s.handleDeleteStrayLink(w, req("DELETE", "/api/inventory/link", s.token, map[string]string{"target": target, "name": "stray"}))
@@ -41,7 +43,9 @@ func TestDeleteStrayLinkRefusesRealDir(t *testing.T) {
 	target := mkdirT(t, filepath.Join(t.TempDir(), "skills"))
 	real := mkdirT(t, filepath.Join(target, "hand-made"))
 	os.WriteFile(filepath.Join(real, "SKILL.md"), []byte("---\nname: hand-made\n---\n"), 0o644)
-	s.mu.Lock(); s.cfg.Targets = []string{target}; s.mu.Unlock()
+	s.mu.Lock()
+	s.cfg.Targets = []string{target}
+	s.mu.Unlock()
 
 	w := httptest.NewRecorder()
 	s.handleDeleteStrayLink(w, req("DELETE", "/api/inventory/link", s.token, map[string]string{"target": target, "name": "hand-made"}))
@@ -78,7 +82,9 @@ func TestDeleteStrayLinkRefusesManagedLink(t *testing.T) {
 func TestDeleteStrayLinkRejectsTraversalAndBadTarget(t *testing.T) {
 	s := newTestServer(t)
 	target := mkdirT(t, filepath.Join(t.TempDir(), "skills"))
-	s.mu.Lock(); s.cfg.Targets = []string{target}; s.mu.Unlock()
+	s.mu.Lock()
+	s.cfg.Targets = []string{target}
+	s.mu.Unlock()
 	for _, name := range []string{"../evil", "a/b", "..", ""} {
 		w := httptest.NewRecorder()
 		s.handleDeleteStrayLink(w, req("DELETE", "/api/inventory/link", s.token, map[string]string{"target": target, "name": name}))

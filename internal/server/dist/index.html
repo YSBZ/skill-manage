@@ -17,8 +17,8 @@
       <div class="stats" id="stats"></div>
       <div class="actions">
         <button id="check-updates" class="ghost" title="联网检查各仓上游是否有更新（不拉取）">检查更新</button>
-        <button id="update-now">立即更新</button>
-        <button id="update-force" class="ghost" title="丢弃本地改动，强制与上游一致">强制更新</button>
+        <button id="update-now" title="更新全部源：拉取 git 仓上游并重新同步，同时代调 npx skills update 更新 skills.sh 源">全量更新</button>
+        <button id="update-force" class="ghost" title="丢弃本地改动，强制全部仓与上游一致">强制更新</button>
       </div>
     </header>
 
@@ -28,32 +28,22 @@
       <aside>
         <div class="pane-head">
           <div class="row" style="gap:4px">
-            <h2>仓库</h2>
-            <button id="repo-hint-btn" class="help-btn" title="私有仓如何自动更新">?</button>
-          </div>
-          <div class="row">
-            <button id="export" class="ghost small">导出</button>
-            <button id="import" class="ghost small">导入</button>
+            <h2>源</h2>
+            <button id="repo-hint-btn" class="help-btn" title="什么是「源」">?</button>
           </div>
         </div>
-        <form id="add-repo">
-          <input id="repo-url" placeholder="git 仓 URL (https / ssh / git@…)" required />
-          <input id="repo-branch" placeholder="分支(可选)" class="branch" />
-          <button type="submit">添加</button>
-        </form>
         <ul id="repo-list"></ul>
-
-        <p class="aside-note muted">未备份的真身 skill 现在直接显示在右侧「目录现状」里（标 <b>未备份</b>），就地点「备份」即可。</p>
       </aside>
 
       <main>
-        <div class="targets-bar">
-          <div id="target-tabs" class="tabs"></div>
-          <button id="tab-add" class="tab-add" title="添加同步目录">+</button>
-        </div>
-        <div class="main-head">
-          <input id="search" type="search" placeholder="搜索当前目录的 skill（名称 / 描述）…" />
-          <button id="add-skill" title="从库里把 skill 启用进当前目录">+ 添加</button>
+        <div class="pinned">
+          <div class="targets-bar">
+            <div id="target-tabs" class="tabs"></div>
+            <button id="tab-add" class="tab-add" title="添加同步目录"><span class="plus">+</span></button>
+          </div>
+          <div class="main-head">
+            <input id="search" type="search" placeholder="搜索当前目录的 skill（名称 / 描述）…" />
+          </div>
         </div>
         <div id="skills"></div>
       </main>
@@ -61,11 +51,32 @@
 
     <footer id="summary"></footer>
 
+    <div id="localsrc-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>添加本地源</h3>
+          <button id="localsrc-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="add-localsrc" style="display:block;padding:16px 18px">
+          <label class="tm-label">选择一个文件夹（它本身是 skill，或含 skill 子目录）</label>
+          <input id="localsrc-path" placeholder="如 ~/code/my-skills/" required style="width:100%" />
+          <div id="localsrc-browser" class="dir-browser"></div>
+          <label class="tm-label" style="margin-top:14px">别名（可选，默认用文件夹名）</label>
+          <input id="localsrc-alias" placeholder="如 我的技能库" style="width:100%" />
+          <p class="muted" style="font-size:12px;margin-top:8px">把该文件夹<b>登记为一个本地源</b>（侧栏单独成卡）：<b>不复制</b>、实时识别其中的 skill。启用 / 整仓跟随时，软链<b>直接指向原文件</b>（绝不改动原文件夹）。改了原文件夹即时生效。</p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="localsrc-modal-cancel" class="ghost">取消</button>
+            <button type="submit">添加</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div id="target-modal" class="modal hidden">
       <div class="modal-card" style="width:min(520px,100%)">
         <div class="modal-head">
           <h3>添加同步目录</h3>
-          <button id="target-modal-close" class="ghost small">关闭</button>
+          <button id="target-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <form id="add-target" style="display:block;padding:16px 18px">
           <label class="tm-label">目录路径（可手输 / 粘贴，或在下方点选）</label>
@@ -83,7 +94,7 @@
 
     <div id="confirm-modal" class="modal hidden">
       <div class="modal-card" style="width:min(440px,100%)">
-        <div class="modal-head"><h3 id="confirm-title">确认</h3></div>
+        <div class="modal-head"><h3>确认</h3></div>
         <div class="help-body"><p id="confirm-msg" style="white-space:pre-wrap;color:var(--text)"></p></div>
         <div class="row" style="justify-content:flex-end;gap:8px;padding:0 18px 18px">
           <button id="confirm-cancel" class="ghost">取消</button>
@@ -92,14 +103,34 @@
       </div>
     </div>
 
+    <div id="repo-skills-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(640px,100%)">
+        <div class="modal-head">
+          <h3 id="repo-skills-title"></h3>
+          <button id="repo-skills-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div id="repo-skills-body" class="repo-skills-body"></div>
+      </div>
+    </div>
+
+    <div id="info-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3 id="info-title"></h3>
+          <button id="info-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div class="help-body" id="info-body"></div>
+      </div>
+    </div>
+
     <div id="repo-hint-modal" class="modal hidden">
       <div class="modal-card" style="width:min(480px,100%)">
         <div class="modal-head">
-          <h3>私有仓如何自动更新</h3>
-          <button id="repo-hint-close" class="ghost small">关闭</button>
+          <h3>私有仓更新与鉴权</h3>
+          <button id="repo-hint-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <div class="help-body">
-          <p>本工具靠 git 拉取/更新仓库；自动更新在后台<b>非交互</b>运行，<b>不会弹窗让你输密码</b>。私有仓需先配好免交互鉴权，否则该仓会标红、无法更新。</p>
+          <p>本工具<b>每天定时更新一次</b>（默认早上 <code>09:40</code>，本地时间）：拉取全部 git 仓上游并代调 <code>npx skills update</code> 更新 skills.sh 源。你也可随时点顶部「检查更新 / 全量更新 / 强制更新」手动触发——「全量更新」覆盖<b>全部源</b>（git + npx）。拉取以<b>非交互</b>方式运行（<code>BatchMode</code>），<b>不会弹窗让你输密码</b>，所以私有仓需先配好免交互鉴权，否则该仓会标红、拉取失败。</p>
           <p>· <b>HTTPS（最简单）</b>：点仓库卡片上的「填写凭据」按钮，填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。</p>
           <p>· <b>SSH</b>：把该 git 主机的 key 加入 <code>ssh-agent</code>（带 passphrase 的需先解锁），公钥登记到服务器。</p>
           <p>仓名前的圆点表示连通状态：<b style="color:var(--ok)">绿</b>=上次同步成功，<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据），灰=尚未同步。</p>
@@ -111,7 +142,7 @@
       <div class="modal-card" style="width:min(460px,100%)">
         <div class="modal-head">
           <h3>填写 HTTPS 凭据</h3>
-          <button id="cred-close" class="ghost small">关闭</button>
+          <button id="cred-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <form id="cred-form" style="display:block;padding:16px 18px">
           <p class="muted" style="margin:0 0 14px;font-size:12.5px">为 <b id="cred-host"></b> 配置 HTTPS 凭据（账号密码或访问令牌均可），仅存本机、不随导出离开。</p>
@@ -132,14 +163,20 @@
       <div class="modal-card">
         <div class="modal-head">
           <h3>SkillManage 使用指南</h3>
-          <button id="help-close" class="ghost small">关闭</button>
+          <button id="help-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <div class="help-body">
-          <p class="lead">一个「同步 skill」的工具，刻意减少定制。你只需要提供两样东西：<b>① git 远程仓（skill 来源）</b> 和 <b>② 要同步进去的目录</b>。其余都是工具的活：自动更新、选择性 / 整仓同步、把本地手写 skill 反向收编。</p>
+          <p class="lead">SkillManage 是 skill 的<b>统一控制面</b>，不是又一个安装器。它把来自各种渠道的 skill（git 仓、本地手写、skills.sh 等）映射进各 harness 的 skill 目录，并在不破坏业内目录规则的前提下统一管理。你提供<b>来源</b>与<b>目标目录</b>，其余交给工具：选择性 / 整仓同步、备份手写 skill、识别并代调别家工具更新。</p>
+
+          <h4>仓库列表（侧栏三类源）</h4>
+          <p>侧栏按来源分三区，<b>点任意卡片可弹窗查看该来源的全部 skill</b>：</p>
+          <p>· <b>git 仓（我们管）</b>：clone 到 <code>~/.skillmanage/repos</code>，可拉取更新。弹窗里只读；要整仓移除用卡片上的「移除」。</p>
+          <p>· <b>本地源</b>：本地文件夹里的 skill，能力相同、按来源分两种——<b><code>local</code></b> 是 SkillManage 创建的受管存储（备份 / 手写归入 <code>~/.skillmanage/local</code>，弹窗里每个可<b>删除</b>）；点分区标题的<b>「添加本地源」</b>可把你选的<b>任意文件夹</b>登记为一个独立本地源（实时识别、<b>不复制</b>，软链直接指向原文件，可取别名、整源可「移除」）。侧栏按文件夹分卡，使用时（管理 / 现状）合并为一个「本地源」类。</p>
+          <p>· <b>npx skills（<code>skills.sh</code>）</b>：<code>~/.agents/skills</code> 里由 <code>npx skills</code> 装的 skill，只读识别。卡片上有<b>「更新」</b>代调 <code>npx skills update</code>（需本机有 <code>npx</code>）；绝不接管或改动它的真身与台账。</p>
 
           <h4>git 仓与鉴权</h4>
           <p>仓库 URL 支持 <code>https://…</code>、<code>ssh://…</code>，以及 scp 式 <code>git@host:org/repo.git</code>；不支持明文 <code>http://</code>、本地 <code>file://</code> 和 <code>ext::</code>。</p>
-          <p><b>公开仓</b>用 https 直接添加，无需任何配置。<b>私有仓的自动更新需要你先配好「免交互」鉴权</b>——守护进程在后台拉取，<b>不会弹窗让你输密码</b>，配不好就只在该仓上报错（不会卡住）：</p>
+          <p><b>公开仓</b>用 https 直接添加，无需任何配置。<b>私有仓需先配好「免交互」鉴权</b>——你点「更新」时工具以非交互方式拉取，<b>不会弹窗让你输密码</b>，配不好就只在该仓上报错（不会卡住）：</p>
           <p>· <b>SSH（私有仓推荐）</b>：配好该 git 主机的 SSH key 并加入 <code>ssh-agent</code>（带 passphrase 的 key 要先解锁，因为工具以 <code>BatchMode</code> 运行、不会提示输入），公钥登记到 git 服务器。</p>
           <p>· <b>HTTPS（最简单）</b>：直接点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。</p>
 
@@ -147,19 +184,19 @@
           <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>
 
           <h4>目录现状视图</h4>
-          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，并标明来源：<code>git</code>（来自 git 仓）、<code>本地</code>（已收编/手写、受管）、<code>skills.sh</code>（由 skills.sh 安装）、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。本工具管理的（git/本地）带<b>启用/停用开关</b>，切换即建/拆软链并提示结果；别家管理的（skills.sh/插件）只读不碰。</p>
+          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源折叠成组</b>（手风琴：每次展开一个，点已展开的组可全部收起），每组标明来源：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每张卡带来源标签区分归属）、<code>git</code>（来自 git 仓）、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。本工具管理的（git / 本地源）带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果；整仓跟随进来的不单独切换（要取消请点开左侧该来源卡片，在弹窗里关掉「整仓跟随」）；别家管理的（插件）只读不碰，skills.sh 的链可在此<b>删除</b>（仅删此处软链投影，不动真身）。组标题旁的 <code>?</code> 点开有说明。</p>
 
-          <h4>从库添加 / 整仓跟随</h4>
-          <p>点主面板的「+ 添加」打开抽屉，列出库（git 仓 + @local）里<b>尚未启用进当前目录</b>的 skill，点「启用」即映射进来。或点某仓的「整仓跟随」——之后该仓新增的 skill 自动加链、删除的自动清链。</p>
+          <h4>启用 / 整仓跟随（在源卡片弹窗里）</h4>
+          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / skills.sh / 本地源）打开它的 skill 弹窗。弹窗顶部显示「启用到当前目录」并带一个<b>「整仓跟随」</b>开关；每个 skill 行有<b>「启用」</b>按钮做单个映射，已启用的标「已启用」、跟随中的标「整仓跟随中」。「整仓跟随」让整个来源自动跟随（之后该来源新增的 skill 自动加链、删除的自动清链）。停用某个 skill 在「目录现状」视图里操作。</p>
 
-          <h4>备份未备份 skill</h4>
-          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill。就地点「备份」把它移入受管存储（<code>~/.skillmanage/local</code>）并在原位留一个软链——agent 里照常可用，同时成为可跨 harness 复用的受管来源（备份后来源变为<code>本地</code>）。</p>
+          <h4>备份 / 删除未备份 skill</h4>
+          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill，有两个动作：<b>「备份」</b>把真身移入受管存储（<code>~/.skillmanage/local</code>）并在原位留软链——agent 里照常可用，归类移到<code>本地</code>、纳入统一管理；<b>「删除」</b>永久删除该真身目录（不可恢复，删前强确认，且只删确含 SKILL.md 的目录）。</p>
 
           <h4>与 skills.sh 等工具共存</h4>
-          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：它们在现状视图里只读显示，绝不会被移动或删除（第四条不变式）。skills.sh 装的 skill 更新仍交给它自己——若本机有 <code>npx</code>，现状视图会提供一个「更新」按钮代调 <code>npx skills update</code>；否则只给提示。<code>~/.agents/skills</code>（跨工具中立目录）会被自动识别为来源。</p>
+          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>；现状视图里可删除某一处的软链投影（真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。它的来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>），更新也交给它——侧栏 skills.sh 卡片上的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</p>
 
-          <h4>更新：立即 / 强制（仅手动）</h4>
-          <p>工具<b>不做后台自动更新、也不开机自启</b>——只在你点「立即更新」时拉取上游并重新同步软链；「强制更新」会丢弃仓库的本地改动、与上游保持一致（谨慎使用）。启动时只重建软链（不拉取）。需要更新时手动点一下即可。</p>
+          <h4>更新：每天定时 + 手动全量 / 强制</h4>
+          <p><b>每天早上 09:40（本地时间）自动更新一次全部源</b>：拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 skills.sh 源，然后重新同步软链。你也可随时手动点「全量更新」（同样覆盖 git + npx）；「强制更新」会丢弃 git 仓的本地改动、与上游保持一致（谨慎使用，仅作用于 git 源）。启动时只重建软链、不拉取。</p>
 
           <h4>导入 / 导出</h4>
           <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>
@@ -170,24 +207,12 @@
       </div>
     </div>
 
-    <div id="add-modal" class="modal hidden">
-      <div class="modal-card" style="width:min(620px,100%)">
-        <div class="modal-head">
-          <h3>添加 skill 到 <span id="add-target-name"></span></h3>
-          <button id="add-modal-close" class="ghost small">关闭</button>
-        </div>
-        <div style="padding:12px 18px 0">
-          <input id="add-search" type="search" placeholder="搜索库里的 skill…" style="width:100%" />
-        </div>
-        <div id="add-list" class="add-list"></div>
-      </div>
-    </div>
 
     <div id="modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
           <h3 id="modal-title"></h3>
-          <button id="modal-close" class="ghost small">关闭</button>
+          <button id="modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <p id="modal-desc" class="muted"></p>
         <pre id="modal-content"></pre>

@@ -1,22 +1,28 @@
 :root {
-  --bg: #0e1014;
-  --panel: #161a21;
-  --panel-2: #1c212b;
-  --line: #283040;
-  --text: #e8ebf2;
-  --muted: #939bac;
-  --accent: #5b9bff;
-  --accent-dim: #2a3a5c;
-  --ok: #3fb950;
-  --warn: #d6a02a;
-  --err: #f3635b;
-  --shadow: 0 1px 0 rgba(255,255,255,.02), 0 8px 24px rgba(0,0,0,.25);
+  /* Apple (macOS) dark-mode inspired palette */
+  --bg: #1c1c1e;
+  --panel: #242426;
+  --panel-2: #2c2c2e;
+  --line: rgba(255,255,255,.10);
+  --text: #f5f5f7;
+  --muted: #98989d;
+  --accent: #0a84ff;          /* system blue (dark) */
+  --accent-dim: rgba(10,132,255,.22);
+  --ok: #30d158;              /* system green */
+  --warn: #ffd60a;           /* system yellow */
+  --err: #ff453a;            /* system red (status/dots) */
+  --del: #ff453a;            /* 删除按钮仍用红色 */
+  --shadow: 0 0.5px 0 rgba(255,255,255,.04), 0 10px 34px rgba(0,0,0,.44);
+  --radius: 12px;
+  --radius-sm: 8px;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
-  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
   background: var(--bg);
   color: var(--text);
   /* Full-height app shell: header/banner/footer stay fixed, the layout row
@@ -31,7 +37,7 @@ body {
 header {
   display: flex; align-items: center; gap: 24px;
   padding: 12px 22px; border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #12151b, #0e1014);
+  background: rgba(30,30,32,.8); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
   flex: 0 0 auto; z-index: 10;
 }
 .brand { font-size: 16px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; display: flex; align-items: center; }
@@ -43,22 +49,22 @@ header {
 .stats .stat-warn b { color: var(--warn); }
 .actions { display: flex; align-items: center; gap: 10px; }
 .toggle { color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.small-toggle { font-size: 12px; margin: 0 0 8px; }
 
 /* help / guide modal */
 .help-body { padding: 4px 20px 20px; overflow: auto; }
-.help-body h4 { margin: 18px 0 6px; font-size: 13.5px; color: var(--text); }
+.help-body h4 { margin: 20px 0 6px; font-size: 13.5px; color: var(--accent); padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .help-body h4:first-child { margin-top: 8px; }
-.help-body p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }
-.help-body code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
-.help-body .lead { color: var(--text); }
+.help-body p { margin: 0 0 7px; color: color-mix(in srgb, var(--text) 82%, transparent); font-size: 13px; line-height: 1.7; }
+.help-body b { color: var(--text); }
+.help-body code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+.help-body .lead { color: var(--text); font-size: 13.5px; }
 
 /* layout: the grid row fills the remaining viewport height; min-height:0 lets
    the two columns become independent scroll containers instead of growing the
    page. */
 .layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 320px 1fr; align-items: stretch; }
 aside { border-right: 1px solid var(--line); padding: 16px 18px; overflow-y: auto; min-height: 0; }
-main { padding: 16px 22px; overflow-y: auto; min-height: 0; }
+main { padding: 0 22px 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pane-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; }
 .pane-head:first-child { margin-top: 4px; }
 .pane-head h2 { font-size: 11px; color: var(--muted); margin: 0; text-transform: uppercase; letter-spacing: .08em; }
@@ -67,10 +73,11 @@ main { padding: 16px 22px; overflow-y: auto; min-height: 0; }
 /* forms */
 form { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 input, select {
-  background: var(--panel); border: 1px solid var(--line); color: var(--text);
-  border-radius: 8px; padding: 7px 10px; outline: none;
+  background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--text);
+  border-radius: var(--radius-sm); padding: 7px 11px; outline: none;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
-input:focus, select:focus { border-color: var(--accent); }
+input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); background: rgba(255,255,255,.03); }
 /* native selects carry OS chrome that clashes with the dark rounded inputs;
    strip it and draw our own chevron so the control matches the theme. */
 select {
@@ -83,19 +90,53 @@ select option { background: var(--panel); color: var(--text); }
 #repo-url, #target-path { flex: 1; min-width: 0; }
 .branch { width: 100px; }
 button {
-  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-  padding: 7px 13px; cursor: pointer; font-weight: 500;
+  background: var(--accent); color: #fff; border: 0; border-radius: var(--radius-sm);
+  padding: 7px 14px; cursor: pointer; font-weight: 590; font-size: 13px;
+  font-family: inherit; line-height: 1.4;
+  transition: background .15s, transform .06s, box-shadow .15s, border-color .15s;
 }
-button:hover { filter: brightness(1.08); }
-button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
-button.small { padding: 4px 9px; font-size: 12px; }
-button.danger { background: transparent; border: 1px solid transparent; color: var(--muted); }
-button.danger:hover { color: var(--err); border-color: var(--err); }
+button:hover { filter: brightness(1.1); }
+button:active { transform: scale(.97); }
+button.ghost { background: rgba(255,255,255,.06); border: 1px solid var(--line); color: var(--text); }
+button.ghost:hover { background: rgba(255,255,255,.1); }
+button.small { padding: 4px 10px; font-size: 12px; }
+button.danger { background: transparent; border: 0; color: var(--del); }
+button.danger:hover { background: rgba(255,69,58,.14); color: var(--del); }
 
 /* repo list */
 ul { list-style: none; padding: 0; margin: 0 0 8px; }
-#repo-list li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+#repo-list li { border: 1px solid var(--line); border-radius: var(--radius); padding: 11px 13px; margin-bottom: 8px; background: var(--panel-2); }
+#repo-list li.repo-card.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+#repo-list li.repo-card.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+#repo-list li.repo-card.clickable:hover .repo-name { color: var(--accent); }
+#repo-list li.repo-divider { border: none; background: none; padding: 6px 2px 2px; margin: 6px 0 2px; display: flex; align-items: center; gap: 8px; }
+#repo-list li.repo-divider span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+#repo-list li.repo-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+/* A source-section divider that carries action buttons on the right: the line
+   becomes an explicit filler between label and buttons (the ::after can only sit
+   last, which would push buttons to the left of the line). */
+#repo-list li.repo-divider.with-actions::after { display: none; }
+#repo-list li.repo-divider .divider-line { flex: 1; height: 1px; background: var(--line); }
+/* The git add-repo form sits inside the git section as a borderless row. */
+#repo-list li.repo-addrow { border: none; background: none; padding: 2px 0 0; margin-bottom: 10px; }
+#repo-list li.repo-addrow form { margin-bottom: 0; }
 .repo-top { display: flex; align-items: center; gap: 8px; }
+.repo-top.clickable { cursor: pointer; border-radius: 6px; margin: -2px -4px; padding: 2px 4px; }
+.repo-top.clickable:hover { background: var(--bg); }
+.repo-top.clickable:hover .repo-name { color: var(--accent); }
+.repo-skills-body { padding: 8px 18px 18px; max-height: 70vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.rs-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; margin: -8px -18px 8px; padding: 12px 18px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.rs-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.rs-list { display: flex; flex-direction: column; gap: 8px; }
+.rs-card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.rs-card.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.rs-card.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
+.rs-card .skill-name { color: var(--accent); font-size: 14px; }
+.rs-card .skill-desc { color: var(--muted); -webkit-line-clamp: 4; }
+.rs-card .rs-srcurl { margin-top: 8px; color: var(--muted); font-size: 12px; word-break: break-all; user-select: all; }
+.rs-card .rs-cmdline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.rs-card .rs-cmd { display: inline-block; padding: 3px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; user-select: all; }
+.rs-card .rs-cmd-note { color: color-mix(in srgb, var(--muted) 70%, transparent); font-size: 11px; }
 .repo-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .repo-dot.ok { background: var(--ok); }
 .repo-dot.err { background: var(--err); }
@@ -104,7 +145,12 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .repo-dot.clickable:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 30%, transparent); }
 .repo-name { font-weight: 600; flex: 1; }
 .repo-url { color: var(--muted); font-size: 11px; word-break: break-all; margin-top: 3px; }
-.repo-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.repo-meta { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+/* 侧栏卡片上的操作按钮统一为「文字按钮」风格 */
+.repo-meta button { display: inline-flex; align-items: center; align-self: center; background: transparent; border: 0; padding: 0; margin: 0; font-size: 12px; font-weight: 500; line-height: 1; height: auto; color: var(--accent); }
+.repo-meta button:hover { filter: none; background: transparent; opacity: .7; }
+.repo-meta button.danger { color: var(--del); margin-top: 1px; }
+.repo-meta button.danger:hover { background: transparent; border-color: transparent; }
 .repo-hint { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin: -2px 0 10px; }
 .repo-authhint { color: var(--warn); font-size: 12px; line-height: 1.5; margin-top: 6px; }
 #target-list li, #adopt-list li { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -129,7 +175,12 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 
 /* 同步目录 tabs (top of main) */
 /* tabs scroll horizontally; the "+" sits outside the scroll area, pinned right */
-.targets-bar { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+/* 顶部 tab + 搜索整块固顶（对 tab 换行也稳）：一个 sticky 容器承载两行，
+   全宽不透明背景盖住下方滚动的卡片，底部一道分隔线。 */
+/* Fixed header inside main (not sticky): the tab row + search never move; only
+   #skills below scrolls. Sticky caused jitter during drag/momentum scroll. */
+.pinned { flex: 0 0 auto; z-index: 7; background: var(--bg); margin: 0 -22px; padding: 12px 22px 10px; box-shadow: 0 1px 0 var(--line); }
+.targets-bar { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
 /* single scrollable row — tabs never wrap, overflow scrolls horizontally with
    no visible scrollbar */
 .tabs { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
@@ -139,7 +190,9 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
   width: 36px; height: 36px; flex: 0 0 auto; padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent);
-  border-radius: 10px; font-size: 22px; font-weight: 600; line-height: 1; cursor: pointer;
+  border-radius: 10px; font-size: 22px; font-weight: 400; cursor: pointer; line-height: 1;
+}
+.tab-add .plus { display: block; transform: translateY(-2px); /* 上移 2px 修正字形偏下 */
 }
 .tab-add:hover { background: var(--accent); color: #fff; }
 .tm-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -166,33 +219,49 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .tab-x:hover { color: var(--err); }
 
 /* main: search + groups */
-.main-head { position: sticky; top: 0; background: var(--bg); padding: 0 0 12px; margin-top: -4px; z-index: 5; }
+.main-head { background: var(--bg); }
 #search { width: 100%; font-size: 14px; padding: 9px 12px; }
-.group { margin-bottom: 18px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow); }
-.group-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; background: var(--panel-2); }
-.group-head:hover { background: #20262f; }
-.caret { color: var(--muted); transition: transform .15s; width: 12px; display: inline-block; }
-.group.collapsed .caret { transform: rotate(-90deg); }
 .group-title { font-weight: 600; }
 .group-spacer { flex: 1; }
-.group-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding: 12px; }
-.group.collapsed .group-body { display: none; }
 
 /* skill card */
 .skill {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 13px; border-radius: 10px;
+  padding: 13px 15px; border-radius: var(--radius);
   border: 1px solid var(--line); background: var(--panel-2);
-  transition: border-color .12s, background .12s;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.skill:hover { border-color: var(--accent-dim); background: #20262f; }
+.skill:hover { border-color: rgba(255,255,255,.18); background: #323234; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
 .skill input[type=checkbox] { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
 .skill-main { flex: 1; min-width: 0; }
-.skill-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.skill-name { font-weight: 600; }
-.skill-logical { color: var(--muted); font-size: 12px; }
+.skill-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+/* 动作按钮成簇、间距更紧凑 */
+.skill-row1 button + button, .skill-row1 button + .skill-detail-btn, .skill-row1 .skill-detail-btn + button { margin-left: 2px; }
+/* skill 名优先：名字最后才截断；来源徽章先收缩并省略 */
+.skill-name { font-weight: 600; min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 短状态徽章（只读/本地/git/未备份）完整显示，不收缩；只有长来源（skills.sh 仓 /
+   插件名）才允许省略号截断。 */
+.skill-row1 .src-badge { flex-shrink: 0; white-space: nowrap; }
+/* Source badges show their FULL label when the row has room, and only shrink +
+   ellipsis when genuinely cramped (位置够就不缩写). The flex spacer absorbs slack,
+   so these reach full width first and degrade gracefully when the row overflows. */
+.skill-row1 .src-badge.src-skillssh,
+.skill-row1 .src-badge.src-plugin,
+.skill-row1 .src-badge.src-local { flex-shrink: 8; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.skill-row1 .skill-detail-btn, .skill-row1 button { flex-shrink: 0; }
+/* 卡片上的功能按钮统一为「文字按钮」风格：无底色无边框，仅文字，盒模型一致以对齐。 */
+.skill-row1 button, .skill-row1 .skill-detail-btn {
+  display: inline-flex; align-items: center; align-self: center;
+  background: transparent; border: 0; padding: 0; margin: 0;
+  font-size: 12px; font-weight: 500; line-height: 1; height: auto;
+  color: var(--accent);
+}
+.skill-row1 button:hover, .skill-row1 .skill-detail-btn:hover { filter: none; background: transparent; opacity: .7; }
+.skill-row1 button.danger { color: var(--del); margin-top: 1px; /* 红色字视觉偏高，下压 1px 对齐 */ }
+.skill-row1 button.danger:hover { background: transparent; border-color: transparent; }
 .skill-desc { color: var(--muted); font-size: 12.5px; margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.skill-detail-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
+.skill-detail-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 500; padding: 0; }
+.skill-detail-btn:hover { opacity: .7; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 
 /* misc */
@@ -200,9 +269,11 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .banner { flex: 0 0 auto; padding: 10px 22px; background: #2a2110; color: var(--warn); border-bottom: 1px solid var(--line); }
 .banner.err { background: #2a1414; color: var(--err); }
 .hidden { display: none !important; }
-footer { flex: 0 0 auto; padding: 10px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+footer { flex: 0 0 auto; padding: 10px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; max-height: 30vh; overflow-y: auto; overflow-wrap: anywhere; }
 footer .conflict { color: var(--warn); }
-footer .error { color: var(--err); }
+footer .error { color: var(--err); margin-top: 4px; }
+footer .error .err-why { display: inline; }
+footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; margin-left: 6px; }
 
 /* custom tooltip */
 .tip {
@@ -216,9 +287,15 @@ footer .error { color: var(--err); }
 
 /* modal */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
-.modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; width: min(820px, 100%); max-height: 86vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
+/* 确认框是「弹窗之上的弹窗」——必须盖住任何已打开的 modal（如仓库 skill 列表），否则点不到。 */
+#confirm-modal { z-index: 70; }
+.modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; width: min(820px, 100%); max-height: 86vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal-head h3 { margin: 0; font-size: 15px; }
+/* line-height:0 + flex centering removes the "×" glyph's intrinsic top bias so it
+   sits at the true optical center of the 30×30 hit box (was floating ~2px high). */
+.modal-x { background: transparent; border: 0; color: var(--muted); font-size: 22px; line-height: 0; width: 30px; height: 30px; padding: 0; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.modal-x:hover { background: transparent; color: var(--text); filter: none; }
 #modal-desc { padding: 12px 18px 0; margin: 0; }
 #modal-content { margin: 12px 18px 18px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -228,50 +305,69 @@ footer .error { color: var(--err); }
 #add-skill { flex: 0 0 auto; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent); }
 #add-skill:hover { background: var(--accent); color: #fff; }
 
-#skills { display: block; }
-.aside-note { font-size: 11.5px; line-height: 1.55; margin: 4px 0 0; }
+/* The only scroll container in the right panel: drag/scroll stays inside here,
+   the pinned header above stays put. min-height:0 lets it shrink within main's flex. */
+#skills { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 14px; }
 
 /* inventory grouped by source (按仓库分类) */
 .inv-group { margin-bottom: 20px; }
-.inv-group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.inv-group.collapsed { margin-bottom: 10px; }
+.inv-group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+.inv-group-head:hover { border-bottom-color: var(--accent); }
+.inv-group-head .group-help { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; cursor: pointer; }
+.inv-group-head .group-help:hover { border-color: var(--accent); color: var(--accent); }
+.inv-group-head .group-chevron { margin-left: auto; color: var(--muted); font-size: 13px; line-height: 1; }
+.inv-group-head:hover .group-chevron { color: var(--accent); }
+.inv-group-head .group-note { color: var(--muted); font-size: 11.5px; font-weight: 400; }
 .inv-group-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
 
 .inv-hint { color: var(--muted); font-size: 11.5px; }
+.rs-card .inv-hint { color: color-mix(in srgb, var(--muted) 65%, transparent); font-style: italic; white-space: nowrap; }
 .inv-state.following { font-size: 12px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 9px; }
 .inv-off:hover { color: var(--err); border-color: var(--err); }
 
 /* source badges — color carries meaning but text/border also distinguishes */
 .src-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
-.src-badge.src-git { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
-.src-badge.src-local { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
-.src-badge.src-skillssh { color: #c98bff; border-color: color-mix(in srgb, #c98bff 50%, transparent); }
-.src-badge.src-plugin { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+/* 来源徽章保留颜色（柔和、低饱和），但取消左侧彩色竖条，避免整页过花 */
+.src-badge.src-git { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.src-badge.src-local { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.src-badge.src-skillssh { color: #c98bff; border-color: color-mix(in srgb, #c98bff 45%, transparent); }
+.src-badge.src-plugin { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.src-badge.src-readonly { color: #c98bff; border-color: color-mix(in srgb, #c98bff 45%, transparent); }
 .src-badge.src-handwritten { color: var(--muted); border-color: var(--line); }
 .src-badge.src-unknown { color: var(--muted); border-color: var(--line); border-style: dashed; }
-.src-badge.src-shadow { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
-
-/* a subtle left accent on the card by source */
-.skill.inv { border-left-width: 3px; }
-.skill.inv.src-git { border-left-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
-.skill.inv.src-local { border-left-color: color-mix(in srgb, var(--ok) 60%, var(--line)); }
-.skill.inv.src-skillssh { border-left-color: color-mix(in srgb, #c98bff 60%, var(--line)); }
-.skill.inv.src-plugin { border-left-color: color-mix(in srgb, var(--warn) 60%, var(--line)); }
+.src-badge.src-shadow { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.skill.inv { border-left-width: 1px; }
+.skill.inv.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.skill.inv.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
 
 /* "+ 添加" drawer list */
 .add-list { padding: 10px 18px 18px; max-height: 60vh; overflow-y: auto; }
 .add-group { margin-bottom: 14px; }
-.add-group-head { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.add-group + .add-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.add-group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+.add-group-head:hover { border-bottom-color: var(--accent); }
+.add-group-head .group-title { font-weight: 600; color: var(--accent); }
+.add-group-head .group-chevron { color: var(--muted); font-size: 13px; line-height: 1; }
+.add-group-head:hover .group-chevron { color: var(--accent); }
+.add-group.collapsed .add-group-body { display: none; }
+.add-group.collapsed { margin-bottom: 8px; }
 .add-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; }
 .add-row:hover { background: var(--panel-2); border-radius: 8px; }
 .add-desc { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.add-followed-hint { color: var(--muted); font-size: 12px; padding: 4px 4px 2px; }
 
 /* transient toast for build/teardown/update feedback */
 .toast {
-  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  position: fixed; left: 50%; top: 18px; transform: translateX(-50%);
   background: var(--panel-2); border: 1px solid var(--accent-dim); color: var(--text);
-  padding: 10px 16px; border-radius: 10px; font-size: 13px; z-index: 100;
-  box-shadow: 0 8px 28px rgba(0,0,0,.45); max-width: 80vw;
+  padding: 10px 16px 10px 14px; border-radius: 10px; font-size: 13px; z-index: 100;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); max-width: 80vw; border-left-width: 3px;
 }
+/* 按状态着色：成功绿 / 失败红 / 信息蓝 */
+.toast.toast-ok   { border-color: var(--ok);     border-left-color: var(--ok); }
+.toast.toast-err  { border-color: var(--err);    border-left-color: var(--err); color: #ffd9d6; }
+.toast.toast-info { border-color: var(--accent); border-left-color: var(--accent); }
 
 /* tab drag-to-reorder */
 .tab { cursor: grab; }
@@ -279,7 +375,7 @@ footer .error { color: var(--err); }
 .tab.drop-to { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* 反查：where an unknown stray symlink points */
-.inv-linktarget { color: var(--muted); font-size: 11.5px; margin-top: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inv-linktarget { color: var(--accent); font-size: 11.5px; margin-top: 5px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; }
 
 /* "有更新" attention badge on a repo */
 .badge.has-update { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }

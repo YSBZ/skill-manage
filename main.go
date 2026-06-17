@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -115,6 +116,70 @@ func fatal(dir string, err error) {
 	os.Exit(1)
 }
 
+// writePid records this process's id so a later launch can stop us and take over.
+func writePid(dir string) {
+	_ = os.WriteFile(config.PidPath(dir), []byte(strconv.Itoa(os.Getpid())), 0o644)
+}
+
+// readPid returns the recorded PID of the running instance, or 0 if absent/invalid.
+func readPid(dir string) int {
+	b, err := os.ReadFile(config.PidPath(dir))
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
+}
+
+// takeOver stops the running instance (recorded PID) and acquires the lock once
+// its flock releases. SIGTERM first (clean shutdown drains syncs + releases the
+// lock); escalate to Kill if it does not exit promptly. Returns ErrLocked if the
+// predecessor cannot be identified or refuses to die.
+func takeOver(dir, lockPath string) (*lock.Lock, error) {
+	pid := readPid(dir)
+	if pid <= 0 || pid == os.Getpid() {
+		return nil, lock.ErrLocked // no one to stop / stale-without-pid → defer
+	}
+	signalPid(pid, false) // graceful
+	deadline := time.Now().Add(8 * time.Second)
+	escalated := false
+	for time.Now().Before(deadline) {
+		lk, err := lock.Acquire(lockPath)
+		if err == nil {
+			return lk, nil
+		}
+		if !errors.Is(err, lock.ErrLocked) {
+			return nil, err
+		}
+		if !escalated && time.Now().Add(4*time.Second).After(deadline) {
+			signalPid(pid, true) // still alive past the grace window → force-kill
+			escalated = true
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return nil, lock.ErrLocked
+}
+
+// signalPid sends a stop signal to pid. force=false asks for a graceful shutdown
+// (SIGTERM on unix); force=true kills outright. On Windows SIGTERM is unsupported,
+// so both paths fall back to Kill.
+func signalPid(pid int, force bool) {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	if force {
+		_ = p.Kill()
+		return
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		_ = p.Kill()
+	}
+}
+
 // readAddressURL returns the UI URL the running instance recorded, or "".
 func readAddressURL(dir string) string {
 	b, err := os.ReadFile(config.AddressPath(dir))
@@ -130,28 +195,33 @@ func run(dir string, openBrowser bool) error {
 	}
 
 	// Single-instance guard before any sync/reconcile (KTD8).
-	lk, err := lock.Acquire(config.LockfilePath(dir))
+	lockPath := config.LockfilePath(dir)
+	lk, err := lock.Acquire(lockPath)
 	if errors.Is(err, lock.ErrLocked) {
-		// Already running. A double-clicked window would otherwise just print an
-		// error and vanish ("闪一下就关了"); instead point the user at the live
-		// instance and exit cleanly. Print a clear line first so a manual/console
-		// launch doesn't look like a silent crash — the bare exit-0 reads as
-		// "闪退、什么都没发生" even though the daemon is healthy.
-		if url := readAddressURL(dir); url != "" {
-			fmt.Printf("skillmanage: 已在运行，控制台 %s\n", url)
-			if openBrowser {
-				fmt.Println("skillmanage: 已尝试在浏览器打开上述地址。")
-				_ = browser.Open(url)
+		// A previous instance is running. On launch we TAKE OVER: stop the
+		// predecessor and become the live instance, so re-launching the package
+		// "just restarts" instead of deferring to a stale window. If we cannot
+		// identify/stop it, fall back to pointing at the existing instance.
+		if lk, err = takeOver(dir, lockPath); err != nil {
+			if url := readAddressURL(dir); url != "" {
+				fmt.Printf("skillmanage: 已在运行且无法接管，控制台 %s\n", url)
+				if openBrowser {
+					_ = browser.Open(url)
+				}
+			} else {
+				fmt.Println("skillmanage: 已有一个实例在运行，且无法接管。")
 			}
-		} else {
-			fmt.Println("skillmanage: 已有一个实例在运行（未找到地址文件）。")
+			return nil
 		}
-		return nil
-	}
-	if err != nil {
+		fmt.Println("skillmanage: 已关闭上一个实例并接管。")
+	} else if err != nil {
 		return err
 	}
 	defer lk.Release()
+
+	// Record our PID so the next launch can find and stop us to take over.
+	writePid(dir)
+	defer os.Remove(config.PidPath(dir))
 
 	srv, err := server.New(dir)
 	if err != nil {
@@ -166,11 +236,16 @@ func run(dir string, openBrowser bool) error {
 	// survive a closed browser tab but still cancel on daemon shutdown.
 	srv.SetBaseContext(ctx)
 
-	// No background auto-update and no daily scheduler (removed by request): the
-	// daemon never pulls on its own. On launch we only RECONCILE — materialize the
-	// links the current config asks for, without touching git — so existing
-	// mirrors map correctly. Pulling happens only when the user clicks 立即更新.
+	// On launch we only RECONCILE — materialize the links the current config asks
+	// for, without touching git — so existing mirrors map correctly. We do NOT pull
+	// on startup; pulling happens on the daily schedule below or when the user
+	// clicks 全量更新.
 	srv.ReconcileOnly()
+
+	// Daily scheduler: once a day at the configured wall-clock time (default
+	// 09:40 local) do a full update — pull git sources and delegate skills.sh
+	// sources to `npx skills update`. Cancels with ctx on shutdown.
+	go srv.RunScheduler(ctx)
 
 	ln, err := srv.Bind(defaultPort)
 	if err != nil {

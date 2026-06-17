@@ -19,6 +19,7 @@ import (
 	"skillmanage/internal/gitsync"
 	"skillmanage/internal/harness"
 	"skillmanage/internal/linker"
+	"skillmanage/internal/pathutil"
 	"skillmanage/internal/reconcile"
 	"skillmanage/internal/scanner"
 	"skillmanage/internal/source"
@@ -40,8 +41,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/adoptable", s.requireAuth(s.handleAdoptable))
 	mux.HandleFunc("GET /api/inventory", s.requireAuth(s.handleInventory))
 	mux.HandleFunc("DELETE /api/inventory/link", s.requireAuth(s.handleDeleteStrayLink))
+	mux.HandleFunc("DELETE /api/inventory/handwritten", s.requireAuth(s.handleDeleteHandwritten))
+	mux.HandleFunc("DELETE /api/local-skill", s.requireAuth(s.handleDeleteLocalSkill))
 	mux.HandleFunc("POST /api/ignore-plugins", s.requireAuth(s.handleSetIgnorePlugins))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
+	mux.HandleFunc("POST /api/local-source", s.requireAuth(s.handleAddLocalSource))
+	mux.HandleFunc("DELETE /api/local-source", s.requireAuth(s.handleRemoveLocalSource))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
 	mux.HandleFunc("DELETE /api/enabled", s.requireAuth(s.handleRemoveEnabled))
 	mux.HandleFunc("POST /api/targets", s.requireAuth(s.handleAddTarget))
@@ -52,8 +57,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/credentials", s.requireAuth(s.handleSetCredential))
 	mux.HandleFunc("DELETE /api/credentials", s.requireAuth(s.handleDeleteCredential))
 	mux.HandleFunc("POST /api/dirsource/update", s.requireAuth(s.handleDirSourceUpdate))
+	mux.HandleFunc("GET /api/skillssh", s.requireAuth(s.handleListSkillsSh))
+	mux.HandleFunc("GET /api/plugins", s.requireAuth(s.handleListPlugins))
+	mux.HandleFunc("GET /api/plugin-skill", s.requireAuth(s.handlePluginSkillDetail))
+	mux.HandleFunc("GET /api/skill-at", s.requireAuth(s.handleSkillAt))
+	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
+	mux.HandleFunc("POST /api/repos/update", s.requireAuth(s.handleUpdateRepo))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
 
 	mux.HandleFunc("/", s.hostGuard(s.spaHandler()))
@@ -79,24 +90,44 @@ func readJSON(r *http.Request, v any) error {
 // --- status ---
 
 type statusResp struct {
-	FirstRun    bool                  `json:"firstRun"`
-	Repos       []RepoStatus          `json:"repos"`
-	Enabled     []config.EnabledEntry `json:"enabled"`
-	Targets     []string              `json:"targets"`
-	Links       []config.LinkRecord   `json:"links"`
-	LastSummary reconcile.Summary     `json:"lastSummary"`
-	GitError    string                `json:"gitError,omitempty"`      // set when git is unavailable
-	NpxAvailable bool                 `json:"npxAvailable,omitempty"` // true → UI offers one-click skills.sh update (U7)
+	FirstRun     bool                  `json:"firstRun"`
+	Repos        []RepoStatus          `json:"repos"`
+	Enabled      []config.EnabledEntry `json:"enabled"`
+	Targets      []string              `json:"targets"`
+	Links        []config.LinkRecord   `json:"links"`
+	LastSummary  reconcile.Summary     `json:"lastSummary"`
+	GitError     string                `json:"gitError,omitempty"`     // set when git is unavailable
+	NpxAvailable bool                  `json:"npxAvailable,omitempty"` // true → UI offers one-click skills.sh update (U7)
+	SkillsSh     *skillsShInfo         `json:"skillsSh,omitempty"`     // skills.sh (vercel-labs/skills) directory source, if present
+	PluginCount  int                   `json:"pluginCount,omitempty"`  // number of plugin-provided skills (read-only category)
+	LocalSources []dirSourceInfo       `json:"localSources,omitempty"` // user-registered local folder sources (each its own card)
+}
+
+// dirSourceInfo describes one user-registered local directory source for the
+// sidebar: its stable id (selector namespace "@dir:<id>"), display label, path,
+// and current skill count (scanned live).
+type dirSourceInfo struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Path  string `json:"path"`
+	Count int    `json:"count"`
+}
+
+// skillsShInfo describes the skills.sh directory source for the sidebar entry:
+// it is a read-only "库" managed by another tool (npx skills), never owned by us.
+type skillsShInfo struct {
+	Root  string `json:"root"`  // ~/.agents/skills
+	Count int    `json:"count"` // number of skills.sh-managed skills there
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	resp := statusResp{
-		FirstRun:    s.firstRun,
-		Enabled:     s.cfg.Enabled,
-		Targets:     s.cfg.Targets,
-		Links:       s.manifest.Links,
+		FirstRun:     s.firstRun,
+		Enabled:      s.cfg.Enabled,
+		Targets:      s.cfg.Targets,
+		Links:        s.manifest.Links,
 		LastSummary:  s.lastSummary,
 		GitError:     s.gitErr,
 		NpxAvailable: s.npxPath != "",
@@ -118,6 +149,98 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			st.State = "stale"
 		}
 		resp.Repos = append(resp.Repos, st)
+	}
+	// skills.sh directory source (read-only, managed by `npx skills`).
+	if skills := s.listSkillsShLocked(); len(skills) > 0 {
+		root, _ := resolveAgentsLock(effectiveDirectorySources(s.cfg.DirectorySources))
+		resp.SkillsSh = &skillsShInfo{Root: root, Count: len(skills)}
+	}
+	resp.PluginCount = len(listPluginSkills()) // plugin-provided skills (read-only)
+	// User-registered local folder sources (each its own card; scanned live).
+	for _, d := range s.cfg.LocalSources {
+		count := 0
+		if sk, err := scanner.Scan(harness.Expand(d.Path)); err == nil {
+			count = len(sk)
+		}
+		resp.LocalSources = append(resp.LocalSources, dirSourceInfo{ID: d.ID, Label: d.Label, Path: d.Path, Count: count})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// listSkillsShLocked scans the ~/.agents/skills directory source and returns the
+// skills skills.sh manages (present in its .skill-lock.json). Caller holds s.mu.
+func (s *Server) listSkillsShLocked() []scanner.Skill {
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	root, lock := resolveAgentsLock(dirSources)
+	if root == "" {
+		return nil
+	}
+	all, err := scanner.Scan(root)
+	if err != nil {
+		return nil
+	}
+	var out []scanner.Skill
+	for _, sk := range all {
+		_, byLink := lock.Has(sk.LinkName)
+		_, byDir := lock.Has(filepath.Base(sk.Dir))
+		if byLink || byDir {
+			out = append(out, sk)
+		}
+	}
+	return out
+}
+
+// handleListSkillsSh lists the skills.sh-managed skills for the sidebar modal,
+// each enriched with its lockfile source ("owner/repo") + sourceUrl so the UI can
+// show where it came from and the per-skill `npx skills update <name>` command.
+func (s *Server) handleListSkillsSh(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	s.mu.Unlock()
+	root, lock := resolveAgentsLock(dirSources)
+	type skillsShItem struct {
+		scanner.Skill
+		Source    string `json:"source,omitempty"`    // "owner/repo" from the lockfile
+		SourceURL string `json:"sourceUrl,omitempty"` // validated http(s) URL (XSS-safe)
+	}
+	out := []skillsShItem{}
+	if root != "" {
+		if all, err := scanner.Scan(root); err == nil {
+			for _, sk := range all {
+				e, ok := lock.Has(sk.LinkName)
+				if !ok {
+					e, ok = lock.Has(filepath.Base(sk.Dir))
+				}
+				if !ok {
+					continue
+				}
+				out = append(out, skillsShItem{Skill: sk, Source: e.Source, SourceURL: validHTTPURL(e.SourceURL)})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleUpdateSkillsShAll runs `npx skills update` (no skill arg) to update every
+// skills.sh-managed skill at once. Delegated update only — we never take ownership.
+func (s *Server) handleUpdateSkillsShAll(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 180*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.UpdateAll(ctx, npx)
+	resp := map[string]any{"ok": err == nil, "stdout": stdout, "stderr": stderr}
+	if err != nil {
+		resp["error"] = err.Error()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -223,6 +346,57 @@ func (s *Server) handleRemoveRepo(w http.ResponseWriter, r *http.Request) {
 	// immediately, not on the next apply.
 	_ = os.RemoveAll(filepath.Join(reposRoot, name))
 	s.ReconcileOnly()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDeleteLocalSkill removes a backed-up local skill from the personal store
+// (~/.skillmanage/local/<name>) and tears down every link it owns. This deletes
+// the canonical copy, so it is gated like handleRemoveRepo: explicit + confirmed.
+// Git-repo skills never reach here (the UI offers delete only for @local).
+func (s *Server) handleDeleteLocalSkill(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req strayLinkReq // reuse {name} (target unused here)
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid skill name"})
+		return
+	}
+	sel := reconcile.LocalNamespace + "/" + name
+	s.mu.Lock()
+	// Drop selections for this local skill so reconcile removes its links.
+	kept := s.cfg.Enabled[:0]
+	for _, e := range s.cfg.Enabled {
+		if e.Skill != sel {
+			kept = append(kept, e)
+		}
+	}
+	s.cfg.Enabled = kept
+	if err := s.persistConfigLocked(w); err != nil {
+		s.mu.Unlock()
+		return
+	}
+	personalStore := s.personalStore
+	s.mu.Unlock()
+	// Resolve the real canonical dir by LinkName (basename may differ from the
+	// sanitized name, e.g. ":" → "-"); fall back to the literal join.
+	dir := filepath.Join(personalStore, name)
+	if inv, err := scanner.ScanInventory(personalStore); err == nil {
+		for _, sk := range inv {
+			if sk.LinkName == name {
+				dir = sk.Dir
+				break
+			}
+		}
+	}
+	_ = os.RemoveAll(dir) // remove the canonical copy
+	s.ReconcileOnly()     // tear down its links now
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -390,6 +564,212 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 // --- skills ---
 
+// handleSkillAt returns the SKILL.md of a skill by its physical location in a
+// sync target (matched by LinkName via an inventory scan), so the detail view
+// works for EVERY inventory kind — skills.sh, plugin, handwritten, unknown —
+// not just the managed git/local skills that resolve to a known source root.
+// Read-only: it only reads SKILL.md, never writes.
+func (s *Server) handleSkillAt(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	want := harness.Expand(strings.TrimSpace(r.URL.Query().Get("target")))
+	if name == "" || want == "" {
+		http.Error(w, "missing target or name", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	ok := false
+	for _, d := range s.cfg.Targets {
+		if harness.Expand(d) == want {
+			ok = true
+			break
+		}
+	}
+	s.mu.Unlock()
+	if !ok {
+		http.Error(w, "unknown sync target", http.StatusBadRequest)
+		return
+	}
+	inv, err := scanner.ScanInventory(want)
+	if err != nil {
+		http.Error(w, "target not found", http.StatusNotFound)
+		return
+	}
+	for _, sk := range inv {
+		if sk.LinkName == name || sk.LogicalName == name {
+			content, _ := os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+			writeJSON(w, http.StatusOK, skillDetail{
+				LinkName:    sk.LinkName,
+				LogicalName: sk.LogicalName,
+				Description: sk.Description,
+				Content:     string(content),
+			})
+			return
+		}
+	}
+	http.Error(w, "skill not found", http.StatusNotFound)
+}
+
+// pluginSkill is one skill provided by an installed plugin (read-only — plugins
+// are managed by the harness's own plugin system, never by SkillManage).
+type pluginSkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Plugin      string `json:"plugin"`  // owning plugin (key before "@")
+	Version     string `json:"version"` // installed version, if known
+	Harness     string `json:"harness"` // cc | codex — which harness home this plugin lives under
+}
+
+// listPluginSkills reads each harness's plugins/installed_plugins.json and scans
+// every installed plugin's skills/ dir, tagging each skill with its owning
+// plugin. The manifest is the authoritative map (active install per plugin), so
+// stale cache versions are not double-counted.
+func listPluginSkills() []pluginSkill {
+	var out []pluginSkill
+	seen := map[string]bool{} // dedupe by plugin+skill across harness homes
+	homes := []string{}
+	if h, err := os.UserHomeDir(); err == nil {
+		homes = append(homes, filepath.Join(h, ".claude"), filepath.Join(h, ".codex"))
+	}
+	if ch := os.Getenv("CODEX_HOME"); ch != "" {
+		homes = append(homes, ch)
+	}
+	for _, home := range homes {
+		// harness tag from the home dir: .claude→cc, .codex→codex (so the UI can
+		// filter plugin skills by the current tab's harness).
+		harness := "cc"
+		switch filepath.Base(home) {
+		case ".codex":
+			harness = "codex"
+		case ".claude":
+			harness = "cc"
+		}
+		manifest := filepath.Join(home, "plugins", "installed_plugins.json")
+		data, err := os.ReadFile(manifest)
+		if err != nil {
+			continue
+		}
+		var raw struct {
+			Plugins map[string][]struct {
+				InstallPath string `json:"installPath"`
+				Version     string `json:"version"`
+			} `json:"plugins"`
+		}
+		if json.Unmarshal(data, &raw) != nil {
+			continue
+		}
+		for key, installs := range raw.Plugins {
+			plugin := key
+			if at := strings.IndexByte(key, '@'); at >= 0 {
+				plugin = key[:at]
+			}
+			for _, inst := range installs {
+				if inst.InstallPath == "" {
+					continue
+				}
+				skills, err := scanner.Scan(filepath.Join(inst.InstallPath, "skills"))
+				if err != nil {
+					continue
+				}
+				for _, sk := range skills {
+					k := harness + "\x00" + plugin + "\x00" + sk.LinkName // dedupe per harness
+					if seen[k] {
+						continue
+					}
+					seen[k] = true
+					out = append(out, pluginSkill{Name: sk.LinkName, Description: sk.Description, Plugin: plugin, Version: inst.Version, Harness: harness})
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Plugin != out[j].Plugin {
+			return out[i].Plugin < out[j].Plugin
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
+	skills := listPluginSkills()
+	if skills == nil {
+		skills = []pluginSkill{}
+	}
+	writeJSON(w, http.StatusOK, skills)
+}
+
+// handlePluginSkillDetail reads one plugin skill's SKILL.md from its install
+// tree (read-only). Matches by plugin + harness + skill name so we never read an
+// arbitrary path — only a skill that actually appears in the plugin manifest.
+func (s *Server) handlePluginSkillDetail(w http.ResponseWriter, r *http.Request) {
+	plugin := r.URL.Query().Get("plugin")
+	name := r.URL.Query().Get("name")
+	harness := r.URL.Query().Get("harness")
+	if plugin == "" || name == "" {
+		http.Error(w, "missing plugin or name", http.StatusBadRequest)
+		return
+	}
+	homes := []string{}
+	if h, err := os.UserHomeDir(); err == nil {
+		homes = append(homes, filepath.Join(h, ".claude"), filepath.Join(h, ".codex"))
+	}
+	if ch := os.Getenv("CODEX_HOME"); ch != "" {
+		homes = append(homes, ch)
+	}
+	for _, home := range homes {
+		hn := "cc"
+		if filepath.Base(home) == ".codex" {
+			hn = "codex"
+		}
+		if harness != "" && hn != harness {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(home, "plugins", "installed_plugins.json"))
+		if err != nil {
+			continue
+		}
+		var raw struct {
+			Plugins map[string][]struct {
+				InstallPath string `json:"installPath"`
+			} `json:"plugins"`
+		}
+		if json.Unmarshal(data, &raw) != nil {
+			continue
+		}
+		for key, installs := range raw.Plugins {
+			p := key
+			if at := strings.IndexByte(key, '@'); at >= 0 {
+				p = key[:at]
+			}
+			if p != plugin {
+				continue
+			}
+			for _, inst := range installs {
+				if inst.InstallPath == "" {
+					continue
+				}
+				skills, err := scanner.Scan(filepath.Join(inst.InstallPath, "skills"))
+				if err != nil {
+					continue
+				}
+				for _, sk := range skills {
+					if sk.LinkName == name || sk.LogicalName == name {
+						content, _ := os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+						writeJSON(w, http.StatusOK, skillDetail{
+							LinkName:    sk.LinkName,
+							LogicalName: sk.LogicalName,
+							Description: sk.Description,
+							Content:     string(content),
+						})
+						return
+					}
+				}
+			}
+		}
+	}
+	http.Error(w, "skill not found", http.StatusNotFound)
+}
+
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	root, ok := s.sourceRoot(r.URL.Query().Get("repo"))
 	if !ok {
@@ -411,6 +791,24 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sourceRoot(repo string) (string, bool) {
 	if repo == reconcile.LocalNamespace {
 		return s.personalStore, true
+	}
+	if repo == reconcile.AgentsNamespace {
+		s.mu.Lock()
+		root := s.agentsRootLocked()
+		s.mu.Unlock()
+		if root == "" {
+			return "", false
+		}
+		return harness.Expand(root), true
+	}
+	if id, ok := strings.CutPrefix(repo, reconcile.DirNamespacePrefix); ok {
+		s.mu.Lock()
+		path := s.dirSourceMapLocked()[id]
+		s.mu.Unlock()
+		if path == "" {
+			return "", false
+		}
+		return path, true
 	}
 	if reconcile.ValidRepoName(repo) {
 		return filepath.Join(s.reposRoot, repo), true
@@ -502,10 +900,10 @@ type inventoryItem struct {
 	Repo        string             `json:"repo,omitempty"`
 	SourceURL   string             `json:"sourceUrl,omitempty"` // skills.sh only; http(s)-validated
 	Scope       harness.SkillScope `json:"scope"`
-	Selector    string             `json:"selector,omitempty"` // enabled selector for managed items (U9 toggle)
-	Managed     bool               `json:"managed"`            // owned by SkillManage (git/local)
-	Enabled     bool               `json:"enabled"`            // a managed link is materialized → enabled
-	Follow      bool               `json:"follow,omitempty"`   // enabled via a whole-source follow (source/*) → no per-item disable
+	Selector    string             `json:"selector,omitempty"`   // enabled selector for managed items (U9 toggle)
+	Managed     bool               `json:"managed"`              // owned by SkillManage (git/local)
+	Enabled     bool               `json:"enabled"`              // a managed link is materialized → enabled
+	Follow      bool               `json:"follow,omitempty"`     // enabled via a whole-source follow (source/*) → no per-item disable
 	LinkTarget  string             `json:"linkTarget,omitempty"` // for unknown links: where the symlink resolves (反查源头)
 	Collision   bool               `json:"collision,omitempty"`
 }
@@ -549,6 +947,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dirSourcePaths := effectiveDirectorySources(s.cfg.DirectorySources)
+	localSrcMap := s.dirSourceMapLocked()
 	reposRoot, personalStore := s.reposRoot, s.personalStore
 	targets := append([]string(nil), s.cfg.Targets...)
 	s.mu.Unlock()
@@ -577,6 +976,11 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		Lock:             lock,
 		PluginRoots:      pluginRoots,
 		AllowedRoots:     allowed,
+		DirSources:       localSrcMap,
+	}
+	// Local directory sources' own paths are valid link targets too (anti-escape).
+	for _, p := range localSrcMap {
+		clf.AllowedRoots = append(clf.AllowedRoots, p)
 	}
 	scope := harness.Scope(configured)
 
@@ -589,21 +993,30 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 	items := make([]inventoryItem, 0, len(skills))
 	for _, sk := range skills {
 		res := clf.Classify(sk, configured)
+		// A skills.sh skill WE linked via the @agents namespace is owned by us
+		// (manifest) — so it's managed (can be 停用'd), even though its source is
+		// skills.sh. A native skills.sh link we don't own stays read-only.
+		ownedAgents := res.Kind == source.KindSkillsSh && clf.Mgr.FindOwned(clf.Manifest, configured, sk.LinkName) != nil
 		it := inventoryItem{
 			Name:        sk.LinkName,
 			Description: sk.Description,
 			Kind:        res.Kind,
 			Repo:        res.Repo,
 			Scope:       scope,
-			Managed:     res.Kind == source.KindGit || res.Kind == source.KindLocal,
+			Managed:     res.Kind == source.KindGit || res.Kind == source.KindLocal || res.Kind == source.KindDir || ownedAgents,
 			Collision:   shadowCollides(conflicts, sk.LinkName, configured),
 		}
 		if res.Kind == source.KindSkillsSh {
 			it.SourceURL = validHTTPURL(res.SourceURL) // strip non-http(s) (XSS guard)
 		}
 		if res.Kind == source.KindUnknown {
+			// 反查源头：先看一跳指向，再尽量沿链完全解析到磁盘真实路径
+			// （目标自身也可能是软链）。完全解析失败（断链等）就退回一跳。
 			if rt, ok := clf.Mgr.ResolveLink(sk.Dir); ok {
-				it.LinkTarget = rt // 反查：where the stray symlink points
+				it.LinkTarget = rt
+				if real, err := filepath.EvalSymlinks(sk.Dir); err == nil && real != "" {
+					it.LinkTarget = real
+				}
 			}
 		}
 		if it.Managed {
@@ -611,6 +1024,12 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			src := res.Repo
 			if res.Kind == source.KindLocal {
 				src = reconcile.LocalNamespace
+			}
+			if res.Kind == source.KindDir {
+				src = reconcile.DirSelector(res.Repo) // "@dir:<id>" — local directory source
+			}
+			if ownedAgents {
+				src = reconcile.AgentsNamespace // our @agents-linked skills.sh skill
 			}
 			if src != "" {
 				it.Selector = src + "/" + sk.LinkName
@@ -668,7 +1087,25 @@ func (s *Server) handleDeleteStrayLink(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "这是本工具管理的链接，请用「停用」"})
 		return
 	}
-	p := filepath.Join(want, name)
+	// Resolve the real on-disk path by matching LinkName (the link's filename can
+	// differ from the sanitized LinkName, e.g. a ":" → "-"), never reconstruct it
+	// from name.
+	inv, err := scanner.ScanInventory(want)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "链接不存在"})
+		return
+	}
+	p := ""
+	for _, sk := range inv {
+		if sk.LinkName == name {
+			p = sk.Dir
+			break
+		}
+	}
+	if p == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "链接不存在"})
+		return
+	}
 	lst, err := os.Lstat(p)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "链接不存在"})
@@ -684,6 +1121,112 @@ func (s *Server) handleDeleteStrayLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleDeleteHandwritten deletes a handwritten skill — a REAL directory living
+// directly in a sync target, not backed up to managed storage. Unlike the stray
+// link delete (which only unlinks), this removes actual files, so it is gated
+// hard: explicit + UI-confirmed, loopback/CSRF guarded, name sanitized, target
+// must be a configured sync dir, the path must be a real directory (never a
+// symlink — those go through 停用/删除软链), it must NOT be manifest-owned, and it
+// must actually contain a SKILL.md (so we never RemoveAll an arbitrary folder).
+func (s *Server) handleDeleteHandwritten(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req strayLinkReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid skill name"})
+		return
+	}
+	want := harness.Expand(strings.TrimSpace(req.Target))
+	s.mu.Lock()
+	configured := ""
+	for _, d := range s.cfg.Targets {
+		if harness.Expand(d) == want {
+			configured = d
+			break
+		}
+	}
+	owned := linker.NewManager(s.reposRoot, s.personalStore).FindOwned(&s.manifest, configured, name) != nil
+	s.mu.Unlock()
+	if configured == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown sync target"})
+		return
+	}
+	if owned {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "这是本工具管理的 skill，请用「停用」"})
+		return
+	}
+	// Resolve the REAL on-disk directory by matching LinkName — never reconstruct
+	// the path from name. The directory basename can differ from the sanitized
+	// LinkName (e.g. a ":" in the folder name becomes "-"), so a naive
+	// filepath.Join(want, name) would miss the real dir ("目录不存在").
+	inv, err := scanner.ScanInventory(want)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不存在"})
+		return
+	}
+	p := ""
+	for _, sk := range inv {
+		if sk.LinkName == name {
+			p = sk.Dir
+			break
+		}
+	}
+	if p == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不存在"})
+		return
+	}
+	lst, err := os.Lstat(p)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不存在"})
+		return
+	}
+	if lst.Mode()&os.ModeSymlink != 0 {
+		// A symlink is not a handwritten real skill — use 停用/删除软链 instead.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "这是软链，不是手写真身，请用「停用 / 删除软链」"})
+		return
+	}
+	if !lst.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是目录，拒绝删除"})
+		return
+	}
+	if _, err := os.Stat(filepath.Join(p, "SKILL.md")); err != nil {
+		// Refuse to RemoveAll a folder that isn't actually a skill.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录内没有 SKILL.md，拒绝删除"})
+		return
+	}
+	if err := os.RemoveAll(p); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// agentsRootLocked resolves the skills.sh shared dir (~/.agents/skills) for the
+// reconciler's `@agents` namespace. Caller holds s.mu.
+func (s *Server) agentsRootLocked() string {
+	root, _ := resolveAgentsLock(effectiveDirectorySources(s.cfg.DirectorySources))
+	return root
+}
+
+// dirSourceMapLocked builds the local directory-source registry (id → expanded
+// path) the reconciler resolves "@dir:<id>" selectors against. Caller holds s.mu.
+func (s *Server) dirSourceMapLocked() map[string]string {
+	m := make(map[string]string, len(s.cfg.LocalSources))
+	for _, d := range s.cfg.LocalSources {
+		if d.ID != "" {
+			m[d.ID] = harness.Expand(d.Path)
+		}
+	}
+	return m
 }
 
 // effectiveDirectorySources returns the configured directory-source paths plus
@@ -766,6 +1309,7 @@ func validHTTPURL(raw string) string {
 // cmd /c and suppress the console window the windowless daemon would flash.
 type skillsRunner interface {
 	UpdateSkill(ctx context.Context, npxPath, name string) (stdout, stderr string, err error)
+	UpdateAll(ctx context.Context, npxPath string) (stdout, stderr string, err error)
 }
 
 // skillNameRe bounds the skill name passed to npx: a leading alnum/underscore
@@ -950,6 +1494,140 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 // the resulting @local/<id> into the chosen sync dir. Gated on the
 // IncludePluginSkills opt-in; the source must live under a configured target's
 // plugin tree (so this can't import arbitrary client paths).
+// handleAddLocalSource registers a user-picked folder as a first-class local
+// directory source (its own sidebar card). It does NOT copy: the skills are
+// scanned live from the original folder and linked from there on enable/follow.
+// The folder may itself be a skill (root SKILL.md) or a container of skill
+// subdirectories — scanner.Scan handles both. Registering a source never links
+// anything; the user then 启用 / 整仓跟随 via the "@dir:<id>" selector.
+func (s *Server) handleAddLocalSource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Dir   string `json:"dir"`
+		Label string `json:"label"`
+	}
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Dir) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	raw := strings.TrimSpace(req.Dir)
+	dir := harness.Expand(raw)
+	if harness.Guarded(dir) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "该目录受保护，不能作为来源"})
+		return
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不存在或不是目录"})
+		return
+	}
+	skills, err := scanner.Scan(dir)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "扫描目录失败：" + err.Error()})
+		return
+	}
+	if len(skills) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "该目录里没有 SKILL.md：它既不是一个 skill，也不含 skill 子目录"})
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Refuse paths owned by skills.sh / the .agents directory source: those are
+	// managed by `npx skills`, not a local source (would double-own / conflict).
+	agentsRoot, _ := resolveAgentsLock(effectiveDirectorySources(s.cfg.DirectorySources))
+	if ar := harness.Expand(agentsRoot); ar != "" && (dir == ar || strings.HasPrefix(dir, ar+string(filepath.Separator))) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "该目录由 npx skills（skills.sh）管理，不能作为本地源——它已作为「npx skills」来源识别"})
+		return
+	}
+	for _, d := range s.cfg.LocalSources {
+		if harness.Expand(d.Path) == dir {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "该文件夹已经是本地源"})
+			return
+		}
+	}
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		label = filepath.Base(dir)
+	}
+	id := uniqueDirSourceID(s.cfg.LocalSources, label)
+	s.cfg.LocalSources = append(s.cfg.LocalSources, config.DirectorySource{Path: raw, Label: label, ID: id})
+	if err := s.persistConfigLocked(w); err != nil {
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "label": label, "count": len(skills)})
+}
+
+// handleRemoveLocalSource unregisters a local directory source by id and tears
+// down any links its skills had (its enabled entries are dropped, then reconcile
+// removes the symlinks). The original folder is never touched.
+func (s *Server) handleRemoveLocalSource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.ID) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(req.ID)
+	ns := reconcile.DirSelector(id)
+	prefix := ns + "/"
+	s.mu.Lock()
+	kept := s.cfg.LocalSources[:0]
+	found := false
+	for _, d := range s.cfg.LocalSources {
+		if d.ID == id {
+			found = true
+			continue
+		}
+		kept = append(kept, d)
+	}
+	if !found {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "未找到该本地源"})
+		return
+	}
+	s.cfg.LocalSources = kept
+	en := s.cfg.Enabled[:0]
+	for _, e := range s.cfg.Enabled {
+		if strings.HasPrefix(e.Skill, prefix) { // covers "@dir:<id>/*" and "@dir:<id>/<skill>"
+			continue
+		}
+		en = append(en, e)
+	}
+	s.cfg.Enabled = en
+	if err := s.persistConfigLocked(w); err != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.ReconcileOnly() // tear down this source's links now
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// uniqueDirSourceID derives a stable slug id from a label, deduped against the
+// existing local sources (foo, foo-2, foo-3, …).
+func uniqueDirSourceID(existing []config.DirectorySource, label string) string {
+	base := pathutil.SanitizePathName(label)
+	if base == "" {
+		base = "src"
+	}
+	taken := func(id string) bool {
+		for _, d := range existing {
+			if d.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !taken(base) {
+		return base
+	}
+	for n := 2; ; n++ {
+		cand := fmt.Sprintf("%s-%d", base, n)
+		if !taken(cand) {
+			return cand
+		}
+	}
+}
+
 func (s *Server) handleAdoptPlugin(w http.ResponseWriter, req adoptReq) {
 	if req.ID == "" || req.Src == "" || req.Target == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -1047,6 +1725,22 @@ func (s *Server) handleAddEnabled(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wantTarget := harness.Expand(e.Target)
+	// Enabling a whole-source follow ("<ns>/*") subsumes any individual
+	// "<ns>/<skill>" entries already enabled on the same target. Drop them so the
+	// follow entry becomes the single owner of those links. Otherwise the two
+	// coexist: canceling the follow later removes only "<ns>/*" and leaves the
+	// individual entries (and their links) behind, forcing a one-by-one disable.
+	if ns, ok := strings.CutSuffix(e.Skill, "/*"); ok {
+		prefix := ns + "/"
+		kept := s.cfg.Enabled[:0]
+		for _, x := range s.cfg.Enabled {
+			if x.Skill != e.Skill && strings.HasPrefix(x.Skill, prefix) && harness.Expand(x.Target) == wantTarget {
+				continue // subsumed by the follow being added
+			}
+			kept = append(kept, x)
+		}
+		s.cfg.Enabled = kept
+	}
 	for _, x := range s.cfg.Enabled {
 		if x.Skill == e.Skill && harness.Expand(x.Target) == wantTarget {
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true}) // already enabled
@@ -1394,6 +2088,31 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updates": updates})
 }
 
+// handleUpdateRepo fetches+reconciles a single repo (the per-repo「更新」button).
+func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req struct {
+		URL   string `json:"url"`
+		Force bool   `json:"force"`
+	}
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.URL) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	sum := s.SyncOne(s.detachedCtx(), strings.TrimSpace(req.URL), req.Force)
+	writeJSON(w, http.StatusOK, sum)
+}
+
+// handleUpdateNow is the「全量更新」action: it updates EVERY source the user can
+// update. Git sources are pulled + reconciled by SyncAll (we own those mirrors);
+// skills.sh (npx) sources are refreshed by delegating to `npx skills update`
+// (invariant ④ — we never take ownership, only trigger their native updater).
+// The npx leg is best-effort: it only runs when npx is available and the request
+// is same-origin (it spawns a subprocess), and its outcome rides along in the
+// response under "npx" without failing the git sync.
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	var req updateReq
 	_ = readJSON(r, &req) // empty body is fine (force defaults false)
@@ -1401,7 +2120,60 @@ func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	// tab mid-sync must not cancel in-flight git subprocesses (and leave repos
 	// half-fetched), but daemon shutdown still cancels so the sync drains.
 	sum := s.SyncAll(s.detachedCtx(), req.Force)
-	writeJSON(w, http.StatusOK, sum)
+
+	resp := map[string]any{
+		"created":   sum.Created,
+		"removed":   sum.Removed,
+		"pruned":    sum.Pruned,
+		"conflicts": sum.Conflicts,
+		"errors":    sum.Errors,
+	}
+	if npx := s.updateSkillsShInline(r); npx != nil {
+		resp["npx"] = npx
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// updateSkillsShInline runs `npx skills update` as part of 全量更新 and returns a
+// small result map ({ran, ok, error}), or nil when there is nothing to do (no npx
+// available, or the request is not same-origin so we won't spawn a subprocess).
+func (s *Server) updateSkillsShInline(r *http.Request) map[string]any {
+	if !originLoopbackOK(r) {
+		return nil
+	}
+	ran, err := s.UpdateSkillsShAll(s.detachedCtx())
+	if !ran {
+		return nil
+	}
+	res := map[string]any{"ran": true, "ok": err == nil}
+	if err != nil {
+		res["error"] = err.Error()
+	}
+	return res
+}
+
+// UpdateSkillsShAll delegates to `npx skills update` (no skill arg) to refresh
+// every skills.sh-managed skill at once (invariant ④ — we trigger their native
+// updater, never take ownership). ran=false means there was nothing to run (npx
+// unavailable); when ran=true, err reports the command outcome (stderr folded in).
+// Shared by the update-now endpoint and the daily scheduler.
+func (s *Server) UpdateSkillsShAll(parent context.Context) (ran bool, err error) {
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(parent, 180*time.Second)
+	defer cancel()
+	_, stderr, runErr := runner.UpdateAll(ctx, npx)
+	if runErr != nil {
+		if st := strings.TrimSpace(stderr); st != "" {
+			return true, fmt.Errorf("%s", st)
+		}
+		return true, runErr
+	}
+	return true, nil
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {

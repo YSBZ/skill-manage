@@ -242,6 +242,62 @@ func TestAddEnabledRejectsGuardedTarget(t *testing.T) {
 	}
 }
 
+// TestFollowSubsumesIndividualEntries verifies that enabling a whole-source
+// follow ("<ns>/*") drops any individual "<ns>/<skill>" entries already enabled
+// on the same target. Without this, the two coexist and canceling the follow
+// later leaves the individual entries (and their links) behind — the user then
+// has to disable them one by one.
+func TestFollowSubsumesIndividualEntries(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	s := newTestServer(t)
+	h := s.Handler()
+	const target = "/work/proj/.claude/skills"
+
+	// Pre-existing individual entries: two from @local on this target, plus one
+	// on a different target and one from a different source — neither should be
+	// touched.
+	s.mu.Lock()
+	s.cfg.Enabled = []config.EnabledEntry{
+		{Skill: "@local/alpha", Target: target, Mode: config.ModeSnapshot},
+		{Skill: "@local/beta", Target: target, Mode: config.ModeSnapshot},
+		{Skill: "@local/gamma", Target: "/other/.claude/skills", Mode: config.ModeSnapshot},
+		{Skill: "repo/delta", Target: target, Mode: config.ModeSnapshot},
+	}
+	s.mu.Unlock()
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req("POST", "/api/enabled", s.token, config.EnabledEntry{
+		Skill: "@local/*", Target: target, Mode: config.ModeFollow,
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("enable follow: got %d, want 201", w.Code)
+	}
+
+	cfg, _, _ := config.LoadConfig(s.centralDir)
+	var hasFollow, hasOtherTarget, hasOtherSource bool
+	for _, e := range cfg.Enabled {
+		switch {
+		case e.Skill == "@local/*" && e.Target == target:
+			hasFollow = true
+		case e.Skill == "@local/alpha" || e.Skill == "@local/beta":
+			t.Errorf("individual @local entry on the followed target should be subsumed: %+v", e)
+		case e.Skill == "@local/gamma":
+			hasOtherTarget = true // different target — must survive
+		case e.Skill == "repo/delta":
+			hasOtherSource = true // different source — must survive
+		}
+	}
+	if !hasFollow {
+		t.Error("follow entry was not persisted")
+	}
+	if !hasOtherTarget {
+		t.Error("individual entry on a different target was wrongly removed")
+	}
+	if !hasOtherSource {
+		t.Error("individual entry from a different source was wrongly removed")
+	}
+}
+
 func TestAddRemoveTarget(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // isolate from discovery → start with 0 targets
 	t.Setenv("CODEX_HOME", "")

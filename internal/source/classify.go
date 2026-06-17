@@ -34,6 +34,9 @@ type Classifier struct {
 	// AllowedRoots bound symlink resolution: a link resolving outside every
 	// allowed root is treated as unknown and its target is never read (anti-escape).
 	AllowedRoots []string
+	// DirSources maps each user-registered local directory source id → its expanded
+	// path, so an owned link whose source lives under one is attributed to KindDir.
+	DirSources map[string]string
 }
 
 // Classify attributes one skill entry (from ScanShallow of target) to a source.
@@ -103,6 +106,20 @@ func (c Classifier) ownedRootResultFromSource(sourcePath string) Result {
 	}
 	if store != "" && underOne(store, sourcePath) {
 		return Result{Kind: KindLocal}
+	}
+	// A link we own whose source lives under a registered local directory source.
+	for id, path := range c.DirSources {
+		if path != "" && underOne(path, sourcePath) {
+			return Result{Kind: KindDir, Repo: id}
+		}
+	}
+	// We own a link into the skills.sh shared dir (@agents namespace): classify
+	// it as skills.sh and carry its lockfile sourceUrl for display.
+	if c.AgentsSkillsRoot != "" && underOne(c.AgentsSkillsRoot, sourcePath) {
+		if e, ok := c.Lock.Has(filepath.Base(sourcePath)); ok {
+			return Result{Kind: KindSkillsSh, SourceURL: e.SourceURL}
+		}
+		return Result{Kind: KindSkillsSh}
 	}
 	// Owned per manifest but source resolves outside both roots — shouldn't
 	// happen; report git without a repo rather than crash.

@@ -23,6 +23,10 @@ const (
 	// KindLocal is an adopted/hand-authored skill in the personal store
 	// (canonical under ~/.skillmanage/local, the @local namespace).
 	KindLocal SourceKind = "local"
+	// KindDir is a skill from a user-registered local directory source (a folder
+	// the user added as a source). Canonical stays in that folder; SkillManage
+	// links FROM it but never modifies it. Result.Repo carries the source id.
+	KindDir SourceKind = "dir"
 	// KindSkillsSh is a skill installed by skills.sh (npx skills), recognized via
 	// ~/.agents/.skill-lock.json. Read-only to SkillManage; updates go through
 	// skills.sh's own tooling.
