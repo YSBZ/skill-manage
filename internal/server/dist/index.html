@@ -214,10 +214,16 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v4.3.0</span>
+              <span class="cl-ver">v4.3.1</span>
               <span class="cl-date">四期 · 已完成 · 更新于 2026-06-17</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.1 · 修复启动闪烁循环（2026-06-17）</div>
+              <ul>
+                <li>单实例守护加固：已有桌面窗口在运行时，新启动直接退出、不再杀掉旧实例——避免外部重复拉起（Dock / 登录项 / 残留 LaunchAgent）造成「开一下关一下」的闪烁死循环。takeover 仅用于替换无窗口的 CLI 守护或接管失效锁。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v4.3 · 徽章与插件更新（2026-06-17）</div>
               <ul>

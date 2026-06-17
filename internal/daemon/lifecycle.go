@@ -8,6 +8,7 @@ package daemon
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -82,6 +83,40 @@ func signalPid(pid int, force bool) {
 	if err := p.Signal(syscall.SIGTERM); err != nil {
 		_ = p.Kill()
 	}
+}
+
+// Alive reports whether pid is a live process (signal 0 probe). Used to tell a
+// genuinely-running peer from a stale lock/PID file.
+func Alive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+// instanceKindPath records what kind of front end owns the instance ("desktop"
+// vs the CLI daemon), so a second launch can decide whether to take over (replace
+// a headless CLI daemon) or simply bow out (a live desktop window is already up —
+// killing it would turn any relaunch into a flicker loop).
+func instanceKindPath(dir string) string { return filepath.Join(dir, "instance.kind") }
+
+// WriteKind records the owning front end's kind. RemoveKind clears it on exit.
+func WriteKind(dir, kind string) { _ = os.WriteFile(instanceKindPath(dir), []byte(kind), 0o644) }
+
+// RemoveKind deletes the instance-kind marker.
+func RemoveKind(dir string) { _ = os.Remove(instanceKindPath(dir)) }
+
+// ReadKind returns the recorded owning front-end kind, or "".
+func ReadKind(dir string) string {
+	b, err := os.ReadFile(instanceKindPath(dir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // ReadAddressURL returns the UI URL the running instance recorded, or "".

@@ -79,12 +79,20 @@ func main() {
 		}
 	}()
 
-	// Single-instance guard with takeover — same as the CLI daemon, so launching
-	// the app while a terminal instance runs cleanly replaces it (and two app
-	// launches don't double-run the scheduler / race the manifest).
+	// Single-instance guard. Takeover replaces a headless CLI daemon, but it must
+	// NOT kill a live DESKTOP window: if it did, any external relaunch (Dock,
+	// login item, a stray launcher) would become a kill→reopen→kill flicker loop
+	// (observed in the wild). So when a *live desktop* instance already owns the
+	// lock, this launch simply bows out; takeover is reserved for a CLI-daemon
+	// owner or a stale (dead-PID) lock.
 	lockPath := config.LockfilePath(dir)
 	lk, err := lock.Acquire(lockPath)
 	if errors.Is(err, lock.ErrLocked) {
+		holder := daemon.ReadPid(dir)
+		if holder > 0 && holder != os.Getpid() && daemon.Alive(holder) && daemon.ReadKind(dir) == "desktop" {
+			log.Printf("desktop: 已有桌面实例在运行 (pid=%d)，本次启动退出", holder)
+			os.Exit(0)
+		}
 		if lk, err = daemon.TakeOver(dir, lockPath); err != nil {
 			fmt.Fprintln(os.Stderr, "desktop: 已有一个实例在运行且无法接管")
 			os.Exit(1)
@@ -95,6 +103,8 @@ func main() {
 	defer lk.Release()
 	daemon.WritePid(dir)
 	defer daemon.RemovePid(dir)
+	daemon.WriteKind(dir, "desktop")
+	defer daemon.RemoveKind(dir)
 
 	log.Printf("desktop: lock acquired, starting server")
 	srv, err := server.New(dir)
