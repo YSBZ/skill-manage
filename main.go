@@ -21,6 +21,7 @@ import (
 	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
 	"skillmanage/internal/lock"
+	"skillmanage/internal/pathenv"
 	"skillmanage/internal/server"
 )
 
@@ -193,6 +194,10 @@ func run(dir string, openBrowser bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+
+	// Harden PATH before anything resolves git/npx: a GUI/launchd-started daemon
+	// inherits only a minimal PATH on macOS, which would hide Homebrew/nvm tools.
+	pathenv.Ensure()
 
 	// Single-instance guard before any sync/reconcile (KTD8).
 	lockPath := config.LockfilePath(dir)
