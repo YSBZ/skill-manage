@@ -74,6 +74,19 @@ relates: [[2026-06-15-skillmanage-phase3-requirements]], [[2026-06-18-skillmanag
 - 安装面：从「只接受 skills.sh 搜索结果的 pkg」**放开到「任意 git 仓 URL 浏览选装」**——即「可添加的社区源」。
 - 展示面：按 `.skill-lock.json` 来源分卡。
 
+## 六之二、可行性验证（2026-06-18 隔离 HOME 实测）
+
+| 假设 | 结论 |
+|---|---|
+| 任意 git 仓可枚举 | ✅ `npx skills add <url> -l` 列出 name+描述，可解析；**约 5s/仓**（含 clone） |
+| 可选装单个 | ✅ `-s <skill> -g -y -a universal` 只装该 skill、落 canonical、零 harness 软链 |
+| **lockfile 记真实来源** | ✅ 实测 kepano/obsidian-skills → `source=kepano/obsidian-skills`、`sourceType=github`、`sourceUrl=….git`。**分卡 by source 数据上完全成立** |
+| 安装落点 | ⚠️ **cwd 敏感**：URL+`-s` 流在 cwd≠HOME 时会落到 cwd/.agents 而非 `~/.agents`。**其二落地时 `SkillsAdd` 必须显式 `cmd.Dir=HOME`**（现有 v5.0.0 用 `owner/repo@skill` 形式不受影响，已验证落 `~/.agents`） |
+| 私有仓鉴权 | ❓ 未测；走系统 git 凭据，用不上 SkillManage 存的 PAT → 私有仓建议走 git 全量镜像 |
+| 跨源 fan-out 成本 | ⚠️ 每个 git 仓源每次搜索 = 一次 clone(~5s) → 必须缓存枚举结果 + 按源开关 |
+
+**结论：其二（安装源放开 git URL + 选装）可行、低风险、值得做；其三（跨源 fan-out 搜索）可行但有真实成本，只在「缓存 + 按源开关」前提下做，且价值次于其二。**
+
 ## 七、后续（建议拆成五期其二/其三）
 
 - **其二**：安装源放开 —— 「从 git 仓挑装」入口（贴 URL → `-l` 列举 → 勾选 → `-s -g -y -a universal` 装 → 自有 linker 软链当前目录）。
