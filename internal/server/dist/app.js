@@ -92,7 +92,14 @@ const state = {
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
+  onlineEnabled: false, // 「包含线上(skills.sh)」勾选（持久化于 localStorage）
+  // 在线搜索结果独立 state——只由显式触发更新，不挂在每次按键的渲染上。
+  // gen 是世代计数器：触发时 +1，迟到的旧响应若 gen 不符则丢弃（防 stale 覆盖 fresh）。
+  skillsShOnline: { term: "", loading: false, available: true, results: [], error: "", gen: 0 },
 };
+
+// 安装并发锁：同一时刻只允许一个 npx skills add 在跑，其它安装按钮禁用。
+let installingPkg = null;
 
 // error_code → 用户文案（收编不同失败点处置不同）
 const ADOPT_ERR = {
@@ -904,28 +911,145 @@ function renderSearchResults(root, term) {
   head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: target ? "启用到当前目录：" + targetLabel(target) : "先选一个目录 tab 才能启用" }));
   root.append(head);
 
-  if (!items.length) { root.append(ce("div", { className: "empty", textContent: "没有匹配的 skill（已搜索全部 git / 本地 / skills.sh 源）" })); return; }
+  if (!items.length) {
+    root.append(ce("div", { className: "empty", textContent: "没有匹配的本地 skill（已搜索全部 git / 本地 / skills.sh 源）" }));
+  } else {
+    const body = ce("div", { className: "inv-group-body" });
+    items.forEach((r) => {
+      const enabled = enabledSel.has(r.ns + "/" + r.name);
+      const follow = enabledFollow(r.ns);
+      const meta = sourceMeta(r.ns);
+      const card = ce("div", { className: "skill inv clickable", title: "查看详情" });
+      card.onclick = (e) => { if (e.target.closest("button, a")) return; openDetail(r.ns, r.name); };
+      const main = ce("div", { className: "skill-main" });
+      const r1 = ce("div", { className: "skill-row1" });
+      r1.append(ce("span", { className: "skill-name", textContent: r.name }));
+      { const vt = verTag(r.version); if (vt) r1.append(vt); }
+      r1.append(ce("span", { className: "src-badge " + meta.cls, textContent: meta.label }));
+      r1.append(ce("span", { className: "group-spacer" }));
+      r1.append(enableControl(r.ns, r.name, follow, enabled, target, renderInventory));
+      main.append(r1);
+      if (r.description) main.append(ce("div", { className: "skill-desc", textContent: r.description }));
+      card.append(main);
+      body.append(card);
+    });
+    root.append(body);
+  }
+  // 「在线（skills.sh）」分区——仅勾选时渲染，且只渲染 state.skillsShOnline、绝不在此发请求。
+  if (state.onlineEnabled) renderOnlineSection(root, all, enabledSel);
+}
 
+// installedSkillsShNames returns lowercased skill names present in the skills.sh
+// canonical (~/.agents/skills), used to dedup online results against what's
+// already installed.
+function installedSkillsShNames() {
+  const s = new Set();
+  (state.skillsShSkills || []).forEach((sk) => s.add((sk.linkName || sk.logicalName || "").toLowerCase()));
+  return s;
+}
+
+// runOnlineSearch is the ONLY place that fetches online results (explicit trigger,
+// never per-keystroke — KTD6). Bumps gen so a slow earlier response can't clobber
+// a newer one.
+async function runOnlineSearch() {
+  if (!state.onlineEnabled) return;
+  const term = state.search.trim();
+  const o = state.skillsShOnline;
+  if (!term) { o.term = ""; o.results = []; o.error = ""; o.loading = false; o.available = true; renderInventory(); return; }
+  const gen = ++o.gen;
+  o.term = term; o.loading = true; o.error = ""; o.available = true;
+  renderInventory();
+  try {
+    const d = await api("GET", "/api/skillssh/find?q=" + encodeURIComponent(term));
+    if (gen !== o.gen) return; // a newer search superseded this one
+    o.available = d && d.available !== false;
+    o.results = (d && d.results) || [];
+    o.error = (d && d.error) || "";
+  } catch (e) {
+    if (gen !== o.gen) return;
+    o.available = true; o.results = []; o.error = e.message;
+  } finally {
+    if (gen === o.gen) { o.loading = false; renderInventory(); }
+  }
+}
+
+// renderOnlineSection renders state.skillsShOnline (render-only; no fetch). Dedup
+// against local install/enable state drives which control each result shows.
+function renderOnlineSection(root, allLocal, enabledSel) {
+  const o = state.skillsShOnline;
+  const head = ce("div", { className: "search-head online-head" });
+  head.append(ce("span", { className: "group-title", textContent: "在线（skills.sh）" }));
+  if (o.loading) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "搜索中…" }));
+  else if (o.term) head.append(ce("span", { className: "badge count", textContent: o.results.length + " skill" }));
+  root.append(head);
+
+  if (!o.available) { root.append(ce("div", { className: "empty", textContent: "在线搜索当前不可用（需联网，且本机要有 npx）。本地搜索不受影响。" })); return; }
+  if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在向 skills.sh 查询…" })); return; }
+  if (o.error) { root.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "在线搜索失败：" + o.error })); return; }
+  if (!o.term) { root.append(ce("div", { className: "empty", textContent: "勾选了「包含线上」。输入关键词后点「在线搜索」或回车，查 skills.sh 上可安装的 skill。" })); return; }
+  if (!o.results.length) { root.append(ce("div", { className: "empty", textContent: "skills.sh 上没有匹配「" + o.term + "」的 skill。" })); return; }
+
+  const installed = installedSkillsShNames();
   const body = ce("div", { className: "inv-group-body" });
-  items.forEach((r) => {
-    const enabled = enabledSel.has(r.ns + "/" + r.name);
-    const follow = enabledFollow(r.ns);
-    const meta = sourceMeta(r.ns);
-    const card = ce("div", { className: "skill inv clickable", title: "查看详情" });
-    card.onclick = (e) => { if (e.target.closest("button, a")) return; openDetail(r.ns, r.name); };
+  o.results.forEach((r) => {
+    const nm = (r.skill || "").toLowerCase();
+    const isInstalled = installed.has(nm);
+    const isEnabled = enabledSel.has(AGENTS_NS + "/" + (r.skill || ""));
+    const card = ce("div", { className: "skill inv online" });
     const main = ce("div", { className: "skill-main" });
     const r1 = ce("div", { className: "skill-row1" });
-    r1.append(ce("span", { className: "skill-name", textContent: r.name }));
-    { const vt = verTag(r.version); if (vt) r1.append(vt); }
-    r1.append(ce("span", { className: "src-badge " + meta.cls, textContent: meta.label }));
+    r1.append(ce("span", { className: "skill-name", textContent: r.skill || r.pkg }));
+    if (r.installsRaw) r1.append(ce("span", { className: "install-count", title: "安装数", textContent: "↓ " + r.installsRaw }));
+    r1.append(ce("span", { className: "src-badge src-skillssh", textContent: r.owner ? r.owner + "/" + r.repo : "skills.sh" }));
     r1.append(ce("span", { className: "group-spacer" }));
-    r1.append(enableControl(r.ns, r.name, follow, enabled, target, renderInventory));
+    r1.append(onlineAction(r, isInstalled, isEnabled));
     main.append(r1);
-    if (r.description) main.append(ce("div", { className: "skill-desc", textContent: r.description }));
+    const sub = ce("div", { className: "skill-desc online-sub" });
+    sub.append(ce("span", { textContent: r.pkg }));
+    if (r.url) { const a = ce("a", { href: r.url, target: "_blank", rel: "noopener", textContent: "↗ skills.sh", className: "online-link" }); sub.append(a); }
+    main.append(sub);
     card.append(main);
     body.append(card);
   });
   root.append(body);
+}
+
+// onlineAction returns the right control for one online result: an install button
+// when not installed, or a status label when already installed (distinguishing
+// installed-but-not-enabled from installed-and-enabled).
+function onlineAction(r, isInstalled, isEnabled) {
+  if (isInstalled && isEnabled) return ce("span", { className: "src-badge src-ok", textContent: "已安装且已启用" });
+  if (isInstalled) return ce("span", { className: "muted online-installed", title: "已装到 skills.sh，可在本地搜索结果里启用到当前目录", textContent: "已安装（未启用）" });
+  const btn = ce("button", { className: "small", textContent: "安装" });
+  if (installingPkg) btn.disabled = true; // 并发锁：有安装在跑时其它按钮禁用
+  btn.onclick = () => installOnline(r, btn);
+  return btn;
+}
+
+// installOnline delegates `npx skills add <pkg> -g -y` via POST /api/skillssh/add.
+// Button state machine: idle→安装中(disabled)→ success(变「已安装」+刷新) / fail(复原+banner)。
+async function installOnline(r, btn) {
+  if (installingPkg) return;
+  installingPkg = r.pkg;
+  btn.disabled = true; btn.textContent = "安装中…";
+  try {
+    const d = await api("POST", "/api/skillssh/add", { pkg: r.pkg });
+    if (d && d.ok) {
+      btn.textContent = "已安装"; // success：不复原，靠下面刷新重渲成去重态
+      toast("已安装 " + (r.skill || r.pkg) + " 到 skills.sh，可在搜索/现状视图中启用");
+      if (d.strayLinks && d.strayLinks.length) banner("注意：skills.sh 同时在 " + d.strayLinks.join("、") + " 建立了软链", false);
+      installingPkg = null;
+      // 重扫：重拉 skills.sh + 现状，新 skill 进入目录源、去重态生效
+      try { state.skillsShSkills = (await api("GET", "/api/skillssh")) || []; } catch {}
+      await fetchInventory();
+    } else {
+      throw new Error((d && (d.error || d.stderr)) || "未知错误");
+    }
+  } catch (e) {
+    installingPkg = null;
+    btn.disabled = false; btn.textContent = "安装"; // fail：复原可重试
+    banner("安装 " + (r.skill || r.pkg) + " 失败：" + e.message, true);
+  }
 }
 
 function renderInventory() {
@@ -1549,6 +1673,25 @@ async function updateNow(force) {
 
 // events
 $("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
+// Enter in the search box triggers the online search when「包含线上」is on (KTD6:
+// online search is explicit, never per-keystroke). Local search stays real-time.
+$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter" && state.onlineEnabled) runOnlineSearch(); });
+
+// 「包含线上(skills.sh)」勾选：持久化偏好(OQ4)，切换在线搜索按钮可见性，重渲。
+(function wireOnlineToggle() {
+  const cb = $("#online-toggle"), btn = $("#online-search-btn");
+  state.onlineEnabled = localStorage.getItem("sm.online") === "1";
+  cb.checked = state.onlineEnabled;
+  btn.classList.toggle("hidden", !state.onlineEnabled);
+  cb.onchange = () => {
+    state.onlineEnabled = cb.checked;
+    localStorage.setItem("sm.online", cb.checked ? "1" : "0");
+    btn.classList.toggle("hidden", !cb.checked);
+    if (!cb.checked) { state.skillsShOnline = { term: "", loading: false, available: true, results: [], error: "", gen: state.skillsShOnline.gen }; }
+    renderInventory();
+  };
+  btn.onclick = runOnlineSearch;
+})();
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered
 // INLINE in the same modal (no second popup): if the URL is an https host we have

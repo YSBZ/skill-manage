@@ -34,6 +34,10 @@
         <div class="list-pane">
           <div class="main-head">
             <input id="search" type="search" placeholder="搜索全部源的 skill（名称 / 描述），可直接启用到当前目录…" />
+            <label class="online-toggle" title="勾选后可搜索 skills.sh 上可安装的 skill（在线，需点「在线搜索」或回车触发）">
+              <input type="checkbox" id="online-toggle" /> 包含线上
+            </label>
+            <button id="online-search-btn" class="small hidden" title="向 skills.sh 在线查询（npx skills find）">在线搜索</button>
           </div>
           <div id="skills"></div>
         </div>
@@ -269,27 +273,56 @@
               </ul>
             </div>
             <div class="cl-rel">
-              <div class="cl-rel-head">v3.0 · 三期 · 源模型（2026-06-15）</div>
+              <div class="cl-rel-head">v3.2 · 新鲜度与检查更新（2026-06-15）</div>
               <ul>
-                <li>源类型抽象：git 源 / 目录源 / 本地源（U1）。</li>
-                <li>跨平台位置注册表，发现 ~/.agents/skills 目录源（U2）。</li>
+                <li>检查更新——识别各仓上游是否有新提交（只 ls-remote、不拉取）；进页面自动静默检查。</li>
+                <li>已克隆仓圆点为绿（可用即绿），新鲜度改由「有更新」徽章表达。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v3.1 · skills.sh 共存与现状视图（2026-06-15）</div>
+              <ul>
+                <li>来源归类引擎 + skills.sh lockfile 只读识别（U5）；目录现状视图 API（U6）。</li>
+                <li>目录现状视图 + 启用 / 停用 + 代调 <code>npx skills update</code>（U7–U9）。</li>
+                <li>现状按来源分组 + 手风琴；未知软链反查指向 + 删除；skills.sh 按来源仓分组。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v3.0 · 三期 · 源模型抽象（2026-06-15）</div>
+              <ul>
+                <li>源类型抽象：git 源 / 目录源 / 本地源（U1）；跨平台位置注册表，发现 <code>~/.agents/skills</code> 目录源（U2）。</li>
                 <li>扫描深度上限 / 跳过 node_modules + 项目级优先 scope 判定（U3）；never-break 第④不变式（U4）。</li>
-                <li>来源归类引擎 + skills.sh lockfile 只读识别（U5）；目录现状视图 + 启用 / 停用 + 代调 npx 更新（U6–U9）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v2.2 · HTTPS 凭据与使用指南（2026-06-15）</div>
+              <ul>
+                <li>应用内填 HTTPS 凭据(PAT) 让私有仓免交互更新；每仓连通状态点，红点可点击重填；移除仓时清掉其 host 凭据（无其他仓使用时）。</li>
+                <li>取消忽略 plugin 时扫描插件目录并列出可收编（复制导入、不改原件）；标题加 <code>?</code> 使用指南弹窗。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v2.1 · 多 tab 同步目录（2026-06-14）</div>
+              <ul>
+                <li>同步目录改为多 tab，一目录一 tab、各自独立映射，自动展开 cc / codex（别名按 harness 加后缀）。</li>
+                <li>main 区改手风琴（同时只展开一个）；移除「停用」三态——软链=用、不链=不用。</li>
               </ul>
             </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v2.0 · 二期 · 跨 harness 映射与收编（2026-06-14）</div>
               <ul>
-                <li>同步目录改为多 tab，每 tab 独立映射，自动展开 cc / codex。</li>
-                <li>收编 / 备份手写 skill；Codex 的 nested-SKILL.md 守卫。</li>
-                <li>应用内填写 HTTPS 凭据(PAT) + 仓库连通状态点；使用指南弹窗。</li>
+                <li>Codex 个人 + 项目 skill 目标，守卫目录强制（U1/U2）；nested-SKILL.md 守卫（U3）。</li>
+                <li>收编 / 备份手写 skill 到受管存储（U5）；跨 harness 冲突识别 + 状态徽章（U4）。</li>
+                <li>压平为「仓库 + 同步目录」纯同步模型，cc / codex 简写。</li>
               </ul>
             </div>
             <div class="cl-rel">
-              <div class="cl-rel-head">v1.0 · 一期 · 基础不变式（2026-06-10）</div>
+              <div class="cl-rel-head">v1.0 · 一期 · 基础不变式与引擎（2026-06-10 ~ 06-11）</div>
               <ul>
                 <li>① git 只读镜像（reset --hard）。② never-clobber 真身文件。③ manifest 所有权（只增删自建链接，删前与磁盘核对）。</li>
                 <li>跨平台链接引擎 + reconcile 差分同步（enabled → desired links）。</li>
+                <li>token 鉴权 REST API + 内嵌 SPA + SyncAll；按 OS 开机自启 + flock 单实例；每日定时调度（补跑 + RunNow）；卡片描述 / 搜索 / 概览 / 状态徽章 / 分组；跨平台交叉编译 Makefile。</li>
+                <li>可靠性加固：git 超时、仓名撞名处理、prune 守卫、关停 drain。</li>
               </ul>
             </div>
             </div>
@@ -308,22 +341,54 @@
           <p>· <b>HTTPS（最简单）</b>：直接点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。</p>
 
           <h4>同步目录（顶部 tab）</h4>
-          <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。点 <code>+</code> 添加目录：可手输 / 粘贴路径，也可点选浏览。选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展开成对应的 cc / codex 两个 tab，标签自动识别；认不出的目录标 <code>unknown</code>。删除一个 tab 会把该目录下<b>由本工具建立的软链全部拆除</b>，你自己的真身 skill 不受影响。</p>
+          <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。</p>
+          <ol>
+            <li><b>添加</b>：点 <code>+</code> 手输 / 粘贴路径，或点选浏览。</li>
+            <li><b>自动展开</b>：选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展成 cc / codex 两个 tab，标签自动识别；认不出的标 <code>unknown</code>。</li>
+            <li><b>删除</b>：删一个 tab 会拆除该目录下<b>由本工具建立的软链</b>，你自己的真身 skill 不受影响。</li>
+          </ol>
 
           <h4>目录现状视图</h4>
-          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源折叠成组</b>（手风琴：每次展开一个，点已展开的组可全部收起），每组标明来源：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每张卡带来源标签区分归属）、<code>git</code>（来自 git 仓）、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。本工具管理的（git / 本地源）带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果；自动同步进来的不单独切换（要取消请点开左侧该来源卡片，在弹窗里关掉「自动同步」）；别家管理的（插件）只读不碰，skills.sh 的链可在此<b>删除</b>（仅删此处软链投影，不动真身）。组标题旁的 <code>?</code> 点开有说明。</p>
+          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源折叠成组</b>（手风琴：每次展开一个，点已展开的组可全部收起）。</p>
+          <ol>
+            <li><b>来源分组</b>：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每卡带标签区分归属）、<code>git</code>、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。</li>
+            <li><b>本工具管理的</b>（git / 本地源）：带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果。自动同步进来的不单独切换——要取消请点开左侧该来源卡片，在弹窗里关掉「自动同步」。</li>
+            <li><b>别家管理的</b>（插件）：只读不碰；<code>skills.sh</code> 的链可在此<b>删除</b>（仅删此处软链投影，不动真身）。</li>
+          </ol>
+          <p>组标题旁的 <code>?</code> 点开有说明。</p>
 
           <h4>启用 / 自动同步（在源卡片弹窗里）</h4>
-          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / skills.sh / 本地源）打开它的 skill 弹窗。弹窗顶部显示「启用到当前目录」并带一个<b>「自动同步」</b>开关；每个 skill 行有<b>「启用」</b>按钮做单个映射，已启用的标「已启用」、同步中的标「自动同步中」。「自动同步」让整个来源自动同步（之后该来源新增的 skill 自动加链、删除的自动清链）。停用某个 skill 在「目录现状」视图里操作。</p>
+          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / skills.sh / 本地源）打开它的 skill 弹窗。</p>
+          <ol>
+            <li><b>单个启用</b>：每个 skill 行的<b>「启用」</b>按钮做单个映射，已启用的标「已启用」、同步中的标「自动同步中」。</li>
+            <li><b>整源同步</b>：弹窗顶部「启用到当前目录」旁的<b>「自动同步」</b>开关让整个来源自动同步——之后该来源新增 skill 自动加链、删除的自动清链。</li>
+            <li><b>停用</b>：停用某个 skill 在「目录现状」视图里操作。</li>
+          </ol>
 
           <h4>备份 / 删除未备份 skill</h4>
-          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill，有两个动作：<b>「备份」</b>把真身移入受管存储（<code>~/.skillmanage/local</code>）并在原位留软链——agent 里照常可用，归类移到<code>本地</code>、纳入统一管理；<b>「删除」</b>永久删除该真身目录（不可恢复，删前强确认，且只删确含 SKILL.md 的目录）。</p>
+          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill，有两个动作：</p>
+          <ol>
+            <li><b>备份</b>：把真身移入受管存储（<code>~/.skillmanage/local</code>）并在原位留软链——agent 里照常可用，归类移到 <code>本地</code>、纳入统一管理。</li>
+            <li><b>删除</b>：永久删除该真身目录（不可恢复，删前强确认，且只删确含 SKILL.md 的目录）。</li>
+          </ol>
 
           <h4>与 skills.sh 等工具共存</h4>
-          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>；现状视图里可删除某一处的软链投影（真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。它的来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>），更新也交给它——侧栏 skills.sh 卡片上的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</p>
+          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。</p>
+          <ol>
+            <li><b>真身位置</b>：安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>。</li>
+            <li><b>删除投影</b>：现状视图里可删除某一处的软链投影（真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。</li>
+            <li><b>更新交给它</b>：来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>）；侧栏 skills.sh 卡片的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</li>
+          </ol>
 
           <h4>更新：每天定时 + 手动全量 / 强制</h4>
-          <p><b>每天早上 09:40（本地时间）自动更新一次全部源</b>：拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 skills.sh 源，然后重新同步软链。你也可随时手动点「全量更新」（git 仓标题行只更 git；skills.sh 卡片的「更新」代调 npx；单仓卡片只更该仓）。若某些 git 镜像有本地改动会被跳过、并提示是否<b>还原并更新</b>（git reset --hard 丢弃本地改动、与上游一致，谨慎使用，仅作用于 git 源）。启动时只重建软链、不拉取；打开期间<b>每小时检查一次</b>上游是否有更新（只检查不拉取，有更新的仓标「有更新」徽章）。拉取以<b>非交互</b>方式运行（BatchMode，不弹窗输密码），私有仓需先配好免交互鉴权，否则该仓标红、拉取失败。仓名前圆点：<b style="color:var(--ok)">绿</b>=上次同步成功、<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据）、灰=尚未同步。</p>
+          <ol>
+            <li><b>每天定时</b>：每天早上 09:40（本地时间）自动更新一次全部源——拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 skills.sh 源，然后重新同步软链。</li>
+            <li><b>手动</b>：随时点「全量更新」（git 仓标题行只更 git；skills.sh 卡片的「更新」代调 npx；单仓卡片只更该仓）。</li>
+            <li><b>有本地改动时</b>：被跳过并提示是否<b>还原并更新</b>（git reset --hard 丢弃本地改动、与上游一致，谨慎使用，仅作用于 git 源）。</li>
+            <li><b>检查节奏</b>：启动时只重建软链、不拉取；打开期间<b>每小时检查一次</b>上游（只检查不拉取，有更新的仓标「有更新」徽章）。</li>
+            <li><b>非交互拉取</b>：以 BatchMode 运行、不弹窗输密码；私有仓需先配好免交互鉴权，否则该仓标红、拉取失败。</li>
+            <li><b>仓名前圆点</b>：<b style="color:var(--ok)">绿</b>=上次同步成功、<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据）、灰=尚未同步。</li>
+          </ol>
 
           <h4>导入 / 导出</h4>
           <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>
