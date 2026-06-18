@@ -1725,8 +1725,9 @@ async function openDetailAt(name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
   setDetailSource(null);
-  // skills.sh-managed skill shown in the directory inventory → offer 卸载.
-  if (installedSkillsShNames().has((name || "").toLowerCase())) setSkillsShActions(name); else clearModalActions();
+  // 现状/inventory 视图里的条目都是软链（本地真身除外），只能操作链（启用/停用），
+  // 不在此对「本体」下手（卸载等本体操作只属于「源」视图，如 skills.sh 列表弹窗）。
+  clearModalActions();
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {
