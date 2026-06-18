@@ -483,7 +483,7 @@ async function openSkillsShModal() {
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
       r1.append(ce("span", { className: "skill-name", textContent: name }));
-      if (sk.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + sk.version, title: "版本 " + sk.version }));
+      { const vt = verTag(sk.version); if (vt) r1.append(vt); }
       // 来源徽章：lockfile 里的 owner/repo（hover 看完整 URL）。
       const srcText = sk.source || repoFromUrl(sk.sourceUrl) || hostOf(sk.sourceUrl || "");
       if (srcText) {
@@ -580,7 +580,7 @@ function openRepoSkills(repoName, opts) {
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
       r1.append(ce("span", { className: "skill-name", textContent: nm }));
-      if (sk.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + sk.version, title: "版本 " + sk.version }));
+      { const vt = verTag(sk.version); if (vt) r1.append(vt); }
       r1.append(ce("span", { className: "group-spacer" }));
       if (opts.local) {
         const del = ce("button", { className: "danger small", textContent: "删除", title: "永久删除该本地 skill 的受管副本，并拆除它建立的所有软链（不可恢复）" });
@@ -861,6 +861,17 @@ function abbrevLabel(s) {
   return s.split("-").filter(Boolean).map((p) => p[0]).join("");
 }
 
+// verTag renders a version badge, or null when there's no STANDARD version.
+// Only a semver-shaped value (e.g. 3.13.1, 1.0, 2.1.0-beta.1, optional "v"
+// prefix) counts as a version. Anything else — a git commit hash (commit-pinned
+// plugins), "unknown"/"undefined", or empty — is NOT a version and shows no
+// badge at all.
+function verTag(v) {
+  v = (v == null ? "" : String(v)).trim().replace(/^v/i, "");
+  if (!/^\d+\.\d+(\.\d+)?([-+][0-9A-Za-z.-]+)?$/.test(v)) return null;
+  return ce("span", { className: "ver-tag", textContent: "v" + v, title: "版本 " + v });
+}
+
 // sourceMeta maps a source namespace to a display label + badge class.
 function sourceMeta(ns) {
   if (ns === AGENTS_NS) return { label: "skills.sh", cls: "src-skillssh" };
@@ -905,7 +916,7 @@ function renderSearchResults(root, term) {
     const main = ce("div", { className: "skill-main" });
     const r1 = ce("div", { className: "skill-row1" });
     r1.append(ce("span", { className: "skill-name", textContent: r.name }));
-    if (r.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + r.version, title: "版本 " + r.version }));
+    { const vt = verTag(r.version); if (vt) r1.append(vt); }
     r1.append(ce("span", { className: "src-badge " + meta.cls, textContent: meta.label }));
     r1.append(ce("span", { className: "group-spacer" }));
     r1.append(enableControl(r.ns, r.name, follow, enabled, target, renderInventory));
@@ -1072,7 +1083,7 @@ function inventoryCard(i) {
   const main = ce("div", { className: "skill-main" });
   const r1 = ce("div", { className: "skill-row1" });
   r1.append(ce("span", { className: "skill-name", textContent: i.name }));
-  if (i.version) r1.append(ce("span", { className: "ver-tag", textContent: "v" + i.version, title: "版本 " + i.version }));
+  { const vt = verTag(i.version); if (vt) r1.append(vt); }
 
   // 徽章默认显示全名——位置够就不缩写（CSS 在真正放不下时才 ellipsis 截断，全名见 hover）。
   let badgeText = s.label;

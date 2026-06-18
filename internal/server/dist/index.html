@@ -214,10 +214,17 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v4.3.2</span>
+              <span class="cl-ver">v4.3.3</span>
               <span class="cl-date">四期 · 已完成 · 更新于 2026-06-18</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.3 · 修复版本徽章显示（2026-06-18）</div>
+              <ul>
+                <li>只有标准语义版本号（如 3.13.1）才算版本并显示徽章。</li>
+                <li>commit 哈希（commit 锁定的插件，如 frontend-design）、unknown、空值一律不算版本，不显示徽章——不再出现 <code>vunknown</code>。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v4.3.2 · 修复插件委托更新假成功（2026-06-18）</div>
               <ul>
