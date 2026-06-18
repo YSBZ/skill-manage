@@ -443,7 +443,7 @@ footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; 
 
 /* 在线结果过滤齿轮 + 弹窗 */
 .main-head { position: relative; } /* 锚定过滤弹窗 */
-#online-filter-btn { flex: 0 0 auto; }
+#online-filter-btn { flex: 0 0 auto; font-size: 18px; line-height: 1; padding-left: 10px; padding-right: 10px; }
 #online-filter-btn.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .filter-pop {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 50;
