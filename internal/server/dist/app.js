@@ -516,6 +516,10 @@ async function openSkillsShModal() {
       }
       r1.append(ce("span", { className: "group-spacer" }));
       r1.append(enableControl(AGENTS_NS, name, follow, present.has(name), target, () => render(skills)));
+      // 卸载：删真身 + 所有软链；卸载后重拉列表（该 skill 应消失）。
+      const rm = ce("button", { className: "danger small", textContent: "卸载", title: "卸载：删除 ~/.agents/skills 下真身 + 所有软链" });
+      rm.onclick = () => uninstallSkillsSh(name, rm, async () => render((await api("GET", "/api/skillssh")) || []));
+      r1.append(rm);
       main.append(r1);
       if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
       // 来源 URL（可见、可选中）——更新就从这里拉取，但命令按 skill 名走，
@@ -1587,15 +1591,16 @@ function setSkillsShActions(name) {
 
 // uninstallSkillsSh delegates `npx skills remove <name> -g -y` (drops canonical +
 // all agent symlinks skills.sh made) after SkillManage tears down its own links.
-async function uninstallSkillsSh(name, btn) {
+async function uninstallSkillsSh(name, btn, onDone) {
   if (!(await confirmModal("卸载 " + name + "？\n会删除 ~/.agents/skills 下的真身文件 + 所有软链（含本工具建立的、以及 skills.sh 装到各 agent 的）。此操作不可撤销。", "卸载", true))) return;
   const old = btn.textContent; btn.disabled = true; btn.textContent = "卸载中…";
   try {
     const d = await api("POST", "/api/skillssh/remove", { name });
     if (d && d.ok) {
       toast("已卸载 " + name + (d.removedLinks ? "（含 " + d.removedLinks + " 处本工具软链）" : ""));
-      $("#modal").classList.add("hidden");
       await load();
+      if (onDone) await onDone(); // 列表弹窗：原地重渲；否则关闭详情弹窗
+      else $("#modal").classList.add("hidden");
     } else {
       throw new Error((d && (d.error || d.stderr)) || "未知错误");
     }
