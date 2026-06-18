@@ -1683,24 +1683,24 @@ async function updateNow(force) {
 
 // events
 $("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
-// Enter in the search box triggers the online search when「包含线上」is on (KTD6:
-// online search is explicit, never per-keystroke). Local search stays real-time.
-$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter" && state.onlineEnabled) runOnlineSearch(); });
+// The「搜索」button is always present. Local search is already real-time on input;
+// the button (and Enter) additionally fire the online query when「包含线上」is on
+// (KTD6: online search is explicit, never per-keystroke).
+function runSearch() { if (state.onlineEnabled) runOnlineSearch(); else renderInventory(); }
+$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
 
-// 「包含线上(skills.sh)」勾选：持久化偏好(OQ4)，切换在线搜索按钮可见性，重渲。
+// 「包含线上(skills.sh)」勾选：持久化偏好(OQ4)。搜索按钮常驻、不随勾选显隐。
 (function wireOnlineToggle() {
   const cb = $("#online-toggle"), btn = $("#online-search-btn");
   state.onlineEnabled = localStorage.getItem("sm.online") === "1";
   cb.checked = state.onlineEnabled;
-  btn.classList.toggle("hidden", !state.onlineEnabled);
   cb.onchange = () => {
     state.onlineEnabled = cb.checked;
     localStorage.setItem("sm.online", cb.checked ? "1" : "0");
-    btn.classList.toggle("hidden", !cb.checked);
     if (!cb.checked) { state.skillsShOnline = { term: "", loading: false, available: true, results: [], error: "", gen: state.skillsShOnline.gen }; }
     renderInventory();
   };
-  btn.onclick = runOnlineSearch;
+  btn.onclick = runSearch;
 })();
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered
