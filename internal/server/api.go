@@ -1567,6 +1567,43 @@ type installedPlugin struct {
 	Scope   string `json:"scope"`
 }
 
+// pluginInstalledScope returns the scope `claude plugin list` records for the
+// given plugin id (e.g. "project"), or "" if the listing fails or the id isn't
+// found. Used to run the delegated update at the plugin's REAL scope instead of
+// a client-supplied guess that would silently no-op.
+func pluginInstalledScope(ctx context.Context, cli string, runner skillsRunner, id string) string {
+	out, _, err := runner.ListPlugins(ctx, cli)
+	if err != nil {
+		return ""
+	}
+	var list []installedPlugin
+	if json.Unmarshal([]byte(extractJSON(out)), &list) != nil {
+		return ""
+	}
+	for _, p := range list {
+		if p.ID == id {
+			return p.Scope
+		}
+	}
+	return ""
+}
+
+// firstFailureLine pulls the first human-meaningful failure line out of CLI
+// output (the line carrying ✘ / "Failed" / "not installed"), so the UI can show
+// why a delegated update that exited 0 actually failed.
+func firstFailureLine(clean string) string {
+	for _, ln := range strings.Split(clean, "\n") {
+		ln = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "✘"))
+		if ln == "" {
+			continue
+		}
+		if strings.Contains(ln, "Failed") || strings.Contains(ln, "not installed") {
+			return strings.TrimSpace(ln)
+		}
+	}
+	return "更新失败（CLI 未报告原因）"
+}
+
 // pluginNameOf returns the name part of a "name@marketplace" id.
 func pluginNameOf(id string) string {
 	if at := strings.IndexByte(id, '@'); at > 0 {
@@ -1666,9 +1703,6 @@ func (s *Server) handlePluginUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := strings.TrimSpace(req.Scope)
-	if !validPluginScope[scope] {
-		scope = "user"
-	}
 	s.mu.Lock()
 	cli, runner := s.claudePath, s.runner
 	s.mu.Unlock()
@@ -1678,17 +1712,42 @@ func (s *Server) handlePluginUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 120*time.Second)
 	defer cancel()
-	stdout, stderr, err := runner.UpdatePlugin(ctx, cli, id, scope)
-	// Classify the outcome so the UI can be honest: "already latest" (nothing
-	// changed — why the version tag stays put) vs an actual update (restart to
-	// apply). The CLI prints "already at the latest version" for the no-op case.
-	status := "updated"
-	if err == nil && strings.Contains(ansiRe.ReplaceAllString(stdout, ""), "already at the latest") {
-		status = "current"
+	// Resolve the real install scope from the CLI rather than trusting the client
+	// or defaulting blindly. `claude plugin update -s <wrong-scope>` EXITS 0 but
+	// does nothing ("Plugin … is not installed at scope X") — which we'd otherwise
+	// misreport as a successful update. The authoritative scope is whatever
+	// `claude plugin list` records for this id.
+	if real := pluginInstalledScope(ctx, cli, runner, id); real != "" {
+		scope = real
 	}
-	resp := map[string]any{"ok": err == nil, "status": status, "stdout": stdout, "stderr": stderr}
-	if err != nil {
-		resp["error"] = err.Error()
+	if !validPluginScope[scope] {
+		scope = "user"
+	}
+	stdout, stderr, err := runner.UpdatePlugin(ctx, cli, id, scope)
+	// Classify the outcome HONESTLY. The CLI is not exit-code-truthful: a failed
+	// update ("✘ Failed to update …") still exits 0, so err==nil alone does not
+	// mean success. Inspect the (ANSI-stripped) output:
+	//   - "already at the latest"  → current (no-op; why the version tag stays put)
+	//   - "✘" / "Failed to update" / "not installed" → failed (surface the reason)
+	//   - otherwise                → updated (restart Claude Code to apply)
+	clean := ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")
+	status := "updated"
+	switch {
+	case err != nil:
+		status = "failed"
+	case strings.Contains(clean, "already at the latest"):
+		status = "current"
+	case strings.Contains(clean, "✘") || strings.Contains(clean, "Failed to update") || strings.Contains(clean, "not installed"):
+		status = "failed"
+	}
+	ok := status != "failed"
+	resp := map[string]any{"ok": ok, "status": status, "stdout": stdout, "stderr": stderr}
+	if !ok {
+		if err != nil {
+			resp["error"] = err.Error()
+		} else {
+			resp["error"] = firstFailureLine(clean)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

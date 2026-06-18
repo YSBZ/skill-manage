@@ -214,10 +214,17 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v4.3.1</span>
-              <span class="cl-date">四期 · 已完成 · 更新于 2026-06-17</span>
+              <span class="cl-ver">v4.3.2</span>
+              <span class="cl-date">四期 · 已完成 · 更新于 2026-06-18</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.2 · 修复插件委托更新假成功（2026-06-18）</div>
+              <ul>
+                <li>委托更新改为按 <code>claude plugin list</code> 记录的真实 scope 执行，不再盲猜（之前对 project 作用域插件误用 user scope，导致更新无效）。</li>
+                <li>诚实判定更新结果：CLI 失败时退出码仍为 0，过去会误报「已更新」；现在识别失败标记并弹出真实原因，只有真正成功才提示重启生效。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v4.3.1 · 修复启动闪烁循环（2026-06-17）</div>
               <ul>
