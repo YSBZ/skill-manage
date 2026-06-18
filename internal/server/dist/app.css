@@ -398,6 +398,8 @@ footer .error .err-fix { display: inline; color: var(--muted); font-size: 12px; 
 .inv-group { margin-bottom: 20px; }
 .inv-group.collapsed { margin-bottom: 10px; }
 .search-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.search-head.clickable { cursor: pointer; user-select: none; }
+.search-head .group-chevron { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
 .inv-group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 7px; margin-bottom: 10px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
 .inv-group-head:hover { border-bottom-color: var(--accent); }
 .inv-group-head .group-help { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; cursor: pointer; }

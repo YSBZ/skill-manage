@@ -107,6 +107,7 @@ const state = {
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
+  searchFold: { local: false, online: false }, // 搜索结果两区各自折叠状态（false=展开）
   onlineMinInstalls: 0, // 在线结果过滤：最低安装数（齿轮弹窗，持久化）
   // 在线搜索结果独立 state——只由显式触发更新，不挂在每次按键的渲染上。
   // gen 是世代计数器：触发时 +1，迟到的旧响应若 gen 不符则丢弃（防 stale 覆盖 fresh）。
@@ -919,14 +920,19 @@ function renderSearchResults(root, term) {
     .filter((r) => r.name.toLowerCase().includes(term) || (r.description || "").toLowerCase().includes(term))
     .sort((a, b) => a.name.localeCompare(b.name) || a.ns.localeCompare(b.ns));
 
-  const head = ce("div", { className: "search-head" });
+  const folded = state.searchFold.local;
+  const head = ce("div", { className: "search-head clickable", title: folded ? "展开" : "收起" });
+  head.append(ce("span", { className: "group-chevron", textContent: folded ? "▾" : "▴" }));
   head.append(ce("span", { className: "group-title", textContent: "搜索结果" }));
   head.append(ce("span", { className: "badge count", textContent: items.length + " skill" }));
   head.append(ce("span", { className: "group-spacer" }));
   head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: target ? "启用到当前目录：" + targetLabel(target) : "先选一个目录 tab 才能启用" }));
+  head.onclick = () => { state.searchFold.local = !folded; renderInventory(); };
   root.append(head);
 
-  if (!items.length) {
+  if (folded) {
+    // 本地区折叠：仍渲染在线区
+  } else if (!items.length) {
     root.append(ce("div", { className: "empty", textContent: "没有匹配的本地 skill（已搜索全部 git / 本地 / skills.sh 源）" }));
   } else {
     const body = ce("div", { className: "inv-group-body" });
@@ -1001,13 +1007,17 @@ function renderOnlineSection(root, allLocal, enabledSel) {
   const o = state.skillsShOnline;
   const min = state.onlineMinInstalls || 0;
   const shown = min > 0 ? o.results.filter((r) => (r.installs || 0) >= min) : o.results;
-  const head = ce("div", { className: "search-head online-head" });
+  const folded = state.searchFold.online;
+  const head = ce("div", { className: "search-head online-head clickable", title: folded ? "展开" : "收起" });
+  head.append(ce("span", { className: "group-chevron", textContent: folded ? "▾" : "▴" }));
   head.append(ce("span", { className: "group-title", textContent: "在线（skills.sh）" }));
   if (o.loading) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "搜索中…" }));
   else if (o.term) head.append(ce("span", { className: "badge count", textContent: shown.length + " skill" }));
   if (min > 0) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 已过滤 ≥ " + fmtInstalls(min) }));
+  head.onclick = () => { state.searchFold.online = !folded; renderInventory(); };
   root.append(head);
 
+  if (folded) return; // 在线区折叠：只显示标题
   if (!o.available) { root.append(ce("div", { className: "empty", textContent: "在线搜索当前不可用（需联网，且本机要有 npx）。本地搜索不受影响。" })); return; }
   if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在向 skills.sh 查询…" })); return; }
   if (o.error) { root.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "在线搜索失败：" + o.error })); return; }
