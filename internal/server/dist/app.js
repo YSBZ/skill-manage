@@ -1031,7 +1031,8 @@ function renderOnlineSection(root, allLocal, enabledSel) {
     const nm = (r.skill || "").toLowerCase();
     const isInstalled = installed.has(nm);
     const isEnabled = enabledSel.has(AGENTS_NS + "/" + (r.skill || ""));
-    const card = ce("div", { className: "skill inv online" });
+    const card = ce("div", { className: "skill inv online" + (r.url ? " clickable" : ""), title: r.url ? "在 skills.sh 查看详情" : "" });
+    if (r.url) card.onclick = (e) => { if (e.target.closest("button, a")) return; window.open(r.url, "_blank"); };
     const main = ce("div", { className: "skill-main" });
     const r1 = ce("div", { className: "skill-row1" });
     r1.append(ce("span", { className: "skill-name", textContent: r.skill || r.pkg }));
@@ -1571,6 +1572,39 @@ function setPluginActions(plugin, harness) {
 }
 function clearModalActions() { const el = $("#modal-actions"); el.innerHTML = ""; el.classList.add("hidden"); }
 
+// setSkillsShActions adds an「卸载」action to a skills.sh skill's detail. Uninstall
+// removes the real file in ~/.agents/skills AND every symlink (ours + skills.sh's).
+function setSkillsShActions(name) {
+  const el = $("#modal-actions");
+  el.innerHTML = "";
+  el.append(ce("span", { className: "ma-note", textContent: "skills.sh 管理（只读）。更新在卡片里委托；卸载见右。" }));
+  el.append(ce("span", { className: "group-spacer" }));
+  const btn = ce("button", { className: "danger small", textContent: "卸载" });
+  btn.onclick = () => uninstallSkillsSh(name, btn);
+  el.append(btn);
+  el.classList.remove("hidden");
+}
+
+// uninstallSkillsSh delegates `npx skills remove <name> -g -y` (drops canonical +
+// all agent symlinks skills.sh made) after SkillManage tears down its own links.
+async function uninstallSkillsSh(name, btn) {
+  if (!(await confirmModal("卸载 " + name + "？\n会删除 ~/.agents/skills 下的真身文件 + 所有软链（含本工具建立的、以及 skills.sh 装到各 agent 的）。此操作不可撤销。", "卸载", true))) return;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "卸载中…";
+  try {
+    const d = await api("POST", "/api/skillssh/remove", { name });
+    if (d && d.ok) {
+      toast("已卸载 " + name + (d.removedLinks ? "（含 " + d.removedLinks + " 处本工具软链）" : ""));
+      $("#modal").classList.add("hidden");
+      await load();
+    } else {
+      throw new Error((d && (d.error || d.stderr)) || "未知错误");
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = old;
+    banner("卸载 " + name + " 失败：" + e.message, true);
+  }
+}
+
 // updatePlugin delegates a plugin update to the harness CLI (claude plugin update
 // <id> -s <scope>). It never takes ownership; effect applies after a Claude Code
 // restart. `t` is {name,id,scope} from the outdated check — the exact id + scope
@@ -1649,7 +1683,7 @@ async function openDetail(repo, name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
   setDetailSource(null);
-  clearModalActions();
+  if (repo === AGENTS_NS) setSkillsShActions(name); else clearModalActions();
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {
@@ -1686,7 +1720,8 @@ async function openDetailAt(name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
   setDetailSource(null);
-  clearModalActions();
+  // skills.sh-managed skill shown in the directory inventory → offer 卸载.
+  if (installedSkillsShNames().has((name || "").toLowerCase())) setSkillsShActions(name); else clearModalActions();
   $("#modal-content").textContent = "加载中…";
   $("#modal").classList.remove("hidden");
   try {

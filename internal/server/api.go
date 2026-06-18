@@ -69,11 +69,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
 	mux.HandleFunc("GET /api/skillssh/find", s.requireAuth(s.handleSkillsShFind))
 	mux.HandleFunc("POST /api/skillssh/add", s.requireAuth(s.handleSkillsShAdd))
+	mux.HandleFunc("POST /api/skillssh/remove", s.requireAuth(s.handleSkillsShRemove))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
 	mux.HandleFunc("GET /api/conflicts", s.requireAuth(s.handleConflicts))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
 	mux.HandleFunc("POST /api/repos/update", s.requireAuth(s.handleUpdateRepo))
 	mux.HandleFunc("POST /api/apply", s.requireAuth(s.handleApply))
+	mux.HandleFunc("POST /api/open", s.requireAuth(s.handleOpenExternal))
 
 	mux.HandleFunc("/", s.hostGuard(s.spaHandler()))
 	return mux
@@ -465,6 +467,92 @@ func skillsAddFailReason(clean string) string {
 	return "安装失败（CLI 未报告原因）"
 }
 
+// skillsRemoveReq is the body of POST /api/skillssh/remove.
+type skillsRemoveReq struct {
+	Name string `json:"name"`
+}
+
+// handleSkillsShRemove uninstalls a skills.sh skill: it (1) tears down SkillManage's
+// own manifest-owned links for `@agents/<name>` across all targets via reconcile,
+// then (2) delegates `npx skills remove <name> -g -a '*' -y` to drop skills.sh's
+// canonical + every agent symlink it made. So "uninstall" removes ALL links (ours
+// and skills.sh's) plus the real file. Each tool removes only what it owns —
+// invariant ④ holds (we never rm ~/.agents ourselves; skills.sh does).
+func (s *Server) handleSkillsShRemove(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req skillsRemoveReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "." || name == ".." || !skillNameRe.MatchString(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid skill name"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills remove"})
+		return
+	}
+	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)
+	if agentsSkillsRoot == "" || !isDirectChildDir(agentsSkillsRoot, name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是 skills.sh 管理的 skill"})
+		return
+	}
+	// Drop our own manifest-owned links for @agents/<name> across all targets, then
+	// reconcile to tear them off disk — before skills.sh removes the canonical.
+	sel := reconcile.AgentsNamespace + "/" + name
+	s.mu.Lock()
+	kept := s.cfg.Enabled[:0]
+	removedLinks := 0
+	for _, e := range s.cfg.Enabled {
+		if e.Skill == sel {
+			removedLinks++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	s.cfg.Enabled = kept
+	var saveErr error
+	if removedLinks > 0 {
+		saveErr = config.SaveConfig(s.centralDir, s.cfg)
+	}
+	s.mu.Unlock()
+	if saveErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": saveErr.Error()})
+		return
+	}
+	if removedLinks > 0 {
+		s.ReconcileOnly()
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 120*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.SkillsRemove(ctx, npx, name)
+	clean := ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")
+	// Honest: success markers are ✓ / "Removed"; absence ⇒ failed (KTD5 posture).
+	status := "removed"
+	if err != nil || !(strings.Contains(clean, "✓") || strings.Contains(clean, "Removed") || strings.Contains(clean, "removed")) {
+		status = "failed"
+	}
+	ok := status != "failed"
+	resp := map[string]any{"ok": ok, "status": status, "stdout": stdout, "stderr": stderr, "removedLinks": removedLinks}
+	if !ok {
+		if err != nil {
+			resp["error"] = err.Error()
+		} else {
+			resp["error"] = skillsAddFailReason(clean)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // --- repos ---
 
 type repoReq struct {
@@ -617,6 +705,35 @@ func (s *Server) handleDeleteLocalSkill(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = os.RemoveAll(dir) // remove the canonical copy
 	s.ReconcileOnly()     // tear down its links now
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleOpenExternal opens an external URL in the OS default browser. The desktop
+// WKWebView ignores <a target="_blank"> (clicks no-op), so the UI routes outbound
+// links here; browser.Open works identically in the desktop window and the
+// browser daemon (both on the same machine). Only http(s) with a host is allowed
+// — never arbitrary strings handed to the OS opener.
+func (s *Server) handleOpenExternal(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	u, err := url.Parse(strings.TrimSpace(req.URL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "仅支持 http/https 链接"})
+		return
+	}
+	if err := browser.Open(u.String()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -1747,6 +1864,9 @@ type skillsRunner interface {
 	// skills.sh's canonical (~/.agents/skills), non-interactively. We never take
 	// ownership — updates go back through `npx skills update`.
 	SkillsAdd(ctx context.Context, npxPath, pkg string) (stdout, stderr string, err error)
+	// SkillsRemove runs `npx skills remove <name> -g -a '*' -y` to uninstall a
+	// skills.sh skill — its canonical and every agent symlink skills.sh made.
+	SkillsRemove(ctx context.Context, npxPath, name string) (stdout, stderr string, err error)
 }
 
 // skillNameRe bounds the skill name passed to npx: a leading alnum/underscore

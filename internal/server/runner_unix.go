@@ -98,3 +98,16 @@ func (unixRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, s
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// SkillsRemove runs `npx skills remove <name> -g -y`. Verified against the real
+// CLI: with no -a flag, remove auto-targets ALL agents + the global canonical, so
+// it drops ~/.agents/skills/<name> AND every agent symlink skills.sh made. (`-a '*'`
+// is rejected as "Invalid agents".) SkillManage's own manifest-owned links are torn
+// down separately by the caller (reconcile) before this runs. name caller-validated.
+func (unixRunner) SkillsRemove(ctx context.Context, npxPath, name string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, npxPath, "skills", "remove", name, "-g", "-y")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}

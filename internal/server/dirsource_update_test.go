@@ -27,6 +27,9 @@ type fakeRunner struct {
 	addStdout, addStderr   string
 	addErr                 error
 	lastAddPkg             string
+	removeStdout, removeStderr string
+	removeErr                  error
+	lastRemoveName             string
 }
 
 func (f *fakeRunner) UpdateSkill(ctx context.Context, npxPath, name string) (string, string, error) {
@@ -66,6 +69,15 @@ func (f *fakeRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string
 	f.lastAddPkg = pkg
 	if f.addStdout != "" || f.addStderr != "" || f.addErr != nil {
 		return f.addStdout, f.addStderr, f.addErr
+	}
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) SkillsRemove(ctx context.Context, npxPath, name string) (string, string, error) {
+	f.calls++
+	f.lastRemoveName = name
+	if f.removeStdout != "" || f.removeStderr != "" || f.removeErr != nil {
+		return f.removeStdout, f.removeStderr, f.removeErr
 	}
 	return f.stdout, f.stderr, f.err
 }

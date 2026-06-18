@@ -93,3 +93,14 @@ func (windowsRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// SkillsRemove runs `npx skills remove <name> -g -y` via cmd /c — no -a, which
+// auto-targets all agents + the global canonical (verified). name caller-validated.
+func (windowsRunner) SkillsRemove(ctx context.Context, npxPath, name string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "remove", name, "-g", "-y")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
