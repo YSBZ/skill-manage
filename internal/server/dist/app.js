@@ -92,7 +92,6 @@ const state = {
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
-  onlineEnabled: false, // 「包含线上(skills.sh)」勾选（持久化于 localStorage）
   // 在线搜索结果独立 state——只由显式触发更新，不挂在每次按键的渲染上。
   // gen 是世代计数器：触发时 +1，迟到的旧响应若 gen 不符则丢弃（防 stale 覆盖 fresh）。
   skillsShOnline: { term: "", loading: false, available: true, results: [], error: "", gen: 0 },
@@ -935,8 +934,9 @@ function renderSearchResults(root, term) {
     });
     root.append(body);
   }
-  // 「在线（skills.sh）」分区——仅勾选时渲染，且只渲染 state.skillsShOnline、绝不在此发请求。
-  if (state.onlineEnabled) renderOnlineSection(root, all, enabledSel);
+  // 「在线（skills.sh）」分区——始终渲染（只渲染 state.skillsShOnline、绝不在此发请求；
+  // 线上查询只由显式「搜索」/回车触发，避免每次按键打 npx）。
+  renderOnlineSection(root, all, enabledSel);
 }
 
 // installedSkillsShNames returns lowercased skill names present in the skills.sh
@@ -952,7 +952,6 @@ function installedSkillsShNames() {
 // never per-keystroke — KTD6). Bumps gen so a slow earlier response can't clobber
 // a newer one.
 async function runOnlineSearch() {
-  if (!state.onlineEnabled) return;
   const term = state.search.trim();
   const o = state.skillsShOnline;
   if (!term) { o.term = ""; o.results = []; o.error = ""; o.loading = false; o.available = true; renderInventory(); return; }
@@ -1683,25 +1682,11 @@ async function updateNow(force) {
 
 // events
 $("#search").oninput = (e) => { state.search = e.target.value; renderInventory(); };
-// The「搜索」button is always present. Local search is already real-time on input;
-// the button (and Enter) additionally fire the online query when「包含线上」is on
-// (KTD6: online search is explicit, never per-keystroke).
-function runSearch() { if (state.onlineEnabled) runOnlineSearch(); else renderInventory(); }
-$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
-
-// 「包含线上(skills.sh)」勾选：持久化偏好(OQ4)。搜索按钮常驻、不随勾选显隐。
-(function wireOnlineToggle() {
-  const cb = $("#online-toggle"), btn = $("#online-search-btn");
-  state.onlineEnabled = localStorage.getItem("sm.online") === "1";
-  cb.checked = state.onlineEnabled;
-  cb.onchange = () => {
-    state.onlineEnabled = cb.checked;
-    localStorage.setItem("sm.online", cb.checked ? "1" : "0");
-    if (!cb.checked) { state.skillsShOnline = { term: "", loading: false, available: true, results: [], error: "", gen: state.skillsShOnline.gen }; }
-    renderInventory();
-  };
-  btn.onclick = runSearch;
-})();
+// Local search is real-time on input. The「搜索」button (and Enter) additionally
+// fire the skills.sh online query — always, no opt-in (KTD6: online is explicit,
+// never per-keystroke, because npx cold-start is slow).
+$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") runOnlineSearch(); });
+$("#online-search-btn").onclick = runOnlineSearch;
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered
 // INLINE in the same modal (no second popup): if the URL is an https host we have
