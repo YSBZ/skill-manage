@@ -1003,10 +1003,13 @@ function renderOnlineSection(root, allLocal, enabledSel) {
     r1.append(ce("span", { className: "group-spacer" }));
     r1.append(onlineAction(r, isInstalled, isEnabled));
     main.append(r1);
-    const sub = ce("div", { className: "skill-desc online-sub" });
-    sub.append(ce("span", { textContent: r.pkg }));
-    if (r.url) { const a = ce("a", { href: r.url, target: "_blank", rel: "noopener", textContent: "↗ skills.sh", className: "online-link" }); sub.append(a); }
-    main.append(sub);
+    main.append(ce("div", { className: "skill-desc online-sub", textContent: r.pkg }));
+    if (r.url) {
+      // 「↗ skills.sh」钉在卡片左下角（footer + margin-top:auto，同行卡片对齐）。
+      const foot = ce("div", { className: "online-foot" });
+      foot.append(ce("a", { href: r.url, target: "_blank", rel: "noopener", textContent: "↗ skills.sh", className: "online-link" }));
+      main.append(foot);
+    }
     card.append(main);
     body.append(card);
   });
