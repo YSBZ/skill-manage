@@ -35,6 +35,14 @@
           <div class="main-head">
             <input id="search" type="search" placeholder="搜索全部源的 skill（本地 + skills.sh 线上），可直接启用到当前目录…" />
             <button id="online-search-btn" class="small" title="搜索本地与 skills.sh 线上 skill">搜索</button>
+            <button id="online-filter-btn" class="ghost small" title="过滤在线（skills.sh）结果——按安装数">⚙</button>
+            <div id="online-filter-pop" class="filter-pop hidden">
+              <div class="filter-pop-title">在线结果过滤 · 最低安装数</div>
+              <label><input type="radio" name="minInstalls" value="0" /> 全部</label>
+              <label><input type="radio" name="minInstalls" value="1000" /> ≥ 1K</label>
+              <label><input type="radio" name="minInstalls" value="10000" /> ≥ 10K</label>
+              <label><input type="radio" name="minInstalls" value="100000" /> ≥ 100K</label>
+            </div>
           </div>
           <div id="skills"></div>
         </div>
@@ -222,8 +230,9 @@
             <div class="cl-rel">
               <div class="cl-rel-head">v5.0.0 · 接入 skill.sh：在线搜索 + 安装（2026-06-18）</div>
               <ul>
-                <li>搜索框勾选「包含线上」后，可搜 skills.sh 上可安装的 skill（点「在线搜索」或回车触发，本地搜索仍实时）。</li>
+                <li>点「搜索」/回车即同时搜本地 + skills.sh 线上可安装的 skill；结果分「本地 / 在线」两区。</li>
                 <li>在线结果显示安装数 / 来源 / 链接；已装的标「已安装」，不重复给安装按钮。</li>
+                <li>齿轮 ⚙ 可按<b>安装数过滤</b>在线结果（全部 / ≥1K / ≥10K / ≥100K），过滤偏好记忆。</li>
                 <li>「安装」两层：<code>npx skills add -g -y -a universal</code> 只装到 canonical（<code>~/.agents/skills</code>，不乱链）；再由 SkillManage 自己的能力<b>软链（启用）到你当前所在的目录 tab</b>——这条链受管、可随时停用。</li>
                 <li>不接管 skills.sh（更新仍交其原生方式）；安装/启用成功或失败都如实提示。</li>
               </ul>
@@ -362,7 +371,7 @@
           <ol>
             <li><b>来源分组</b>：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每卡带标签区分归属）、<code>git</code>、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。</li>
             <li><b>本工具管理的</b>（git / 本地源）：带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果。自动同步进来的不单独切换——要取消请点开左侧该来源卡片，在弹窗里关掉「自动同步」。</li>
-            <li><b>别家管理的</b>（插件）：只读不碰；<code>skills.sh</code> 的链可在此<b>删除</b>（仅删此处软链投影，不动真身）。</li>
+            <li><b>别家管理的</b>（插件）：只读不碰；<code>skills.sh</code> 的链可在此<b>停用</b>（仅拆此处软链投影，不动真身）。</li>
           </ol>
           <p>组标题旁的 <code>?</code> 点开有说明。</p>
 
@@ -385,7 +394,7 @@
           <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。</p>
           <ol>
             <li><b>真身位置</b>：安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>。</li>
-            <li><b>删除投影</b>：现状视图里可删除某一处的软链投影（真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。</li>
+            <li><b>停用投影</b>：现状视图里可停用某一处的软链投影（拆软链、真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。</li>
             <li><b>更新交给它</b>：来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>）；侧栏 skills.sh 卡片的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</li>
           </ol>
 

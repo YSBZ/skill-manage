@@ -44,6 +44,21 @@ async function api(method, path, body) {
   return data;
 }
 
+// openExternal opens a URL in the system browser. In the plain browser daemon
+// window.open works; in the desktop WKWebView it no-ops (returns null), so we
+// fall back to the backend opener (browser.Open on the host).
+async function openExternal(url) {
+  if (!url) return;
+  let win = null;
+  try { win = window.open(url, "_blank", "noopener"); } catch { /* WKWebView throws/no-ops */ }
+  if (win) return;
+  try {
+    await api("POST", "/api/open", { url });
+  } catch (e) {
+    banner("打开链接失败：" + e.message, true);
+  }
+}
+
 // confirmModal replaces the native confirm() with an in-page dialog. Returns a
 // Promise<bool>. okText/danger customize the confirm button.
 function confirmModal(msg, okText, danger) {
@@ -92,6 +107,7 @@ const state = {
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
   activeTarget: undefined, // active 同步目录 tab (one tab per dir)
   search: "",
+  onlineMinInstalls: 0, // 在线结果过滤：最低安装数（齿轮弹窗，持久化）
   // 在线搜索结果独立 state——只由显式触发更新，不挂在每次按键的渲染上。
   // gen 是世代计数器：触发时 +1，迟到的旧响应若 gen 不符则丢弃（防 stale 覆盖 fresh）。
   skillsShOnline: { term: "", loading: false, available: true, results: [], error: "", gen: 0 },
@@ -939,6 +955,13 @@ function renderSearchResults(root, term) {
   renderOnlineSection(root, all, enabledSel);
 }
 
+// fmtInstalls renders a threshold like 1000→"1K", 100000→"100K" for labels.
+function fmtInstalls(n) {
+  if (n >= 1e6) return (n / 1e6) + "M";
+  if (n >= 1e3) return (n / 1e3) + "K";
+  return "" + n;
+}
+
 // installedSkillsShNames returns lowercased skill names present in the skills.sh
 // canonical (~/.agents/skills), used to dedup online results against what's
 // already installed.
@@ -976,21 +999,25 @@ async function runOnlineSearch() {
 // against local install/enable state drives which control each result shows.
 function renderOnlineSection(root, allLocal, enabledSel) {
   const o = state.skillsShOnline;
+  const min = state.onlineMinInstalls || 0;
+  const shown = min > 0 ? o.results.filter((r) => (r.installs || 0) >= min) : o.results;
   const head = ce("div", { className: "search-head online-head" });
   head.append(ce("span", { className: "group-title", textContent: "在线（skills.sh）" }));
   if (o.loading) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "搜索中…" }));
-  else if (o.term) head.append(ce("span", { className: "badge count", textContent: o.results.length + " skill" }));
+  else if (o.term) head.append(ce("span", { className: "badge count", textContent: shown.length + " skill" }));
+  if (min > 0) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 已过滤 ≥ " + fmtInstalls(min) }));
   root.append(head);
 
   if (!o.available) { root.append(ce("div", { className: "empty", textContent: "在线搜索当前不可用（需联网，且本机要有 npx）。本地搜索不受影响。" })); return; }
   if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在向 skills.sh 查询…" })); return; }
   if (o.error) { root.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "在线搜索失败：" + o.error })); return; }
-  if (!o.term) { root.append(ce("div", { className: "empty", textContent: "勾选了「包含线上」。输入关键词后点「在线搜索」或回车，查 skills.sh 上可安装的 skill。" })); return; }
+  if (!o.term) { root.append(ce("div", { className: "empty", textContent: "输入关键词后点「搜索」或回车，查 skills.sh 上可安装的 skill。" })); return; }
   if (!o.results.length) { root.append(ce("div", { className: "empty", textContent: "skills.sh 上没有匹配「" + o.term + "」的 skill。" })); return; }
+  if (!shown.length) { root.append(ce("div", { className: "empty", textContent: "匹配「" + o.term + "」的结果都低于 ≥ " + fmtInstalls(min) + "。点 ⚙ 放宽过滤。" })); return; }
 
   const installed = installedSkillsShNames();
   const body = ce("div", { className: "inv-group-body" });
-  o.results.forEach((r) => {
+  shown.forEach((r) => {
     const nm = (r.skill || "").toLowerCase();
     const isInstalled = installed.has(nm);
     const isEnabled = enabledSel.has(AGENTS_NS + "/" + (r.skill || ""));
@@ -1007,7 +1034,9 @@ function renderOnlineSection(root, allLocal, enabledSel) {
     if (r.url) {
       // 「↗ skills.sh」钉在卡片左下角（footer + margin-top:auto，同行卡片对齐）。
       const foot = ce("div", { className: "online-foot" });
-      foot.append(ce("a", { href: r.url, target: "_blank", rel: "noopener", textContent: "↗ skills.sh", className: "online-link" }));
+      const link = ce("a", { href: r.url, textContent: "↗ skills.sh", className: "online-link", title: "在系统浏览器中打开" });
+      link.onclick = (e) => { e.preventDefault(); openExternal(r.url); };
+      foot.append(link);
       main.append(foot);
     }
     card.append(main);
@@ -1269,9 +1298,9 @@ function inventoryCard(i) {
       u.onclick = () => updateSkillSh(i.name, u);
       r1.append(u);
     }
-    const del = ce("button", { className: "danger small", textContent: "删除", title: "只删此目录下的软链，不动 ~/.agents 里的真身（skills.sh 下次 update 可能重新投影）" });
-    del.onclick = () => deleteSkillsShLink(i, del);
-    r1.append(del);
+    const off = ce("button", { className: "danger small inv-off", textContent: "停用", title: "拆除此目录下的软链（不动 ~/.agents 里的真身；skills.sh 下次 update 可能重新投影回来）" });
+    off.onclick = () => disableSkillsShLink(i, off);
+    r1.append(off);
   } else if (i.kind === "unknown") {
     const del = ce("button", { className: "danger small", textContent: "删除", title: "只删此软链，不动它指向的目标" });
     del.onclick = () => deleteStrayLink(i, del);
@@ -1306,22 +1335,23 @@ async function deleteStrayLink(i, btn) {
   }
 }
 
-// deleteSkillsShLink removes a skills.sh projection (the symlink in this target
+// disableSkillsShLink removes a skills.sh projection (the symlink in this target
 // only) — never the canonical install under ~/.agents/skills. Same backend guard
-// as a stray link (refuses real dirs and our own managed links). skills.sh may
-// re-project it on its next update, so we say so up front.
-async function deleteSkillsShLink(i, btn) {
+// and endpoint as disabling a managed source's link (refuses real dirs and our
+// own managed links). It's a disable, not a delete: skills.sh may re-project it
+// on its next update, so we say so up front.
+async function disableSkillsShLink(i, btn) {
   if (!(await confirmModal(
-    "删除此目录下的软链「" + i.name + "」？\n\n只删这一处的软链，不动 ~/.agents/skills 里的真身，也不影响其它目录。\n注意：skills.sh 下次 update 可能会把它重新投影回来——彻底移除请用 skills.sh 自己的命令。",
-    "删除软链", true))) return;
-  btn.disabled = true; btn.textContent = "删除中…";
+    "停用此目录下的软链「" + i.name + "」？\n\n只拆除这一处的软链，不动 ~/.agents/skills 里的真身，也不影响其它目录。\n注意：skills.sh 下次 update 可能会把它重新投影回来——彻底卸载请用 skills.sh 自己的命令。",
+    "停用", true))) return;
+  btn.disabled = true; btn.textContent = "停用中…";
   try {
     await api("DELETE", "/api/inventory/link", { target: currentTarget(), name: i.name });
-    toast("已删除软链 " + i.name);
+    toast("已停用软链 " + i.name);
     await load(true); // 移除占用项后 reconcile：补建之前被挡住的链，并刷新 footer
   } catch (e) {
-    btn.disabled = false; btn.textContent = "删除";
-    banner("删除软链 " + i.name + " 失败：" + e.message, true);
+    btn.disabled = false; btn.textContent = "停用";
+    banner("停用软链 " + i.name + " 失败：" + e.message, true);
   }
 }
 
@@ -1690,6 +1720,28 @@ $("#search").oninput = (e) => { state.search = e.target.value; renderInventory()
 // never per-keystroke, because npx cold-start is slow).
 $("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") runOnlineSearch(); });
 $("#online-search-btn").onclick = runOnlineSearch;
+
+// 齿轮弹窗：在线结果按安装数过滤（用 find 自带的安装数，纯客户端，不查 GitHub）。
+(function wireOnlineFilter() {
+  const btn = $("#online-filter-btn"), pop = $("#online-filter-pop");
+  state.onlineMinInstalls = parseInt(localStorage.getItem("sm.onlineMin") || "0", 10) || 0;
+  const reflect = () => {
+    pop.querySelectorAll('input[name="minInstalls"]').forEach((r) => { r.checked = +r.value === state.onlineMinInstalls; });
+    btn.classList.toggle("active", state.onlineMinInstalls > 0); // 有过滤时齿轮高亮
+  };
+  reflect();
+  btn.onclick = (e) => { e.stopPropagation(); pop.classList.toggle("hidden"); };
+  pop.addEventListener("click", (e) => e.stopPropagation());
+  pop.querySelectorAll('input[name="minInstalls"]').forEach((r) => {
+    r.onchange = () => {
+      state.onlineMinInstalls = parseInt(r.value, 10) || 0;
+      localStorage.setItem("sm.onlineMin", String(state.onlineMinInstalls));
+      reflect(); renderInventory();
+    };
+  });
+  // 点别处关闭弹窗
+  document.addEventListener("click", () => pop.classList.add("hidden"));
+})();
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered
 // INLINE in the same modal (no second popup): if the URL is an https host we have
