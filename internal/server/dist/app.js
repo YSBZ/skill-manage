@@ -1026,25 +1026,35 @@ function onlineAction(r, isInstalled, isEnabled) {
   return btn;
 }
 
-// installOnline delegates `npx skills add <pkg> -g -y` via POST /api/skillssh/add.
-// Button state machine: idle→安装中(disabled)→ success(变「已安装」+刷新) / fail(复原+banner)。
+// installOnline runs the two-layer install:
+//   1. npx skills add -g -y -a universal  → install ONLY to canonical (~/.agents/skills)
+//   2. SkillManage's own linker            → symlink (enable) into the CURRENT tab dir
+// Layer 2 is SkillManage's capability, not npx's: the link is manifest-owned and
+// can be 停用 like any other. So "install where you are" at least links to the
+// directory you're looking at. Button state machine: idle→安装中→已安装 / fail(复原)。
 async function installOnline(r, btn) {
   if (installingPkg) return;
+  const target = currentTarget();
   installingPkg = r.pkg;
   btn.disabled = true; btn.textContent = "安装中…";
   try {
     const d = await api("POST", "/api/skillssh/add", { pkg: r.pkg });
-    if (d && d.ok) {
-      btn.textContent = "已安装"; // success：不复原，靠下面刷新重渲成去重态
-      toast("已安装 " + (r.skill || r.pkg) + " 到 skills.sh，可在搜索/现状视图中启用");
-      if (d.strayLinks && d.strayLinks.length) banner("注意：skills.sh 同时在 " + d.strayLinks.join("、") + " 建立了软链", false);
-      installingPkg = null;
-      // 重扫：重拉 skills.sh + 现状，新 skill 进入目录源、去重态生效
-      try { state.skillsShSkills = (await api("GET", "/api/skillssh")) || []; } catch {}
-      await fetchInventory();
-    } else {
-      throw new Error((d && (d.error || d.stderr)) || "未知错误");
+    if (!(d && d.ok)) throw new Error((d && (d.error || d.stderr)) || "未知错误");
+    // Installed to canonical. Now enable into the current directory via our linker.
+    let enabled = false, enableErr = "";
+    if (target) {
+      try {
+        await api("POST", "/api/enabled", { skill: AGENTS_NS + "/" + r.skill, target, mode: "snapshot" });
+        await api("POST", "/api/apply");
+        enabled = true;
+      } catch (e) { enableErr = e.message; }
     }
+    btn.textContent = "已安装"; // success：不复原，靠 load() 重渲成去重态
+    installingPkg = null;
+    if (enabled) toast("已安装 " + (r.skill || r.pkg) + " 并启用到 " + targetLabel(target));
+    else if (target) banner("已安装 " + (r.skill || r.pkg) + "，但启用到当前目录失败：" + enableErr, true);
+    else toast("已安装 " + (r.skill || r.pkg) + " 到 skills.sh（未选目录，未启用）");
+    await load(); // 刷新 skills.sh + 现状 + 状态，去重/启用态生效
   } catch (e) {
     installingPkg = null;
     btn.disabled = false; btn.textContent = "安装"; // fail：复原可重试
