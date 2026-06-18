@@ -3,12 +3,14 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestSkillsShAddSuccess(t *testing.T) {
 	s, fr := setupDirSource(t)
-	fr.addStdout = "✔ Installed find-skills"
+	// Real CLI success markers (verified): "✓ <skill> (copied)" + "Installed N skill".
+	fr.addStdout = "◇  Installed 1 skill\n  ✓ find-skills (copied)\n    → ~/.agents/skills/find-skills\nDone!"
 	w := httptest.NewRecorder()
 	s.handleSkillsShAdd(w, req("POST", "/api/skillssh/add", s.token, map[string]string{"pkg": "vercel-labs/skills@find-skills"}))
 	if w.Code != http.StatusOK {
@@ -38,6 +40,22 @@ func TestSkillsShAddHonestFailureExitZero(t *testing.T) {
 	}
 	if _, ok := m["error"]; !ok {
 		t.Errorf("failed add should carry an error reason")
+	}
+}
+
+func TestSkillsShAddNoMatchIsFailure(t *testing.T) {
+	s, fr := setupDirSource(t)
+	// Real CLI output for a missing package: no "Failed"/"✗", just "No matching…".
+	// Absence of a success marker must classify as failed (KTD5), with the reason.
+	fr.addStdout = "■  No matching skills found for: nonexistent-xyz\n●  Available skills:\n  - find-skills"
+	w := httptest.NewRecorder()
+	s.handleSkillsShAdd(w, req("POST", "/api/skillssh/add", s.token, map[string]string{"pkg": "vercel-labs/skills@nonexistent-xyz"}))
+	m := decodeBody(t, w)
+	if m["ok"] != false || m["status"] != "failed" {
+		t.Errorf("no-match must be failed, got %+v", m)
+	}
+	if r, _ := m["error"].(string); !strings.Contains(r, "No matching") {
+		t.Errorf("error should carry the no-match reason, got %q", m["error"])
 	}
 }
 

@@ -81,12 +81,18 @@ func (unixRunner) SkillsFind(ctx context.Context, npxPath, query string) (string
 	return out.String(), errb.String(), err
 }
 
-// SkillsAdd runs `npx skills add <pkg> -g -y`. -g forces global (user-level)
-// install into skills.sh's canonical ~/.agents/skills (KTD1: never project-level,
-// which would scatter installs); -y skips every interactive prompt (the daemon
-// has no tty). pkg is allowlist-validated by the caller (owner/repo@skill form).
+// SkillsAdd runs `npx skills add <pkg> -g -y -a universal`. The flags, all
+// verified against the real CLI:
+//   -g           global (user-level) install — never project-level (KTD1: would scatter installs)
+//   -y           skip every interactive prompt (the daemon has no tty)
+//   -a universal install ONLY to the canonical ~/.agents/skills, with NO harness
+//                symlinks (KTD4: install ≠ enable). Without -a, `-y` defaults to
+//                symlinking into ALL ~50 detected agent dirs (incl. ~/.claude,
+//                ~/.codex) — which would auto-enable everywhere and break the
+//                two-step model. `universal` is the agent id for canonical-only.
+// pkg is allowlist-validated by the caller (owner/repo@skill form).
 func (unixRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, npxPath, "skills", "add", pkg, "-g", "-y")
+	cmd := exec.CommandContext(ctx, npxPath, "skills", "add", pkg, "-g", "-y", "-a", "universal")
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()

@@ -427,13 +427,14 @@ func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stdout, stderr, err := runner.SkillsAdd(ctx, npx, pkg)
 	clean := ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")
+	// Honest classification, calibrated against the real CLI (KTD5):
+	//   success → "✓ <skill> (copied)" + "Installed" (re-install is idempotent, same
+	//             markers; we report it as installed too — harmless).
+	//   failure → no success marker; e.g. "■ No matching skills found for: X". The
+	//             CLI does NOT print "Failed"/"✗" for a missing package, so we treat
+	//             absence-of-success as failure rather than scanning for a fail word.
 	status := "installed"
-	switch {
-	case err != nil:
-		status = "failed"
-	case strings.Contains(clean, "already") || strings.Contains(clean, "已"):
-		status = "current"
-	case strings.Contains(clean, "✘") || strings.Contains(clean, "Failed") || strings.Contains(clean, "Error") || strings.Contains(clean, "not found"):
+	if err != nil || !(strings.Contains(clean, "✓") || strings.Contains(clean, "Installed") || strings.Contains(clean, "copied")) {
 		status = "failed"
 	}
 	ok := status != "failed"
@@ -442,10 +443,26 @@ func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			resp["error"] = err.Error()
 		} else {
-			resp["error"] = firstFailureLine(clean)
+			resp["error"] = skillsAddFailReason(clean)
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// skillsAddFailReason extracts the human-meaningful failure line from `skills add`
+// output (strips the CLI's box-drawing/status glyph prefixes), e.g.
+// "No matching skills found for: X" or "… does not support global skill installation".
+func skillsAddFailReason(clean string) string {
+	for _, ln := range strings.Split(clean, "\n") {
+		ln = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(ln), "■✗✘●◇│└├╮╯ "))
+		if ln == "" {
+			continue
+		}
+		if strings.Contains(ln, "No matching") || strings.Contains(ln, "Failed") || strings.Contains(ln, "Error") || strings.Contains(ln, "not found") || strings.Contains(ln, "not support") {
+			return ln
+		}
+	}
+	return "安装失败（CLI 未报告原因）"
 }
 
 // --- repos ---

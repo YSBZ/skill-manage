@@ -82,10 +82,11 @@ func (windowsRunner) SkillsFind(ctx context.Context, npxPath, query string) (str
 	return out.String(), errb.String(), err
 }
 
-// SkillsAdd runs `npx skills add <pkg> -g -y` via cmd /c — global, non-interactive
-// install into ~/.agents/skills. pkg is caller-validated (owner/repo@skill form).
+// SkillsAdd runs `npx skills add <pkg> -g -y -a universal` via cmd /c — global,
+// non-interactive, canonical-only (no harness symlinks; see runner_unix.go for the
+// flag rationale). pkg is caller-validated (owner/repo@skill form).
 func (windowsRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "add", pkg, "-g", "-y")
+	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "add", pkg, "-g", "-y", "-a", "universal")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

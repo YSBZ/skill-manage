@@ -218,10 +218,19 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v4.3.3</span>
-              <span class="cl-date">四期 · 已完成 · 更新于 2026-06-18</span>
+              <span class="cl-ver">v5.0.0</span>
+              <span class="cl-date">五期 · 进行中 · 更新于 2026-06-18</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.0 · 接入 skill.sh：在线搜索 + 安装（2026-06-18）</div>
+              <ul>
+                <li>搜索框勾选「包含线上」后，可搜 skills.sh 上可安装的 skill（点「在线搜索」或回车触发，本地搜索仍实时）。</li>
+                <li>在线结果显示安装数 / 来源 / 链接；已装的标「已安装」，不重复给安装按钮。</li>
+                <li>「安装」走 <code>npx skills add -g -y -a universal</code>：全局安装到 canonical（<code>~/.agents/skills</code>），<b>只装不自动启用</b>——启用到具体目录仍由你手动决定。</li>
+                <li>不接管 skills.sh（更新仍交其原生方式）；安装成功/失败如实提示。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v4.3.3 · 修复版本徽章显示（2026-06-18）</div>
               <ul>
