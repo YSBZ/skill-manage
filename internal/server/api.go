@@ -2530,6 +2530,18 @@ func (s *Server) handleAddEnabled(w http.ResponseWriter, r *http.Request) {
 			kept = append(kept, x)
 		}
 		s.cfg.Enabled = kept
+	} else if i := strings.LastIndexByte(e.Skill, '/'); i > 0 {
+		// Conversely: adding an individual "<ns>/<skill>" when a whole-source
+		// follow "<ns>/*" already covers this target is redundant — the follow
+		// owns the link. Skip it, otherwise it lingers as a separate entry that
+		// survives canceling the follow (then stays enabled when it shouldn't).
+		followSel := e.Skill[:i] + "/*"
+		for _, x := range s.cfg.Enabled {
+			if x.Skill == followSel && harness.Expand(x.Target) == wantTarget {
+				writeJSON(w, http.StatusOK, map[string]bool{"ok": true}) // already covered by follow
+				return
+			}
+		}
 	}
 	for _, x := range s.cfg.Enabled {
 		if x.Skill == e.Skill && harness.Expand(x.Target) == wantTarget {
