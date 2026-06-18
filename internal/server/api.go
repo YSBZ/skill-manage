@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plugin-skill", s.requireAuth(s.handlePluginSkillDetail))
 	mux.HandleFunc("GET /api/skill-at", s.requireAuth(s.handleSkillAt))
 	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
+	mux.HandleFunc("GET /api/skillssh/find", s.requireAuth(s.handleSkillsShFind))
+	mux.HandleFunc("POST /api/skillssh/add", s.requireAuth(s.handleSkillsShAdd))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
 	mux.HandleFunc("GET /api/conflicts", s.requireAuth(s.handleConflicts))
 	mux.HandleFunc("POST /api/update-now", s.requireAuth(s.handleUpdateNow))
@@ -248,6 +251,199 @@ func (s *Server) handleUpdateSkillsShAll(w http.ResponseWriter, r *http.Request)
 	resp := map[string]any{"ok": err == nil, "stdout": stdout, "stderr": stderr}
 	if err != nil {
 		resp["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// skillsShResult is one parsed online search hit from `npx skills find`.
+type skillsShResult struct {
+	Pkg         string `json:"pkg"`   // owner/repo@skill — the exact arg for `skills add`
+	Owner       string `json:"owner"` // owner segment, for display
+	Repo        string `json:"repo"`  // repo segment, for display
+	Skill       string `json:"skill"` // skill segment, for display
+	Installs    int    `json:"installs"`
+	InstallsRaw string `json:"installsRaw"` // original "484.6K" string, kept for display
+	URL         string `json:"url"`
+}
+
+// skillsPkgRe is the allowlist for a skills.sh package id (owner/repo@skill). It
+// is deliberately NOT pluginRefRe/skillNameRe — those forbid the slash this form
+// requires. Each segment must start alnum (blocks a leading "-" flag and ".."
+// traversal), and the @-form is mandatory; the skill segment may contain ":".
+var skillsPkgRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._:-]*$`)
+
+// skillsFindLineRe matches a result line of `npx skills find` after ANSI strip:
+// "owner/repo@skill   484.6K installs". pkg is the strict capture (load-bearing
+// for add + dedup); the installs count is lenient (sort-only).
+var skillsFindLineRe = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._:-]*)\s+([0-9][0-9.]*[KMBkmb]?)\s+installs?\b`)
+
+// skillsFindURLRe pulls the http(s) URL off the "└ https://skills.sh/…" line.
+var skillsFindURLRe = regexp.MustCompile(`(https?://[^\s]+)`)
+
+// parseInstalls turns "484.6K" / "1.2M" / "1K" / "42" into an int (sort key).
+// Returns 0 on any parse failure — installs is display/sort only, never gates add.
+func parseInstalls(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	mult := 1.0
+	switch raw[len(raw)-1] {
+	case 'K', 'k':
+		mult, raw = 1e3, raw[:len(raw)-1]
+	case 'M', 'm':
+		mult, raw = 1e6, raw[:len(raw)-1]
+	case 'B', 'b':
+		mult, raw = 1e9, raw[:len(raw)-1]
+	}
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0
+	}
+	return int(f * mult)
+}
+
+// splitPkg breaks owner/repo@skill into its three display parts. Lenient: missing
+// segments come back empty rather than erroring (the caller already validated pkg).
+func splitPkg(pkg string) (owner, repo, skill string) {
+	left := pkg
+	if at := strings.IndexByte(pkg, '@'); at >= 0 {
+		left, skill = pkg[:at], pkg[at+1:]
+	}
+	if sl := strings.IndexByte(left, '/'); sl >= 0 {
+		owner, repo = left[:sl], left[sl+1:]
+	} else {
+		repo = left
+	}
+	return
+}
+
+// parseSkillsFind parses `npx skills find` text output (the CLI has no --json for
+// find, KTD2). Strips ANSI, extracts each "pkg N installs" line + its following
+// "└ url" line. Unparseable lines are skipped (format-drift tolerance); a parsed
+// pkg that would not round-trip through skillsPkgRe is dropped (can't be installed).
+// Results are sorted by install count, descending.
+func parseSkillsFind(stdout string) []skillsShResult {
+	lines := strings.Split(ansiRe.ReplaceAllString(stdout, ""), "\n")
+	out := []skillsShResult{}
+	for i := 0; i < len(lines); i++ {
+		m := skillsFindLineRe.FindStringSubmatch(strings.TrimSpace(lines[i]))
+		if m == nil {
+			continue
+		}
+		pkg := m[1]
+		if !skillsPkgRe.MatchString(pkg) {
+			continue
+		}
+		owner, repo, skill := splitPkg(pkg)
+		res := skillsShResult{Pkg: pkg, Owner: owner, Repo: repo, Skill: skill, Installs: parseInstalls(m[2]), InstallsRaw: m[2]}
+		// URL is on one of the next 1-2 lines ("└ https://…").
+		for j := i + 1; j < len(lines) && j <= i+2; j++ {
+			if um := skillsFindURLRe.FindStringSubmatch(lines[j]); um != nil {
+				res.URL = um[1]
+				break
+			}
+		}
+		out = append(out, res)
+	}
+	sort.SliceStable(out, func(a, b int) bool { return out[a].Installs > out[b].Installs })
+	return out
+}
+
+// handleSkillsShFind searches the skills.sh online registry via `npx skills find`
+// (KTD2: text output, parsed). Guards: empty query → no npx call; a query that
+// would be read as a flag (leading "-") → 400 (flag-injection guard). npx absent
+// → {available:false} so the UI degrades the online section (R7) without touching
+// local search.
+func (s *Server) handleSkillsShFind(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsShResult{}})
+		return
+	}
+	if strings.HasPrefix(q, "-") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "搜索词不能以 - 开头"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 120*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.SkillsFind(ctx, npx, q)
+	if err != nil {
+		// Honest: surface the failure rather than reporting an empty result set.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"available": true, "results": []skillsShResult{},
+			"error": firstFailureLine(ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": parseSkillsFind(stdout)})
+}
+
+// skillsAddReq is the body of POST /api/skillssh/add.
+type skillsAddReq struct {
+	Pkg string `json:"pkg"`
+}
+
+// handleSkillsShAdd installs a skills.sh package globally into the canonical
+// ~/.agents/skills via `npx skills add <pkg> -g -y` (KTD1). Non-ownership: we only
+// shell out; updates go back through `npx skills update`. Honest outcome (KTD5):
+// the CLI is not exit-code-truthful, so a "✘ … Failed" with exit 0 is classified
+// as failed, not a silent success. The new skill surfaces on the next /api/skillssh
+// + inventory fetch (computed on demand), so no server-side cache to invalidate.
+func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
+	var req skillsAddReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	pkg := strings.TrimSpace(req.Pkg)
+	if !skillsPkgRe.MatchString(pkg) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的 skill 包名（应形如 owner/repo@skill）"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills add"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 300*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.SkillsAdd(ctx, npx, pkg)
+	clean := ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")
+	status := "installed"
+	switch {
+	case err != nil:
+		status = "failed"
+	case strings.Contains(clean, "already") || strings.Contains(clean, "已"):
+		status = "current"
+	case strings.Contains(clean, "✘") || strings.Contains(clean, "Failed") || strings.Contains(clean, "Error") || strings.Contains(clean, "not found"):
+		status = "failed"
+	}
+	ok := status != "failed"
+	resp := map[string]any{"ok": ok, "status": status, "stdout": stdout, "stderr": stderr}
+	if !ok {
+		if err != nil {
+			resp["error"] = err.Error()
+		} else {
+			resp["error"] = firstFailureLine(clean)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1527,6 +1723,13 @@ type skillsRunner interface {
 	// ListMarketplaces runs `<cliPath> plugin marketplace list --json` to tell
 	// remote marketplaces from local directory ones.
 	ListMarketplaces(ctx context.Context, cliPath string) (stdout, stderr string, err error)
+	// SkillsFind runs `npx skills find <query>` to search the skills.sh online
+	// registry. Output is text (the CLI has no --json for find); the caller parses.
+	SkillsFind(ctx context.Context, npxPath, query string) (stdout, stderr string, err error)
+	// SkillsAdd runs `npx skills add <pkg> -g -y` to install a skill globally into
+	// skills.sh's canonical (~/.agents/skills), non-interactively. We never take
+	// ownership — updates go back through `npx skills update`.
+	SkillsAdd(ctx context.Context, npxPath, pkg string) (stdout, stderr string, err error)
 }
 
 // skillNameRe bounds the skill name passed to npx: a leading alnum/underscore

@@ -18,6 +18,15 @@ type fakeRunner struct {
 	stdout string
 	stderr string
 	err    error
+
+	// per-op overrides for SkillsFind / SkillsAdd (fall back to stdout/err when
+	// empty), plus capture of the last args so handler tests can assert them.
+	findStdout, findStderr string
+	findErr                error
+	lastFindQuery          string
+	addStdout, addStderr   string
+	addErr                 error
+	lastAddPkg             string
 }
 
 func (f *fakeRunner) UpdateSkill(ctx context.Context, npxPath, name string) (string, string, error) {
@@ -40,6 +49,24 @@ func (f *fakeRunner) ListPlugins(ctx context.Context, cliPath string) (string, s
 }
 
 func (f *fakeRunner) ListMarketplaces(ctx context.Context, cliPath string) (string, string, error) {
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) SkillsFind(ctx context.Context, npxPath, query string) (string, string, error) {
+	f.calls++
+	f.lastFindQuery = query
+	if f.findStdout != "" || f.findStderr != "" || f.findErr != nil {
+		return f.findStdout, f.findStderr, f.findErr
+	}
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, string, error) {
+	f.calls++
+	f.lastAddPkg = pkg
+	if f.addStdout != "" || f.addStderr != "" || f.addErr != nil {
+		return f.addStdout, f.addStderr, f.addErr
+	}
 	return f.stdout, f.stderr, f.err
 }
 

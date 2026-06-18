@@ -70,3 +70,25 @@ func (windowsRunner) ListMarketplaces(ctx context.Context, cliPath string) (stri
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// SkillsFind runs `npx skills find <query>` via cmd /c. query is caller-guarded
+// (non-empty, no leading "-").
+func (windowsRunner) SkillsFind(ctx context.Context, npxPath, query string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "find", query)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// SkillsAdd runs `npx skills add <pkg> -g -y` via cmd /c — global, non-interactive
+// install into ~/.agents/skills. pkg is caller-validated (owner/repo@skill form).
+func (windowsRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "add", pkg, "-g", "-y")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}

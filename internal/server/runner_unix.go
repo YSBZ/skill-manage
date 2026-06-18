@@ -69,3 +69,26 @@ func (unixRunner) ListMarketplaces(ctx context.Context, cliPath string) (string,
 	err := cmd.Run()
 	return out.String(), errb.String(), err
 }
+
+// SkillsFind runs `npx skills find <query>` to search the skills.sh registry.
+// query is allowlist-guarded by the caller (rejected if empty or leading "-",
+// which the CLI would parse as a flag); discrete argv, never a shell.
+func (unixRunner) SkillsFind(ctx context.Context, npxPath, query string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, npxPath, "skills", "find", query)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// SkillsAdd runs `npx skills add <pkg> -g -y`. -g forces global (user-level)
+// install into skills.sh's canonical ~/.agents/skills (KTD1: never project-level,
+// which would scatter installs); -y skips every interactive prompt (the daemon
+// has no tty). pkg is allowlist-validated by the caller (owner/repo@skill form).
+func (unixRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, npxPath, "skills", "add", pkg, "-g", "-y")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
