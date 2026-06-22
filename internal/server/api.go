@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,6 +48,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/local-skill", s.requireAuth(s.handleDeleteLocalSkill))
 	mux.HandleFunc("POST /api/ignore-plugins", s.requireAuth(s.handleSetIgnorePlugins))
 	mux.HandleFunc("POST /api/adopt", s.requireAuth(s.handleAdopt))
+	mux.HandleFunc("POST /api/contribute", s.requireAuth(s.handleContribute))
+	mux.HandleFunc("POST /api/quickupload", s.requireAuth(s.handleQuickUpload))
+	mux.HandleFunc("GET /api/repo-drift", s.requireAuth(s.handleRepoDrift))
+	mux.HandleFunc("GET /api/skill-authorship", s.requireAuth(s.handleSkillAuthorship))
+	mux.HandleFunc("GET /api/repo-creators", s.requireAuth(s.handleRepoCreators))
+	mux.HandleFunc("POST /api/upload", s.requireAuth(s.handleUpload))
+	mux.HandleFunc("DELETE /api/repo-skill", s.requireAuth(s.handleDeleteRepoSkill))
+	mux.HandleFunc("POST /api/move-local", s.requireAuth(s.handleMoveLocal))
+	mux.HandleFunc("POST /api/move", s.requireAuth(s.handleMove))
 	mux.HandleFunc("POST /api/local-source", s.requireAuth(s.handleAddLocalSource))
 	mux.HandleFunc("DELETE /api/local-source", s.requireAuth(s.handleRemoveLocalSource))
 	mux.HandleFunc("POST /api/enabled", s.requireAuth(s.handleAddEnabled))
@@ -90,7 +100,18 @@ func dirHasContent(dir string) bool {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
+	if code >= 400 { // log error responses to the daemon log for diagnosis
+		if b, err := json.Marshal(v); err == nil {
+			log.Printf("api error %d: %s", code, b)
+		}
+	}
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeErr writes a {error_code, error} JSON body with the given status — the
+// uniform error shape used across the API.
+func writeErr(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]string{"error_code": code, "error": msg})
 }
 
 func readJSON(r *http.Request, v any) error {
@@ -236,8 +257,7 @@ func (s *Server) handleListSkillsSh(w http.ResponseWriter, r *http.Request) {
 // handleUpdateSkillsShAll runs `npx skills update` (no skill arg) to update every
 // skills.sh-managed skill at once. Delegated update only — we never take ownership.
 func (s *Server) handleUpdateSkillsShAll(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	s.mu.Lock()
@@ -358,8 +378,7 @@ func parseSkillsFind(stdout string) []skillsShResult {
 // → {available:false} so the UI degrades the online section (R7) without touching
 // local search.
 func (s *Server) handleSkillsShFind(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -404,8 +423,7 @@ type skillsAddReq struct {
 // as failed, not a silent success. The new skill surfaces on the next /api/skillssh
 // + inventory fetch (computed on demand), so no server-side cache to invalidate.
 func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req skillsAddReq
@@ -479,8 +497,7 @@ type skillsRemoveReq struct {
 // and skills.sh's) plus the real file. Each tool removes only what it owns —
 // invariant ④ holds (we never rm ~/.agents ourselves; skills.sh does).
 func (s *Server) handleSkillsShRemove(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req skillsRemoveReq
@@ -662,8 +679,7 @@ func (s *Server) handleRemoveRepo(w http.ResponseWriter, r *http.Request) {
 // the canonical copy, so it is gated like handleRemoveRepo: explicit + confirmed.
 // Git-repo skills never reach here (the UI offers delete only for @local).
 func (s *Server) handleDeleteLocalSkill(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req strayLinkReq // reuse {name} (target unused here)
@@ -714,8 +730,7 @@ func (s *Server) handleDeleteLocalSkill(w http.ResponseWriter, r *http.Request) 
 // browser daemon (both on the same machine). Only http(s) with a host is allowed
 // — never arbitrary strings handed to the OS opener.
 func (s *Server) handleOpenExternal(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req struct {
@@ -1327,6 +1342,11 @@ type inventoryItem struct {
 	Follow      bool               `json:"follow,omitempty"`     // enabled via a whole-source follow (source/*) → no per-item disable
 	LinkTarget  string             `json:"linkTarget,omitempty"` // for unknown links: where the symlink resolves (反查源头)
 	Collision   bool               `json:"collision,omitempty"`
+	// Dirty/DirtyKind flag a git-source skill with unpushed local changes
+	// (新增/修改/已提交未推送), computed live so 快捷上传 appears the moment the
+	// user edits — without waiting for the next sync.
+	Dirty     bool              `json:"dirty,omitempty"`
+	DirtyKind gitsync.DriftKind `json:"dirtyKind,omitempty"`
 }
 
 type inventoryResp struct {
@@ -1371,6 +1391,12 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 	localSrcMap := s.dirSourceMapLocked()
 	reposRoot, personalStore := s.reposRoot, s.personalStore
 	targets := append([]string(nil), s.cfg.Targets...)
+	// Per-repo branch map + syncer handle for live git-drift detection below.
+	repoBranch := map[string]string{}
+	for _, rc := range s.cfg.Repos {
+		repoBranch[reconcile.RepoName(rc.URL)] = rc.Branch
+	}
+	syncer := s.syncer
 	s.mu.Unlock()
 
 	if configured == "" {
@@ -1411,6 +1437,21 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, inventoryResp{Target: configured, Scope: scope, Items: []inventoryItem{}})
 		return
 	}
+	// driftByRepo memoizes one live Drift() per git repo present in this target,
+	// so N skills from the same repo cost a single (local, no-network) git probe.
+	driftByRepo := map[string]gitsync.Drift{}
+	driftFor := func(repo string) gitsync.Drift {
+		if syncer == nil || repo == "" {
+			return gitsync.Drift{}
+		}
+		if d, ok := driftByRepo[repo]; ok {
+			return d
+		}
+		d := syncer.Drift(r.Context(), filepath.Join(reposRoot, repo), repoBranch[repo])
+		driftByRepo[repo] = d
+		return d
+	}
+
 	items := make([]inventoryItem, 0, len(skills))
 	for _, sk := range skills {
 		res := clf.Classify(sk, configured)
@@ -1430,6 +1471,11 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.Kind == source.KindSkillsSh {
 			it.SourceURL = validHTTPURL(res.SourceURL) // strip non-http(s) (XSS guard)
+		}
+		if res.Kind == source.KindGit {
+			if k, has := driftFor(res.Repo).Has(sk.LinkName); has {
+				it.Dirty, it.DirtyKind = true, k
+			}
 		}
 		if res.Kind == source.KindUnknown {
 			// 反查源头：先看一跳指向，再尽量沿链完全解析到磁盘真实路径
@@ -1592,8 +1638,7 @@ type strayLinkReq struct {
 // that is not a symlink (so a real directory's data is never deleted); and
 // refuses links recorded in our manifest (use disable for those).
 func (s *Server) handleDeleteStrayLink(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req strayLinkReq
@@ -1669,8 +1714,7 @@ func (s *Server) handleDeleteStrayLink(w http.ResponseWriter, r *http.Request) {
 // symlink — those go through 停用/删除软链), it must NOT be manifest-owned, and it
 // must actually contain a SKILL.md (so we never RemoveAll an arbitrary folder).
 func (s *Server) handleDeleteHandwritten(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req strayLinkReq
@@ -1973,8 +2017,7 @@ type dirSourceUpdateReq struct {
 // name cannot steer npx — the name must be a real directory currently under
 // ~/.agents/skills.
 func (s *Server) handleDirSourceUpdate(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req dirSourceUpdateReq
@@ -2024,8 +2067,7 @@ type pluginUpdateReq struct {
 // for plugins the outdated check confirmed are updatable, so it passes the exact
 // id + scope (a bare name or wrong scope makes the CLI report "not found").
 func (s *Server) handlePluginUpdate(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req pluginUpdateReq
@@ -2191,6 +2233,17 @@ func originLoopbackOK(r *http.Request) bool {
 	}
 }
 
+// originGuard is the CSRF gate for mutating handlers: it writes the uniform 403
+// and reports false when the request is cross-origin, so callers can guard with
+// `if !originGuard(w, r) { return }`. Returns true (writes nothing) when allowed.
+func originGuard(w http.ResponseWriter, r *http.Request) bool {
+	if !originLoopbackOK(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return false
+	}
+	return true
+}
+
 type pluginPrefReq struct {
 	Ignore bool `json:"ignore"`
 }
@@ -2214,11 +2267,12 @@ func (s *Server) handleSetIgnorePlugins(w http.ResponseWriter, r *http.Request) 
 }
 
 type adoptReq struct {
-	ID     string `json:"id"`
-	Root   string `json:"root"`   // absolute source root from /api/adoptable (relocate path)
-	Src    string `json:"src"`    // plugin skill source dir (import path)
-	Target string `json:"target"` // sync dir to map an imported plugin skill into
-	Plugin bool   `json:"plugin"` // true → import-copy from a plugin tree, don't relocate
+	ID          string `json:"id"`
+	Root        string `json:"root"`        // absolute source root from /api/adoptable (relocate path)
+	Src         string `json:"src"`         // plugin skill source dir (import path)
+	Target      string `json:"target"`      // sync dir to map an imported plugin skill into
+	Plugin      bool   `json:"plugin"`      // true → import-copy from a plugin tree, don't relocate
+	Description string `json:"description"` // editable 简述 recorded in the 清单 (备份 always records name + 简述)
 }
 
 func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
@@ -2250,7 +2304,7 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if canonical == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown adopt root"})
+		writeErr(w, http.StatusBadRequest, "invalid", "unknown adopt root")
 		return
 	}
 	if err := adopt.Adopt(req.ID, wantRoot, s.personalStore, mgr, &s.manifest); err != nil {
@@ -2259,7 +2313,7 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ae) {
 			code = ae.Code
 		}
-		writeJSON(w, adoptStatus(code), map[string]string{"error_code": code, "error": err.Error()})
+		writeErr(w, adoptStatus(code), code, err.Error())
 		return
 	}
 	// Record the in-place link as a first-class mapping (@local/<id> → root) so
@@ -2270,12 +2324,19 @@ func (s *Server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 		Skill: reconcile.LocalNamespace + "/" + req.ID, Target: canonical, Mode: config.ModeSnapshot,
 	})
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error_code": "save_failed", "error": err.Error()})
+		writeErr(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
 	if err := s.persistConfigLocked(w); err != nil {
 		return
 	}
+	// 备份总要记录名称 + 简述到清单：优先用弹窗里编辑的简述，空则回退 SKILL.md。
+	// 否则之后从 local 往 git 移动时会缺简述（commit 信息 / 清单定位）。
+	desc := sanitizeCommitDesc(req.Description)
+	if desc == "" {
+		desc = skillDescription(filepath.Join(harness.Expand(s.personalStore), req.ID))
+	}
+	s.syncContrib(req.ID, desc, "local")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -2428,7 +2489,7 @@ func (s *Server) handleAdoptPlugin(w http.ResponseWriter, req adoptReq) {
 	s.mu.Lock()
 	if !s.cfg.IncludePluginSkills {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "plugin import is disabled"})
+		writeErr(w, http.StatusBadRequest, "invalid", "plugin import is disabled")
 		return
 	}
 	canonical, srcAllowed := "", false
@@ -2443,12 +2504,12 @@ func (s *Server) handleAdoptPlugin(w http.ResponseWriter, req adoptReq) {
 	}
 	if canonical == "" {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "unknown target"})
+		writeErr(w, http.StatusBadRequest, "invalid", "unknown target")
 		return
 	}
 	if !srcAllowed {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "invalid", "error": "source is not under a known plugin tree"})
+		writeErr(w, http.StatusBadRequest, "invalid", "source is not under a known plugin tree")
 		return
 	}
 	if err := adopt.Import(src, req.ID, s.personalStore); err != nil {
@@ -2458,7 +2519,7 @@ func (s *Server) handleAdoptPlugin(w http.ResponseWriter, req adoptReq) {
 		if errors.As(err, &ae) {
 			code = ae.Code
 		}
-		writeJSON(w, adoptStatus(code), map[string]string{"error_code": code, "error": err.Error()})
+		writeErr(w, adoptStatus(code), code, err.Error())
 		return
 	}
 	s.cfg.Enabled = ensureEnabled(s.cfg.Enabled, config.EnabledEntry{
@@ -2939,8 +3000,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateRepo fetches+reconciles a single repo (the per-repo「更新」button).
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
-	if !originLoopbackOK(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+	if !originGuard(w, r) {
 		return
 	}
 	var req struct {
@@ -2960,11 +3020,15 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	st := s.repoStatus[url]
 	s.mu.Unlock()
+	if st.State == string(gitsync.ActionFailed) || strings.TrimSpace(st.Error) != "" {
+		log.Printf("update-repo %s: state=%s error=%s", url, st.State, st.Error)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"summary": sum,
 		"dirty":   st.Dirty && st.State == string(gitsync.ActionDirtySkip),
 		"state":   st.State,
 		"error":   st.Error,
+		"drift":   st.Drift, // per-skill 新增/修改/已提交未推送 detail for the yield dialog
 	})
 }
 

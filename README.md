@@ -14,7 +14,6 @@ make build          # 构建 host 二进制 ./skillmanage
 ```
 
 - 中央文件夹默认 `~/.skillmanage`（含 config.yaml、manifest.yaml、local 受管存储、lock、address、token）；用 `--central <dir>` 覆盖。
-- 首次运行自动注册开机自启；`--no-autostart` 关闭。
 - 浏览器 UI 里管理一切；标题旁的 `?` 有完整使用指南。
 
 ## 功能
@@ -23,7 +22,6 @@ make build          # 构建 host 二进制 ./skillmanage
 - **选择性 / 整仓同步**：每个 tab 独立维护映射——勾选要同步的 skill，或对仓库「全选并跟随」整仓（上游新增自动加链、删除自动清链）。
 - **收编本地 skill**：把同步目录里你手写、未纳管的真身 skill 移入受管存储并原位软链，成为可跨 harness 复用的来源。可选「忽略 plugin 里的 skill」（默认忽略）；取消勾选会额外扫描该 tab 的插件目录（如 `~/.claude/plugins`）并列出，对它们「收编」走复制导入、不改动插件原件。
 - **更新**：每天定时自动；「立即更新」手动触发；「强制更新」丢弃本地改动与上游一致。
-- **开机自启**：登录时自动拉起 daemon。
 - **导入 / 导出**：导出 / 导入仓库列表，便于换机重建（manifest 不随导出，避免误删别机链接）。
 
 ## git 仓与鉴权

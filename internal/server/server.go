@@ -39,6 +39,9 @@ type RepoStatus struct {
 	// HasUpdate is set by the on-demand 检查更新 endpoint when origin is ahead of
 	// the local mirror — a hint to run 立即更新. Cleared after a sync.
 	HasUpdate bool `json:"hasUpdate,omitempty"`
+	// Drift carries per-skill local-change detail when Dirty is set (新增/修改/
+	// 已提交未推送), so the UI can show what an update preserved and offer 快捷上传.
+	Drift gitsync.Drift `json:"drift,omitempty"`
 }
 
 // isAuthError reports whether a git error message indicates a credentials/key
@@ -107,6 +110,40 @@ type Server struct {
 	firstRun    bool
 	repoStatus  map[string]RepoStatus
 	lastSummary reconcile.Summary
+
+	// repoLocks serializes git working-tree operations on a single repo dir:
+	// a sync's fetch/reset/clean must not interleave with a contribute or
+	// quick-upload's add/commit/push on the same dir (else clean -fd could
+	// delete a just-relocated skill, or reset collide with an in-flight commit).
+	// Keyed by absolute repo dir. Guarded by repoLockMu.
+	repoLockMu sync.Mutex
+	repoLocks  map[string]*sync.Mutex
+}
+
+// repoLock returns the per-repo mutex for dir, creating it on first use. Callers
+// must Lock/Unlock it around any operation that mutates the repo working tree.
+func (s *Server) repoLock(dir string) *sync.Mutex {
+	s.repoLockMu.Lock()
+	defer s.repoLockMu.Unlock()
+	if s.repoLocks == nil {
+		s.repoLocks = map[string]*sync.Mutex{}
+	}
+	m, ok := s.repoLocks[dir]
+	if !ok {
+		m = &sync.Mutex{}
+		s.repoLocks[dir] = m
+	}
+	return m
+}
+
+// syncRepoLocked runs a sync of one repo dir under that dir's per-repo lock, so
+// a daily/manual sync never interleaves with an in-flight contribute or
+// quick-upload on the same working tree.
+func (s *Server) syncRepoLocked(ctx context.Context, dir, url string, opts gitsync.Options) gitsync.Result {
+	lk := s.repoLock(dir)
+	lk.Lock()
+	defer lk.Unlock()
+	return s.syncer.Sync(ctx, dir, url, opts)
 }
 
 // SetBaseContext sets the daemon-lifetime parent context for request-detached
@@ -351,8 +388,8 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 		}
 		name := reconcile.RepoName(repo.URL)
 		dir := filepath.Join(s.reposRoot, name)
-		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
-		st := RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty}
+		res := s.syncRepoLocked(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
+		st := RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty, Drift: res.Drift}
 		if res.Err != nil {
 			// Surface git's actual stderr (the useful part) — res.Err alone is just
 			// "exit status 128". Both feed auth detection.
@@ -377,6 +414,7 @@ func (s *Server) SyncAll(ctx context.Context, force bool) reconcile.Summary {
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
 	}
+	s.pruneStaleEnabledLocked(&sum)
 	s.lastSummary = sum
 	return sum
 }
@@ -409,8 +447,8 @@ func (s *Server) SyncOne(ctx context.Context, url string, force bool) reconcile.
 		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: "failed", Error: gitErr}
 	} else {
 		dir := filepath.Join(reposRoot, name)
-		res := s.syncer.Sync(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
-		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty}
+		res := s.syncRepoLocked(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
+		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty, Drift: res.Drift}
 		if res.Err != nil {
 			st.Error = res.Err.Error()
 			if e := strings.TrimSpace(res.Stderr); e != "" {
@@ -428,8 +466,33 @@ func (s *Server) SyncOne(ctx context.Context, url string, force bool) reconcile.
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
 	}
+	s.pruneStaleEnabledLocked(&sum)
 	s.lastSummary = sum
 	return sum
+}
+
+// pruneStaleEnabledLocked drops enabled entries reconcile flagged as stale (their
+// snapshot skill no longer exists in a successfully-scanned repo — dead leftovers
+// from an earlier move/delete) and persists config. Caller holds s.mu. This is
+// what previously surfaced as a hard "skill not found in repo" sync failure.
+func (s *Server) pruneStaleEnabledLocked(sum *reconcile.Summary) {
+	if len(sum.Stale) == 0 {
+		return
+	}
+	dead := map[string]bool{}
+	for _, sel := range sum.Stale {
+		dead[sel] = true
+	}
+	kept := s.cfg.Enabled[:0]
+	for _, e := range s.cfg.Enabled {
+		if !dead[e.Skill] {
+			kept = append(kept, e)
+		}
+	}
+	s.cfg.Enabled = kept
+	if err := config.SaveConfig(s.centralDir, s.cfg); err != nil {
+		sum.Errors = append(sum.Errors, fmt.Sprintf("save config (prune stale): %v", err))
+	}
 }
 
 // ReconcileOnly re-applies links from the current config without pulling git.
@@ -444,6 +507,7 @@ func (s *Server) ReconcileOnly() reconcile.Summary {
 	if err := config.SaveManifest(s.centralDir, s.manifest); err != nil {
 		sum.Errors = append(sum.Errors, fmt.Sprintf("save manifest: %v", err))
 	}
+	s.pruneStaleEnabledLocked(&sum)
 	s.lastSummary = sum
 	return sum
 }

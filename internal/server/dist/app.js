@@ -129,6 +129,24 @@ const ADOPT_ERR = {
   name_taken: "受管存储已有同名 skill（另一 agent 收编过），请先改名",
 };
 
+// 贡献到 git 仓 / 快捷上传 的 error_code → 用户文案。push 失败诚实分类（凭据无写
+// 权限 / 非快进 / 网络），本地提交一律保留，可后续「快捷上传」重试。
+const CONTRIB_ERR = {
+  push_auth: "推送被拒，可能凭据无写权限——本地提交已保留，请配置有写权限的凭据后用「快捷上传」重试",
+  push_rejected: "推送被拒（远端有新提交）——请先「更新」同步远端后再用「快捷上传」重试，本地提交已保留",
+  push_network: "推送失败（网络错误）——本地提交已保留，可稍后用「快捷上传」重试",
+  push_failed: "推送失败——本地提交已保留，可稍后用「快捷上传」重试",
+  repo_missing: "目标仓尚未克隆，请先「更新」该仓",
+  no_git: "git 不可用，无法贡献",
+  invalid: "非法的仓名或 skill 名",
+  not_found: "该 skill 不在仓内",
+  name_taken: "目标仓已存在同名 skill，请改名后再贡献",
+  copy_failed: "原 skill 未动，请检查磁盘空间或权限",
+  verify_failed: "原 skill 未动，复制不完整",
+  branch_failed: "无法解析推送分支",
+  save_failed: "配置保存失败",
+};
+
 const harnessClass = (h) => (h === "codex" ? "st-linked-codex" : h === "cc" ? "st-cc" : "st-unknown");
 const LOCAL_NS = "@local";
 const AGENTS_NS = "@agents"; // skills.sh shared dir namespace (~/.agents/skills)
@@ -146,16 +164,18 @@ const SRC = {
 };
 
 let bannerTimer = null;
-function banner(msg, isErr) {
+function banner(msg, isErr, sticky) {
   const b = $("#banner");
   if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
-  if (!msg) { b.classList.add("hidden"); return; }
+  if (!msg) { b.classList.add("hidden"); delete b.dataset.sticky; return; }
   b.textContent = msg;
   b.title = "点击关闭";
   b.className = "banner" + (isErr ? " err" : "");
-  b.onclick = () => b.classList.add("hidden");
+  if (sticky) b.dataset.sticky = "1"; else delete b.dataset.sticky;
+  b.onclick = () => { b.classList.add("hidden"); delete b.dataset.sticky; };
   // 浮层提示自动消失，避免长期遮挡（错误停留更久）。点击可立即关闭。
-  bannerTimer = setTimeout(() => b.classList.add("hidden"), isErr ? 8000 : 4000);
+  // sticky=true 时不自动消失（需点击关闭）——用于需要看清/截图的报错；load() 也不会清它。
+  if (!sticky) bannerTimer = setTimeout(() => b.classList.add("hidden"), isErr ? 8000 : 4000);
 }
 
 // toast shows a transient confirmation (build/teardown link feedback, R4.2).
@@ -225,8 +245,12 @@ async function load(sync) {
   await fetchInventory();
   if (state.status.gitError) {
     banner("未检测到 git：" + state.status.gitError + "。请安装 Git 并确保在 PATH 中，然后重启本工具——否则无法拉取/更新仓库。", true);
-  } else {
-    banner(repos.length === 0 && state.targets.length === 0 ? "还没有仓库。在左侧添加一个 git skill 仓开始。" : "");
+  } else if (repos.length === 0 && state.targets.length === 0) {
+    banner("还没有仓库。在左侧添加一个 git skill 仓开始。");
+  } else if ($("#banner").dataset.sticky !== "1") {
+    // 清掉 load 自己的引导提示，但绝不清掉刚弹出的常驻错误（同步/上传失败等）——
+    // 之前这里无条件 banner("") 把紧接其后的错误条一闪即灭，根本看不清。
+    banner("");
   }
 }
 
@@ -246,7 +270,7 @@ function renderStats() {
   el.innerHTML = "";
   el.append(ce("span", { innerHTML: `仓库 <b>${repos}</b>`, title: "已登记的 git 仓数量" }));
   el.append(ce("span", { innerHTML: `收录 skills <b>${total}</b>`, title: `SkillManage 一共收录管控的 skill 数：git 源 + 本地源 ${catalog} 个，npx(skills.sh) 源 ${npx} 个。` }));
-  const c = ce("span", { innerHTML: cfN ? `冲突 <b>${cfN}</b>` : `冲突 <b>无</b>`, title: "跨源体检：名称重复 / 关键词重叠——点击查看" });
+  const c = ce("span", { innerHTML: `冲突 <b>${cfN || 0}</b>`, title: "跨源体检：名称重复 / 关键词重叠——点击查看" });
   c.className = (cfN ? "stat-warn " : "") + "clickable-stat";
   c.onclick = openConflictModal;
   el.append(c);
@@ -332,14 +356,14 @@ function renderRepos() {
   gitImport.onclick = importRepos;
   const addBtn = ce("button", { className: "small", textContent: "添加", title: "添加一个 git 仓作为源（弹窗输入地址与分支）" });
   addBtn.onclick = openGitRepoModal;
-  // 导入 / 导出 / 添加 归到一起、都靠左。
-  addRow.append(gitImport, gitExport, addBtn);
+  // 导入 / 导出 靠左，添加 靠右（中间弹性间隔推开）。
+  addRow.append(gitImport, gitExport, ce("span", { className: "group-spacer" }), addBtn);
   ul.append(addRow);
   (state.status.repos || []).forEach((repo) => {
     const host = httpsHost(repo.url);
     // 整张卡片可点击打开「该仓库的 skill」弹窗；卡片内的按钮/圆点自行 stopPropagation。
     const li = ce("li", { className: "repo-card clickable", title: "查看该仓库内的 skill" });
-    li.onclick = () => openRepoSkills(repo.name, {});
+    li.onclick = () => openRepoSkills(repo.name, { git: true });
     const top = ce("div", { className: "repo-top" });
     const dotKind = repoDot(repo);
     const dot = ce("span", { className: "repo-dot " + dotKind });
@@ -372,9 +396,9 @@ function renderRepos() {
       await load();
     };
     meta.append(rm); // 移除在左
-    const up = ce("button", { className: "ghost small", textContent: "更新", title: "只拉取此仓上游并重新同步（单仓手动更新）" });
-    up.onclick = (e) => { e.stopPropagation(); updateRepo(repo, up); };
-    meta.append(up); // 更新在右
+    const up = ce("button", { className: "ghost small", textContent: "同步仓库", title: "与上游同步该仓：无本地改动直接拉取更新；有改动（移动/删除/修改/新增）则弹窗选择上传内容（确认=更新并上传 / 仅更新）" });
+    up.onclick = (e) => { e.stopPropagation(); repoUpdateFlow(repo, up); };
+    meta.append(up); // 同步仓库在右
     li.append(meta);
     if (repo.error) li.append(ce("div", { className: "muted", style: "color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap", textContent: repo.error }));
     if (repo.authHint) li.append(ce("div", { className: "repo-authhint", textContent: host ? "鉴权失败，无法自动更新：点上方「填写凭据」填个人令牌(PAT)，或改用 SSH。" : "鉴权失败，无法自动更新：私有仓需配置 SSH key（加入 ssh-agent）。详见标题旁 ? 指南。" }));
@@ -459,6 +483,19 @@ function renderRepos() {
   });
 }
 
+// cleanSkillName returns a friendly display label for a skill whose identifier
+// carries layout noise — e.g. AAIF's ".well-known/skills/<name>/SKILL.md" nesting
+// that some skills.sh repos use. It strips a trailing SKILL.md and any directory
+// path (both / and \), leaving just the skill's own folder name. The original
+// identifier is unchanged — only the label shown to the user is cleaned.
+function cleanSkillName(name) {
+  if (!name) return name;
+  const parts = String(name).replace(/[\\/]+$/, "").split(/[\\/]/);
+  let last = parts[parts.length - 1] || String(name);
+  if (/^SKILL\.md$/i.test(last) && parts.length > 1) last = parts[parts.length - 2];
+  return last || String(name);
+}
+
 // openSkillsShModal lists skills.sh-managed skills. They are read-only at the
 // source (updates go through the sidebar card's「更新」/ npx), but you CAN enable
 // them into the current target / 自动同步 here (selector namespace "@agents"),
@@ -476,8 +513,9 @@ async function openSkillsShModal() {
       bar.append(ce("span", { className: "group-spacer" }));
       const fb = ce("button", {
         className: (follow ? "" : "ghost") + " small",
-        textContent: follow ? "🔄 同步中" : "自动同步",
-        title: follow ? "关闭自动同步" : "自动同步：skills.sh 现有及将来的全部 skill 自动启用进当前目录",
+        style: "white-space:nowrap",
+        textContent: follow ? "取消同步" : "自动同步 skill",
+        title: follow ? "关闭自动同步：不再自动纳入 skills.sh 的 skill（已建立的软链保留）" : "自动同步 skill：skills.sh 现有及将来的全部 skill 自动启用进当前目录",
       });
       fb.onclick = async () => {
         fb.disabled = true;
@@ -505,7 +543,7 @@ async function openSkillsShModal() {
       card.onclick = (e) => { if (e.target.closest("button, a, code")) return; openDetail(AGENTS_NS, name); };
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
-      r1.append(ce("span", { className: "skill-name", textContent: name }));
+      r1.append(ce("span", { className: "skill-name", textContent: cleanSkillName(name), title: name }));
       { const vt = verTag(sk.version); if (vt) r1.append(vt); }
       // 来源徽章：lockfile 里的 owner/repo（hover 看完整 URL）。
       const srcText = sk.source || repoFromUrl(sk.sourceUrl) || hostOf(sk.sourceUrl || "");
@@ -564,7 +602,11 @@ function openRepoSkills(repoName, opts) {
   const ns = opts.ns || repoName; // selector namespace for enable / 自动同步
   $("#repo-skills-title").textContent = opts.title || (opts.local ? "local · 本地源" : repoName);
   const body = $("#repo-skills-body");
+  let creators = {}; // git repos only: skill dir name → {creator, createdAt}, for the card badge
   const render = () => {
+    // 保留滚动位置：删除/移动后 render() 会重建整个列表，否则滚动条弹回顶部（回到首个），
+    // 体验差。先记下旧 .rs-list 的 scrollTop，重建后还原。
+    const prevScroll = (body.querySelector(".rs-list") || {}).scrollTop || 0;
     body.innerHTML = "";
     const target = currentTarget();
     const follow = enabledFollow(ns);
@@ -572,11 +614,24 @@ function openRepoSkills(repoName, opts) {
     const bar = ce("div", { className: "rs-toolbar" });
     if (target) {
       bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "启用到当前目录：" + targetLabel(target) }));
-      bar.append(ce("span", { className: "group-spacer" }));
+    } else {
+      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "未选择同步目录——先在上方选一个目录 tab，再启用。" }));
+    }
+    bar.append(ce("span", { className: "group-spacer" }));
+    // 顺序：同步仓库（左）→ 取消同步 / 自动同步 skill（右）。
+    // git 仓专属：「同步仓库」（更新+上传合并）。无本地改动直接更新；有改动则弹窗
+    // 勾选上传内容（确认=更新并上传 / 仅更新）。软链 skill 的仓级操作只在这里做。
+    if (opts.git) {
+      const ub = ce("button", { className: "small", textContent: "同步仓库", title: "与上游同步该仓：无本地改动直接拉取更新；有改动（移动/删除/修改/新增）则弹窗让你选择要上传的内容（确认=更新并上传 / 仅更新）" });
+      ub.onclick = () => repoUpdateFlow(state.status.repos.find((rp) => rp.name === repoName) || { name: repoName }, ub);
+      bar.append(ub);
+    }
+    if (target) {
       const fb = ce("button", {
         className: (follow ? "" : "ghost") + " small",
-        textContent: follow ? "🔄 同步中" : "自动同步",
-        title: follow ? "关闭自动同步：不再自动纳入该源的 skill" : "自动同步：该源现有及将来新增的全部 skill 自动启用进当前目录",
+        style: "white-space:nowrap",
+        textContent: follow ? "取消同步" : "自动同步 skill",
+        title: follow ? "关闭自动同步：不再自动纳入该源的 skill（已建立的软链保留）" : "自动同步 skill：该源现有及将来新增的全部 skill 自动启用进当前目录（与「同步仓库」无关——那是拉取上游）",
       });
       fb.onclick = async () => {
         fb.disabled = true;
@@ -587,8 +642,6 @@ function openRepoSkills(repoName, opts) {
         await load(); render();
       };
       bar.append(fb);
-    } else {
-      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "未选择同步目录——先在上方选一个目录 tab，再启用。" }));
     }
     body.append(bar);
 
@@ -606,13 +659,27 @@ function openRepoSkills(repoName, opts) {
       card.onclick = (e) => { if (e.target.closest("button, a")) return; openDetail(repoName, nm); };
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
-      r1.append(ce("span", { className: "skill-name", textContent: nm }));
+      r1.append(ce("span", { className: "skill-name", textContent: cleanSkillName(nm), title: nm }));
       { const vt = verTag(sk.version); if (vt) r1.append(vt); }
+      { // git skill: 创建人 标签（取自一次 git-log；未提交的新 skill 暂无）
+        const cr = creators[sk.logicalName] || creators[nm];
+        if (cr && cr.creator) r1.append(ce("span", { className: "badge author", textContent: cr.creator, title: "创建人：" + cr.creator + (cr.createdAt ? "（" + cr.createdAt + "）" : "") }));
+      }
       r1.append(ce("span", { className: "group-spacer" }));
       if (opts.local) {
         const del = ce("button", { className: "danger small", textContent: "删除", title: "永久删除该本地 skill 的受管副本，并拆除它建立的所有软链（不可恢复）" });
         del.onclick = () => deleteLocalSkill(nm, del, render);
         r1.append(del);
+        const mv = ce("button", { className: "ghost small", textContent: "移动", title: "移动到一个 git 源仓：转移进仓、软链改用 git 来源、同步清单位置（只暂存，待该仓「同步仓库」推送）" });
+        mv.onclick = () => openMoveModal({ name: nm, desc: sk.description, sourceKind: "local", onDone: render });
+        r1.append(mv);
+      } else if (opts.git) {
+        const del = ce("button", { className: "danger small", textContent: "删除", title: "从该 git 仓移除此 skill（工作区删除 + 拆软链）；这是本地删除，需在上方「同步仓库」推送后远端才生效" });
+        del.onclick = () => deleteRepoSkill(repoName, nm, del, render);
+        r1.append(del);
+        const mv = ce("button", { className: "ghost small", textContent: "移动", title: "移动到另一个 git 源仓或移回本地（同步清单位置；只暂存，待「同步仓库」推送）" });
+        mv.onclick = () => openMoveModal({ name: nm, desc: sk.description, sourceKind: "git", fromRepo: repoName, onDone: render });
+        r1.append(mv);
       }
       r1.append(enableControl(ns, nm, follow, present.has(nm), target, render));
       main.append(r1);
@@ -620,9 +687,17 @@ function openRepoSkills(repoName, opts) {
       card.append(main);
       list.append(card);
     });
+    list.scrollTop = prevScroll; // 还原滚动位置（内容变矮时浏览器自动夹到底部）
   };
   render();
   $("#repo-skills-modal").classList.remove("hidden");
+  // git repos: fetch each skill's creator in one git-log pass, then re-render to
+  // show the 创建人 badge (best-effort — failure just leaves no badge).
+  if (opts.git) {
+    api("GET", "/api/repo-creators?repo=" + encodeURIComponent(repoName))
+      .then((d) => { creators = (d && d.creators) || {}; render(); })
+      .catch(() => {});
+  }
 }
 
 // enableControl returns the per-skill action used inside the source modals: a
@@ -659,31 +734,181 @@ function enableControl(ns, name, follow, enabled, target, render) {
   return on;
 }
 
-// updateRepo pulls a single git repo's upstream and re-syncs (per-repo manual
-// update). Header「全量更新」does all repos; this does just one.
-async function updateRepo(repo, btn, force) {
-  const old = btn.textContent; btn.disabled = true; btn.textContent = "更新中…";
+// driftLabel maps a drift kind to its Chinese label.
+function driftLabel(kind) {
+  return kind === "added" ? "新增未推送" : kind === "modified" ? "修改未推送" : kind === "deleted" ? "删除未推送" : kind === "committed" ? "已提交未推送" : "本地改动";
+}
+
+// repoUpdateFlow is the merged 更新/上传 entry (repo card + repo popup toolbar). It
+// checks the repo's live local changes: clean → just update (pull + reconcile);
+// dirty → open a dialog to pick what to upload, with 确认 (upload then update) or
+// 仅更新 (update only, discarding un-uploaded changes). 移动/删除/修改都是本地改动，
+// 推送统一在这里发生。
+async function repoUpdateFlow(repo, btn) {
+  if (!repo || !repo.url) { banner("无法确定仓库", true); return; }
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "检查中…"; }
+  let entries = [];
+  try {
+    const d = await api("GET", "/api/repo-drift?repo=" + encodeURIComponent(repo.name));
+    entries = (d && d.entries) || [];
+  } catch { entries = []; } // never-synced / uncloned → no drift, fall through to plain update
+  if (btn) { btn.disabled = false; btn.textContent = old; }
+  if (!entries.length) { await doRepoUpdate(repo, false, btn); return; } // clean → just update
+  openRepoUpdateModal(repo, entries);
+}
+
+// doRepoUpdate pulls a single repo's upstream and re-syncs. force=true also
+// discards local changes (reset --hard) — used by the dialog's 仅更新 and after an
+// upload. A non-force update that unexpectedly reports dirty re-opens the dialog.
+async function doRepoUpdate(repo, force, btn) {
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
   try {
     const resp = await api("POST", "/api/repos/update", { url: repo.url, force: !!force });
-    // The mirror is a read-only clone, but local drift can happen (e.g. a file
-    // deleted through a symlink that pointed into the mirror). git refuses to
-    // reset over it unless forced — so ask before discarding.
-    if (resp && resp.dirty) {
-      btn.disabled = false; btn.textContent = old;
-      const ok = await confirmModal(
-        "镜像「" + repo.name + "」有本地改动，更新已暂停以免覆盖：\n\n" + (resp.error || "working tree has local modifications") +
-        "\n\n镜像是只读副本，正常不该有本地改动。点「恢复并更新」将丢弃这些改动（git reset --hard + clean -fd），把镜像恢复成上游最新。",
-        "恢复并更新", true);
-      if (ok) await updateRepo(repo, btn, true);
+    if (resp && resp.dirty && !force) {
+      openRepoUpdateModal(repo, (resp.drift && resp.drift.entries) || []);
       return;
     }
-    const sum = (resp && resp.summary) || resp;
-    if (sum && sum.errors && sum.errors.length) banner("更新 " + repo.name + "：" + sum.errors.join("；"), true);
-    else toast(force ? "已恢复并更新 " + repo.name : "已更新 " + repo.name);
+    // A failed update returns HTTP 200 with state:"failed" + a top-level error
+    // (and summary.errors may be null), so check BOTH — otherwise a failure shows
+    // a misleading green「已同步」. Errors are sticky so they can be read.
+    const sum = (resp && resp.summary) || {};
+    const summaryErrs = (sum.errors && sum.errors.length) ? sum.errors.join("；") : "";
+    const failed = resp && (resp.state === "failed" || (resp.error && !resp.dirty)) ? (resp.error || "未知错误") : "";
+    const errMsg = [failed, summaryErrs].filter(Boolean).join("；");
+    if (errMsg) banner("同步 " + repo.name + " 失败：" + errMsg, true, true);
+    else toast("已同步 " + repo.name);
     await load();
   } catch (e) {
+    banner("同步 " + repo.name + " 失败：" + e.message, true, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+  }
+}
+
+// quickUpload commits (if dirty) and pushes a single git-source skill's local
+// changes — including re-pushing a push-failed contribution (committed-unpushed).
+async function quickUpload(i, btn) {
+  const repo = i.repo || (i.selector ? i.selector.split("/")[0] : "");
+  if (!repo) { banner("无法确定该 skill 所属的 git 仓", true); return; }
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "上传中…";
+  try {
+    const r = await fetch("/api/quickupload", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ repo, skill: i.name }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      btn.disabled = false; btn.textContent = old;
+      banner((d.committed ? "快捷上传：" : "快捷上传失败：") + (CONTRIB_ERR[d.error_code] || d.error || r.statusText), true);
+      return;
+    }
+    toast(d.nothing ? "没有需要上传的改动" : "已上传 " + cleanSkillName(i.name), d.nothing ? "info" : "ok");
+    await fetchInventory();
+  } catch (e) {
     btn.disabled = false; btn.textContent = old;
-    banner("更新 " + repo.name + " 失败：" + e.message, true);
+    banner("快捷上传 " + i.name + " 失败：" + e.message, true);
+  }
+}
+
+// openRepoUpdateModal shows the merged update+upload dialog: a read-only list of
+// ALL the repo's changed skills + an editable commit message. 确认 = upload them
+// ALL (commit+push) then update; 仅更新 = update only (discard the changes).
+// Selective upload was dropped on purpose: pushing only some changes then
+// pulling-aligning the repo would force-discard the rest (a mirror can't keep
+// half its working tree diverged from upstream), so it's all-or-nothing.
+function openRepoUpdateModal(repo, entries) {
+  const desc = {};
+  (state.skillsByRepo[repo.name] || []).forEach((sk) => { desc[sk.linkName || sk.logicalName] = sk.description || ""; });
+  entries = entries || [];
+  state.uploadCtx = { repo: repo.name, repoObj: repo, desc, entries };
+  $("#upload-title").textContent = "同步仓库：" + repo.name;
+  const list = $("#upload-list");
+  list.innerHTML = "";
+  entries.forEach((e) => {
+    const row = ce("div", { className: "upload-row" });
+    row.append(ce("span", { className: "upload-name", textContent: cleanSkillName(e.skill), title: e.path || e.skill }));
+    row.append(ce("span", { className: "badge drift", textContent: driftLabel(e.kind) }));
+    list.append(row);
+  });
+  const ta = $("#upload-msg"); ta.dataset.touched = "0";
+  refreshUploadMsg();
+  $("#upload-modal").classList.remove("hidden");
+}
+
+// refreshUploadMsg rebuilds the default commit message from ALL changed skills,
+// but leaves a hand-edited message alone (dataset.touched).
+function refreshUploadMsg() {
+  const ta = $("#upload-msg");
+  if (ta.dataset.touched === "1") return;
+  const entries = (state.uploadCtx && state.uploadCtx.entries) || [];
+  const desc = (state.uploadCtx && state.uploadCtx.desc) || {};
+  if (!entries.length) { ta.value = ""; return; }
+  const head = "MIC-0 更新 " + entries.length + " 个 skill";
+  const body = entries.map((e) => "- " + cleanSkillName(e.skill) + (desc[e.skill] ? "：" + desc[e.skill] : "")).join("\n");
+  ta.value = head + "\n\n" + body;
+}
+
+// doUpdateAndUpload (确认): commit + push ALL changed skills, then update. Since
+// everything is uploaded, the subsequent align has nothing to discard.
+async function doUpdateAndUpload(btn) {
+  const ctx = state.uploadCtx;
+  if (!ctx) return;
+  const paths = (ctx.entries || []).map((e) => e.path || e.skill);
+  if (!paths.length) { $("#upload-modal").classList.add("hidden"); await doRepoUpdate(ctx.repoObj, false, null); return; }
+  const message = $("#upload-msg").value;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "上传中…";
+  try {
+    const r = await fetch("/api/upload", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: ctx.repo, skills: paths, message }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      banner((d.committed ? "上传：" : "上传失败：") + (CONTRIB_ERR[d.error_code] || d.error || r.statusText), true, true);
+      return;
+    }
+    $("#upload-modal").classList.add("hidden");
+    toast(d.nothing ? "没有需要上传的改动，正在更新…" : "已上传 " + ((d.uploaded && d.uploaded.length) || paths.length) + " 个改动，正在更新…", "ok");
+    await doRepoUpdate(ctx.repoObj, true, null); // align to the just-pushed upstream (clean → no-op + pull)
+  } catch (e) {
+    banner("上传失败：" + e.message, true, true);
+  } finally {
+    // ALWAYS restore the button — the modal DOM is reused, so leaving it disabled +
+    // "上传中…" on the success path stuck the 确认 button permanently (the bug).
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+// doUpdateOnly (仅更新): update only — force-aligns to upstream, discarding the
+// un-uploaded local changes shown in the dialog.
+async function doUpdateOnly() {
+  const ctx = state.uploadCtx;
+  if (!ctx) return;
+  $("#upload-modal").classList.add("hidden");
+  await doRepoUpdate(ctx.repoObj, true, null);
+}
+
+// deleteRepoSkill removes a skill from a git repo's working tree (a PENDING
+// deletion) and tears down its links. It does NOT push — the user pushes the
+// removal via the repo「上传」dialog (deletion is staged like any other change),
+// so the remote only changes on an explicit upload.
+async function deleteRepoSkill(repo, name, btn, rerender) {
+  if (!(await confirmModal(
+    "从 git 仓「" + repo + "」移除 skill「" + cleanSkillName(name) + "」？\n\n会删除工作区里的该 skill 并拆除它建立的软链。这是一次本地删除——需在仓弹窗上方「同步仓库」推送后，远端仓库才真正移除。",
+    "删除", true))) return;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "删除中…";
+  try {
+    await api("DELETE", "/api/repo-skill", { repo, skill: name });
+    toast("已从 " + repo + " 移除 " + cleanSkillName(name) + "（记得用「同步仓库」推送删除）", "ok");
+    await load();
+    if (rerender) rerender();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = old;
+    banner("删除失败：" + e.message, true);
   }
 }
 
@@ -948,7 +1173,7 @@ function renderSearchResults(root, term) {
       card.onclick = (e) => { if (e.target.closest("button, a")) return; openDetail(r.ns, r.name); };
       const main = ce("div", { className: "skill-main" });
       const r1 = ce("div", { className: "skill-row1" });
-      r1.append(ce("span", { className: "skill-name", textContent: r.name }));
+      r1.append(ce("span", { className: "skill-name", textContent: cleanSkillName(r.name), title: r.name }));
       { const vt = verTag(r.version); if (vt) r1.append(vt); }
       r1.append(ce("span", { className: "src-badge " + meta.cls, textContent: meta.label }));
       r1.append(ce("span", { className: "group-spacer" }));
@@ -1039,9 +1264,10 @@ function renderOnlineSection(root, allLocal, enabledSel) {
     if (r.url) card.onclick = (e) => { if (e.target.closest("button, a")) return; window.open(r.url, "_blank"); };
     const main = ce("div", { className: "skill-main" });
     const r1 = ce("div", { className: "skill-row1" });
-    r1.append(ce("span", { className: "skill-name", textContent: r.skill || r.pkg }));
+    r1.append(ce("span", { className: "skill-name", textContent: r.skill || r.pkg, title: r.skill || r.pkg }));
     if (r.installsRaw) r1.append(ce("span", { className: "install-count", title: "安装数", textContent: "↓ " + r.installsRaw }));
-    r1.append(ce("span", { className: "src-badge src-skillssh", textContent: r.owner ? r.owner + "/" + r.repo : "skills.sh" }));
+    const ownerRepo = r.owner ? r.owner + "/" + r.repo : "skills.sh";
+    r1.append(ce("span", { className: "src-badge src-skillssh online-repo", title: ownerRepo, textContent: r.repo || ownerRepo }));
     r1.append(ce("span", { className: "group-spacer" }));
     r1.append(onlineAction(r, isInstalled, isEnabled));
     main.append(r1);
@@ -1111,6 +1337,14 @@ async function installOnline(r, btn) {
 function renderInventory() {
   renderStats(); // keep the header「收录 skills」count in sync on every re-render
   const root = $("#skills"); root.innerHTML = "";
+  const term = state.search.trim().toLowerCase();
+  // A search term switches to GLOBAL search across all sources (not just this
+  // directory) with real-time enable. This must come BEFORE the no-targets /
+  // loading / error early-returns: online (skills.sh) search does not depend on
+  // having any sync directory — otherwise a fresh install with no directory yet
+  // would fetch online results but silently never render them (enabling to a
+  // directory still needs a tab, which renderSearchResults notes inline).
+  if (term) { renderSearchResults(root, term); return; }
   if (state.targets.length === 0) {
     root.append(ce("div", { className: "empty", textContent: "还没有同步目录。点右上角「+」添加一个，再回到这里查看现状。" }));
     return;
@@ -1125,10 +1359,6 @@ function renderInventory() {
     root.append(e);
     return;
   }
-  const term = state.search.trim().toLowerCase();
-  // A search term switches to GLOBAL search across all sources (not just this
-  // directory) with real-time enable; empty term shows the current directory.
-  if (term) { renderSearchResults(root, term); return; }
   let items = state.inventory.slice();
   // 注入当前 tab 所属 harness 的插件 skill（只读），作为「目录现状」底部「插件」组。
   const curHarness = (state.targets.find((t) => t.dir === currentTarget()) || {}).harness;
@@ -1253,16 +1483,20 @@ function inventoryCard(i) {
   const s = SRC[i.kind] || SRC.unknown;
   const row = ce("div", { className: "skill inv clickable " + s.cls, title: "查看详情" });
   // openDetailFor opens this skill's SKILL.md the right way for its kind
-  // (managed → source repo; plugin → plugin tree; else → physical path).
-  const openDetailFor = () =>
-    i.managed && i.selector ? openDetail(i.selector.split("/")[0], i.name)
-    : i.kind === "plugin" ? openPluginDetail(i.plugin, i.name, i.harness)
-    : openDetailAt(i.name);
-  // Clicking the card === 详情; clicks on the action buttons are excluded.
+  // (managed → source repo; plugin → plugin tree; else → physical path) and
+  // fills the modal footer with this skill's contextual actions.
+  const openDetailFor = () => {
+    const p = i.managed && i.selector ? openDetail(i.selector.split("/")[0], i.name)
+      : i.kind === "plugin" ? openPluginDetail(i.plugin, i.name, i.harness)
+      : openDetailAt(i.name);
+    setInventoryActions(i); // card actions live in the detail modal footer now
+    return p;
+  };
+  // Clicking the card opens 操作/详情; clicks on the action button are excluded.
   row.onclick = (e) => { if (e.target.closest("button, a")) return; openDetailFor(); };
   const main = ce("div", { className: "skill-main" });
   const r1 = ce("div", { className: "skill-row1" });
-  r1.append(ce("span", { className: "skill-name", textContent: i.name }));
+  r1.append(ce("span", { className: "skill-name", textContent: cleanSkillName(i.name), title: i.name }));
   { const vt = verTag(i.version); if (vt) r1.append(vt); }
 
   // 徽章默认显示全名——位置够就不缩写（CSS 在真正放不下时才 ellipsis 截断，全名见 hover）。
@@ -1295,36 +1529,38 @@ function inventoryCard(i) {
 
   r1.append(ce("span", { className: "group-spacer" }));
 
-  // actions (right side) — 受管优先（停用），再按来源给专属动作；「详情」恒在最右。
-  if (i.managed && i.selector && !i.follow) {
-    const off = ce("button", { className: "danger small inv-off", textContent: "停用", title: "拆除此目录下的软链（不影响真身与其它目录）" });
+  // 右侧 = skill 列表，不碰本体。卡片上始终带一个对应的快捷操作（本体操作——移动/删除
+  // 本体/整仓同步/启用——只在左侧对应「源」弹窗里做）。点卡片空白处都能打开详情看 SKILL.md。
+  // 一致性规则（每种来源都有明确的卡上动作）：
+  //   · 整仓自动同步(follow)  → 「停用」显示但置灰，点击提示不可单独停用；
+  //   · 本工具启用的软链        → 「停用」（/api/enabled，可逆）；
+  //   · skills.sh 裸投影         → 「停用」（/api/inventory/link）；
+  //   · 杂散/未知软链            → 「删除」（只删链，不动目标）；
+  //   · 手写未备份 / 插件 等     → 「操作」（详情里做 备份/删除 或只读说明）。
+  if (i.follow && i.managed && i.selector) {
+    const off = ce("button", { className: "danger small", textContent: "停用", style: "opacity:.4;cursor:not-allowed", title: "整仓自动同步中，不能单独停用——请到左侧该源弹窗关闭「自动同步 skill」" });
+    off.onclick = () => toast("「" + sourceMeta(i.selector.split("/")[0]).label + "」整仓自动同步中，不能单独停用该 skill。请到左侧该源弹窗关闭「自动同步 skill」（会移除该源在本目录的全部 skill）。", "info");
+    r1.append(off);
+  } else if (i.managed && i.selector) {
+    const off = ce("button", { className: "danger small", textContent: "停用", title: "拆除当前目录下的软链（不影响本体与其它目录）" });
     off.onclick = () => disableSkill(i, off);
     r1.append(off);
-  } else if (i.kind === "handwritten") {
-    const ad = ce("button", { className: "ghost small", textContent: "备份", title: "移入受管存储并原位软链，纳入自动更新（未备份 → 已备份）" });
-    ad.onclick = () => adoptHandwritten(i, ad);
-    r1.append(ad);
-    const del = ce("button", { className: "danger small", textContent: "删除", title: "永久删除该手写 skill 的真身目录（不可恢复）" });
-    del.onclick = () => deleteHandwritten(i, del);
-    r1.append(del);
   } else if (i.kind === "skills.sh") {
-    if (state.npxAvailable) {
-      const u = ce("button", { className: "ghost small", textContent: "更新", title: "调用 npx skills update 更新（由 skills.sh 管理）" });
-      u.onclick = () => updateSkillSh(i.name, u);
-      r1.append(u);
-    }
-    const off = ce("button", { className: "danger small inv-off", textContent: "停用", title: "拆除此目录下的软链（不动 ~/.agents 里的真身；skills.sh 下次 update 可能重新投影回来）" });
+    const off = ce("button", { className: "danger small", textContent: "停用", title: "拆除 skills.sh 在当前目录的投影软链（下次 update 可能重新投影回来）" });
     off.onclick = () => disableSkillsShLink(i, off);
     r1.append(off);
   } else if (i.kind === "unknown") {
     const del = ce("button", { className: "danger small", textContent: "删除", title: "只删此软链，不动它指向的目标" });
     del.onclick = () => deleteStrayLink(i, del);
     r1.append(del);
+  } else if (i.kind === "plugin") {
+    // 插件只读，由 harness 插件系统管理——卡片不放任何动作按钮（更新在插件组第一行委托）。
+    // 点卡片空白处仍可打开详情查看 SKILL.md。
+  } else {
+    const op = ce("button", { className: "skill-detail-btn", textContent: "操作" });
+    op.onclick = openDetailFor;
+    r1.append(op);
   }
-  // 详情（最右）：受管走源仓，插件走插件树，其余按目录真实路径读 SKILL.md。
-  const d = ce("button", { className: "skill-detail-btn", textContent: "详情" });
-  d.onclick = openDetailFor;
-  r1.append(d);
 
   main.append(r1);
   // 反查：show where an unknown stray symlink points.
@@ -1409,19 +1645,6 @@ async function disableSkill(i, btn) {
   }
 }
 
-async function adoptHandwritten(i, btn) {
-  if (!(await confirmModal("将 " + i.name + " 备份进受管存储（~/.skillmanage/local）并在原位建软链？\n此操作会移动原目录。", "备份"))) return;
-  btn.disabled = true; btn.textContent = "备份中…";
-  try {
-    await doAdopt({ id: i.name, root: currentTarget() });
-    toast("已备份 " + i.name + "（原位已软链）");
-    await load();
-  } catch (e) {
-    btn.disabled = false; btn.textContent = "备份";
-    banner("备份 " + i.name + " 失败：" + (ADOPT_ERR[e.code] || e.message), true);
-  }
-}
-
 async function updateSkillSh(name, btn) {
   const old = btn.textContent;
   btn.disabled = true; btn.textContent = "更新中…";
@@ -1442,19 +1665,92 @@ async function updateSkillSh(name, btn) {
   await fetchInventory();
 }
 
-// doAdopt posts to /api/adopt and surfaces error_code for specific messaging.
-async function doAdopt(a) {
-  const body = a.plugin
-    ? { id: a.id, src: a.dir, target: currentTarget(), plugin: true }
-    : { id: a.id, root: a.root };
-  const r = await fetch("/api/adopt", {
+// openMoveModal is the single「移动」flow for every skill, opened from the detail
+// modal's footer action. ctx describes the source:
+//   {name, desc, sourceKind: "handwritten"|"local"|"git", root?, fromRepo?}
+// A unified 目标位置 dropdown lists `local` (the managed store) + every git repo;
+// 确定 moves the skill there. `local` only backs up (no push); a git target
+// commits + pushes (MIC-0 …). It routes to the right endpoint by source+target.
+function openMoveModal(ctx) {
+  const m = $("#contribute-modal");
+  const repos = state.status.repos || [];
+  const sel = $("#contribute-repo"), descIn = $("#contribute-desc");
+  const noRepo = $("#contribute-norepo"), okBtn = $("#contribute-ok");
+  const descLabel = descIn.previousElementSibling; // the「简述」label
+  // 未备份/手写 → 「备份」（首次收进受管库）；已在 local/git 的 → 「移动」（在源之间挪位）。
+  // 两者都把名称 + 简述记入清单。
+  const verb = ctx.sourceKind === "handwritten" ? "备份" : "移动";
+  $("#contribute-title").textContent = verb + "：" + cleanSkillName(ctx.name);
+
+  // Destination options: `local` (unless the skill already lives in @local) + repos.
+  sel.innerHTML = "";
+  if (ctx.sourceKind !== "local") sel.append(ce("option", { value: "local", textContent: "local（本地受管库）" }));
+  repos.forEach((rp) => sel.append(ce("option", { value: rp.name, textContent: rp.name })));
+  // Default to local when offered, else the first git repo.
+  sel.value = ctx.sourceKind !== "local" ? "local" : ((repos[0] && repos[0].name) || "");
+
+  descIn.value = ctx.desc || "";
+  descIn.disabled = sel.disabled = false;
+  const noDest = sel.options.length === 0; // @local source with zero git repos
+  noRepo.classList.toggle("hidden", !noDest);
+  if (noDest) noRepo.textContent = "尚无 git 源仓——请先添加一个 git 源仓再移动。";
+  okBtn.disabled = noDest; okBtn.textContent = "确定";
+
+  // 备份总要记录名称 + 简述到清单（不论目标是 local 还是 git 仓），所以简述字段
+  // 对所有目标都显示——否则从 local 往 git 移动时会缺简述。
+  descIn.style.display = "";
+  if (descLabel) descLabel.style.display = "";
+  m.classList.remove("hidden");
+
+  const cleanup = () => { okBtn.onclick = sel.onchange = $("#contribute-cancel").onclick = $("#contribute-close").onclick = m.onclick = null; };
+  const close = () => { m.classList.add("hidden"); cleanup(); };
+  $("#contribute-cancel").onclick = close;
+  $("#contribute-close").onclick = close;
+  m.onclick = (e) => { if (e.target.id === "contribute-modal") close(); };
+
+  okBtn.onclick = async () => {
+    const dest = sel.value;
+    okBtn.disabled = true; descIn.disabled = sel.disabled = true;
+    okBtn.textContent = verb + "中…";
+    const res = await doMove(ctx, dest, descIn.value);
+    if (res.ok) {
+      toast((dest === "local" ? "已" + verb + "到 local：" : "已" + verb + "到 " + dest + "（暂存，待该仓「同步仓库」推送）：") + cleanSkillName(ctx.name) + (res.warning ? "（" + res.warning + "）" : ""), res.warning ? "info" : "ok");
+      close(); await load();
+      if (ctx.onDone) ctx.onDone(); // re-render the source popup so the moved skill drops off the list
+    } else if (res.partial) {
+      banner(verb + "：" + (CONTRIB_ERR[res.code] || res.message), true);
+      close(); await load();
+      if (ctx.onDone) ctx.onDone();
+    } else {
+      okBtn.disabled = false; descIn.disabled = sel.disabled = false; okBtn.textContent = "确定";
+      banner(verb + "失败：" + (CONTRIB_ERR[res.code] || ADOPT_ERR[res.code] || res.message), true);
+    }
+  };
+}
+
+// doMove routes a move to the right endpoint by (source kind, target). A push
+// failure (502 with committed:true) is a partial success — the skill is durable
+// in the target, only the push failed. A git→X move may also return ok+warning
+// (target done, source-repo cleanup push pending).
+async function doMove(ctx, dest, description) {
+  const local = dest === "local";
+  let path, body;
+  if (ctx.sourceKind === "handwritten") {
+    if (local) { path = "/api/adopt"; body = { id: ctx.name, root: ctx.root, description }; }
+    else { path = "/api/contribute"; body = { id: ctx.name, root: ctx.root, repo: dest, description }; }
+  } else if (ctx.sourceKind === "local") {
+    path = "/api/move-local"; body = { id: ctx.name, repo: dest, description };
+  } else { // git source
+    path = "/api/move"; body = { name: ctx.name, fromRepo: ctx.fromRepo, toRepo: dest, description };
+  }
+  const r = await fetch(path, {
     method: "POST",
     headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(data.error || r.statusText); e.code = data.error_code; throw e; }
-  return data;
+  if (r.ok) return { ok: true, warning: data.warning };
+  return { ok: false, partial: !!data.committed, code: data.error_code, message: data.error || r.statusText };
 }
 
 // --- enable / 自动同步 helpers (used by the per-source skill modals) ---
@@ -1576,6 +1872,48 @@ function setPluginActions(plugin, harness) {
 }
 function clearModalActions() { const el = $("#modal-actions"); el.innerHTML = ""; el.classList.add("hidden"); }
 
+// setInventoryActions fills the detail modal's footer with an inventory item's
+// contextual actions (move/backup, quick-upload, disable, delete, update), keyed
+// by kind. The card itself shows only「操作」; choosing an action closes the
+// detail modal and runs it (each action gives its own toast/banner + refresh).
+function setInventoryActions(i) {
+  const el = $("#modal-actions");
+  el.innerHTML = "";
+  const closeDetail = () => $("#modal").classList.add("hidden");
+  const add = (label, cls, title, fn) => {
+    const b = ce("button", { className: cls, textContent: label });
+    if (title) b.title = title;
+    b.onclick = () => { closeDetail(); fn(b); };
+    el.append(b);
+  };
+  if (i.kind === "plugin") {
+    el.append(ce("span", { className: "ma-note", textContent: "只读 · 由 harness 插件系统管理。有更新时在「插件」组第一行委托更新。" }));
+    el.classList.remove("hidden");
+    return;
+  }
+  // 右侧详情不操作本体：移动/删除本体、整仓同步、启用一律回到左侧对应「源」弹窗（git
+  // 仓 / skills.sh / 本地源）。这里只留「停用」（拆当前目录软链，可逆，不碰本体）；
+  // 手写未备份是「尚未入源」的引导态，例外地保留「备份/删除」作为纳入源/丢弃的入口。
+  if (i.managed && i.selector && !i.follow) {
+    add("停用", "danger small inv-off", "拆除此目录下的软链（不影响真身与其它目录）", (b) => disableSkill(i, b));
+  } else if (i.kind === "handwritten") {
+    add("备份", "ghost small", "备份到本地受管库或某个 git 源仓（记入清单：名称 + 简述）", () => openMoveModal({ name: i.name, desc: i.description, sourceKind: "handwritten", root: currentTarget() }));
+    add("删除", "danger small", "永久删除该手写 skill 的真身目录（不可恢复）", (b) => deleteHandwritten(i, b));
+  } else if (i.kind === "skills.sh") {
+    if (state.npxAvailable) add("更新", "ghost small", "调用 npx skills update 更新（由 skills.sh 管理）", (b) => updateSkillSh(i.name, b));
+    add("停用", "danger small inv-off", "拆除此目录下的软链（skills.sh 下次 update 可能重新投影回来）", (b) => disableSkillsShLink(i, b));
+  } else if (i.kind === "unknown") {
+    add("删除", "danger small", "只删此软链，不动它指向的目标", (b) => deleteStrayLink(i, b));
+  }
+  // 整仓自动同步（follow）下，单个 skill 不能单独停用——它由源的「自动同步」整体控制。
+  // 给出明确文案，而不是让详情底部空着，否则用户找不到「为什么没有停用」。
+  if (i.managed && i.follow && i.selector) {
+    const src = sourceMeta(i.selector.split("/")[0]).label;
+    el.append(ce("span", { className: "ma-note", textContent: "「" + src + "」整仓自动同步中，不能单独停用该 skill。如需停用，请到左侧该源弹窗关闭「自动同步 skill」（会移除该源在本目录的全部 skill）。" }));
+  }
+  el.classList.toggle("hidden", el.children.length === 0);
+}
+
 // setSkillsShActions adds an「卸载」action to a skills.sh skill's detail. Uninstall
 // removes the real file in ~/.agents/skills AND every symlink (ours + skills.sh's).
 function setSkillsShActions(name) {
@@ -1687,6 +2025,7 @@ async function updateAllPlugins(targets, btn) {
 async function openDetail(repo, name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  resetAuthorship();
   setDetailSource(null);
   if (repo === AGENTS_NS) setSkillsShActions(name); else clearModalActions();
   $("#modal-content").textContent = "加载中…";
@@ -1696,15 +2035,43 @@ async function openDetail(repo, name) {
     $("#modal-desc").textContent = d.description || "";
     setDetailSource(d);
     $("#modal-content").textContent = d.content || "(空)";
+    loadAuthorship(repo, name); // git-source only; best-effort, fills in async
   } catch (e) {
     $("#modal-content").textContent = "加载失败：" + e.message;
   }
+}
+
+// resetAuthorship hides the 创建人/最近修改 line (the detail modal is shared).
+function resetAuthorship() {
+  const el = $("#modal-authorship");
+  if (el) { el.textContent = ""; el.classList.add("hidden"); }
+}
+
+// loadAuthorship fills the detail modal's 创建人 / 最近修改 line for a git-source
+// skill (other sources have no git history, so it stays hidden). Best-effort.
+async function loadAuthorship(repo, name) {
+  if (!(state.status.repos || []).some((r) => r.name === repo)) return; // git repos only
+  try {
+    const d = await api("GET", "/api/skill-authorship?repo=" + encodeURIComponent(repo) + "&skill=" + encodeURIComponent(name));
+    const a = d && d.authorship;
+    if (!a) return;
+    const parts = [];
+    if (a.creator) parts.push("创建人：" + a.creator + (a.createdAt ? "（" + a.createdAt + "）" : ""));
+    if (a.lastAuthor && (a.lastAuthor !== a.creator || a.lastAt !== a.createdAt)) {
+      parts.push("最近修改：" + a.lastAuthor + (a.lastAt ? "（" + a.lastAt + "）" : ""));
+    }
+    if (!parts.length) return; // staged-but-uncommitted skill → no history yet
+    const el = $("#modal-authorship");
+    el.textContent = parts.join("　·　");
+    el.classList.remove("hidden");
+  } catch { /* authorship is best-effort */ }
 }
 
 // openPluginDetail reads a plugin skill's SKILL.md from its install tree.
 async function openPluginDetail(plugin, name, harness) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  resetAuthorship();
   setDetailSource(null);
   setPluginActions(plugin, harness);
   $("#modal-content").textContent = "加载中…";
@@ -1724,6 +2091,7 @@ async function openPluginDetail(plugin, name, harness) {
 async function openDetailAt(name) {
   $("#modal-title").textContent = name;
   $("#modal-desc").textContent = "";
+  resetAuthorship();
   setDetailSource(null);
   // 现状/inventory 视图里的条目都是软链（本地真身除外），只能操作链（启用/停用），
   // 不在此对「本体」下手（卸载等本体操作只属于「源」视图，如 skills.sh 列表弹窗）。
@@ -2194,6 +2562,12 @@ $("#info-close").onclick = () => $("#info-modal").classList.add("hidden");
 $("#info-modal").onclick = (e) => { if (e.target.id === "info-modal") $("#info-modal").classList.add("hidden"); };
 $("#repo-skills-close").onclick = () => $("#repo-skills-modal").classList.add("hidden");
 $("#repo-skills-modal").onclick = (e) => { if (e.target.id === "repo-skills-modal") $("#repo-skills-modal").classList.add("hidden"); };
+$("#upload-close").onclick = () => $("#upload-modal").classList.add("hidden");
+$("#upload-cancel").onclick = () => $("#upload-modal").classList.add("hidden");
+$("#upload-modal").onclick = (e) => { if (e.target.id === "upload-modal") $("#upload-modal").classList.add("hidden"); };
+$("#upload-ok").onclick = (e) => doUpdateAndUpload(e.currentTarget);
+$("#upload-update-only").onclick = doUpdateOnly;
+$("#upload-msg").oninput = () => { $("#upload-msg").dataset.touched = "1"; };
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
@@ -2270,12 +2644,15 @@ function importRepos() {
 $("#modal-close").onclick = () => $("#modal").classList.add("hidden");
 $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); };
 
-// 首次使用自动弹出使用指南（localStorage 记一次，之后不再自动弹）。
+// 首次使用、以及每次版本更新后，自动弹出使用指南一次（按版本号记忆：换了新版就
+// 再弹一次，让用户看到本版改了什么；同版本内只弹一次）。版本号取自更新日志头部的
+// .cl-ver（页面里的单一来源，随发布自然更新）。
 (function maybeShowGuide() {
   try {
-    if (!localStorage.getItem("sm_guide_seen")) {
+    const ver = ($(".cl-ver") && $(".cl-ver").textContent.trim()) || "";
+    if (localStorage.getItem("sm_guide_ver") !== ver) {
       $("#help-modal").classList.remove("hidden");
-      localStorage.setItem("sm_guide_seen", "1");
+      localStorage.setItem("sm_guide_ver", ver);
     }
   } catch { /* localStorage 不可用时静默跳过 */ }
 })();

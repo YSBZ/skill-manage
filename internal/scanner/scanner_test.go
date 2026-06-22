@@ -201,10 +201,10 @@ func TestScanParsesVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("str-ver", "---\nname: a\nversion: 1.2.0\n---\n")     // quoted-style string
-	write("num-ver", "---\nname: b\nversion: 2.5\n---\n")       // bare float
-	write("int-ver", "---\nname: c\nversion: 3\n---\n")         // bare int
-	write("no-ver", "---\nname: d\ndescription: hi\n---\n")     // absent → ""
+	write("str-ver", "---\nname: a\nversion: 1.2.0\n---\n") // quoted-style string
+	write("num-ver", "---\nname: b\nversion: 2.5\n---\n")   // bare float
+	write("int-ver", "---\nname: c\nversion: 3\n---\n")     // bare int
+	write("no-ver", "---\nname: d\ndescription: hi\n---\n") // absent → ""
 
 	skills, err := Scan(root)
 	if err != nil {
@@ -219,5 +219,30 @@ func TestScanParsesVersion(t *testing.T) {
 		if got[name] != w {
 			t.Errorf("%s version: got %q, want %q", name, got[name], w)
 		}
+	}
+}
+
+func TestSkillRoot(t *testing.T) {
+	// A repo that nests skills under skills/ — with one stray root-level skill —
+	// resolves to "skills" (the populated dir, not outvoted by the stray).
+	nested := t.TempDir()
+	mkSkill(t, nested, filepath.Join("skills", "alpha"))
+	mkSkill(t, nested, filepath.Join("skills", "beta"))
+	mkSkill(t, nested, "stray")
+	if got := SkillRoot(nested); got != "skills" {
+		t.Errorf("SkillRoot(nested) = %q, want %q", got, "skills")
+	}
+
+	// A flat repo (skills at the root) resolves to "".
+	flat := t.TempDir()
+	mkSkill(t, flat, "one")
+	mkSkill(t, flat, "two")
+	if got := SkillRoot(flat); got != "" {
+		t.Errorf("SkillRoot(flat) = %q, want empty", got)
+	}
+
+	// An empty repo resolves to "".
+	if got := SkillRoot(t.TempDir()); got != "" {
+		t.Errorf("SkillRoot(empty) = %q, want empty", got)
 	}
 }

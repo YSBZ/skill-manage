@@ -3,13 +3,10 @@
 // directory sources (e.g. skills.sh's ~/.agents/skills) under one SourceKind
 // taxonomy. SourceKind is derived at runtime, never persisted (phase 3 KTD1).
 //
-// This file holds the kind taxonomy and selector-level classification. The
-// on-disk, per-entry classifier (ClassifyInTarget) lives in classify.go and
-// reuses the linker's ownership predicate so "is this ours?" has exactly one
-// implementation (KTD6).
+// This file holds the kind taxonomy. The on-disk, per-entry classifier
+// (ClassifyInTarget) lives in classify.go and reuses the linker's ownership
+// predicate so "is this ours?" has exactly one implementation (KTD6).
 package source
-
-import "strings"
 
 // SourceKind is the runtime-derived origin of a skill seen in a target dir. The
 // values match the UI source badges (phase 3 U8): git, local, skills.sh,
@@ -41,24 +38,3 @@ const (
 	KindUnknown SourceKind = "unknown"
 )
 
-// localNamespace mirrors reconcile.LocalNamespace ("@local"). It is duplicated
-// here rather than imported to keep this leaf package free of a reconcile
-// dependency (reconcile already depends on harness/linker/scanner/config).
-const localNamespace = "@local"
-
-// ClassifySelector classifies an enabled[] selector — "@local/<skill>" or
-// "<repo>/<skill>" — by its namespace alone. It answers "git vs local" for a
-// configured selection; the richer on-disk attribution (skills.sh / plugin /
-// handwritten / unknown) requires filesystem inspection and lives in
-// ClassifyInTarget. A selector with no "/" separator is KindUnknown.
-func ClassifySelector(selector string) SourceKind {
-	s := strings.TrimSpace(selector)
-	i := strings.Index(s, "/")
-	if i < 0 {
-		return KindUnknown
-	}
-	if s[:i] == localNamespace {
-		return KindLocal
-	}
-	return KindGit
-}

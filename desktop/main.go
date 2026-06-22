@@ -21,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
+	"skillmanage/internal/askpass"
 	"skillmanage/internal/config"
 	"skillmanage/internal/daemon"
 	"skillmanage/internal/lock"
@@ -51,6 +52,17 @@ func loopbackHost(next http.Handler) http.Handler {
 }
 
 func main() {
+	// Credential-helper mode FIRST: the daemon wires the running executable as
+	// git's GIT_ASKPASS, and for the desktop build that executable is THIS Wails
+	// binary. git invokes it with the credential prompt — answer and exit before
+	// any window/lifecycle init, exactly like the CLI binary. Without this, the
+	// desktop app would try to boot a window when git asks for credentials, so
+	// HTTPS auth (private-repo fetch AND the new contribute push) silently fails.
+	if askpass.Active() {
+		askpass.Run()
+		return
+	}
+
 	// Same PATH hardening as the daemon, so npx/git work when launched as an app.
 	pathenv.Ensure()
 
@@ -89,15 +101,24 @@ func main() {
 	lk, err := lock.Acquire(lockPath)
 	if errors.Is(err, lock.ErrLocked) {
 		holder := daemon.ReadPid(dir)
-		if holder > 0 && holder != os.Getpid() && daemon.Alive(holder) && daemon.ReadKind(dir) == "desktop" {
+		kind := daemon.ReadKind(dir)
+		alive := daemon.Alive(holder)
+		// Log the decision so a silent "double-click does nothing" is diagnosable
+		// from desktop.log (a GUI app has no console, so stderr alone is invisible).
+		log.Printf("desktop: lock 被占用 (holder pid=%d, kind=%q, alive=%v)，尝试接管", holder, kind, alive)
+		if holder > 0 && holder != os.Getpid() && alive && kind == "desktop" {
 			log.Printf("desktop: 已有桌面实例在运行 (pid=%d)，本次启动退出", holder)
 			os.Exit(0)
 		}
 		if lk, err = daemon.TakeOver(dir, lockPath); err != nil {
+			log.Printf("desktop: 接管失败：另一个实例 (pid=%d, kind=%q) 仍占用锁且无法停止 —— %v。"+
+				"请在任务管理器结束所有 skillmanage.exe / SkillManage.exe 后重试。", holder, kind, err)
 			fmt.Fprintln(os.Stderr, "desktop: 已有一个实例在运行且无法接管")
 			os.Exit(1)
 		}
+		log.Printf("desktop: 接管成功 (原 pid=%d)", holder)
 	} else if err != nil {
+		log.Printf("desktop: 获取锁出错：%v", err)
 		panic(err)
 	}
 	defer lk.Release()

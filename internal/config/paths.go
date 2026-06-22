@@ -45,3 +45,11 @@ func TokenPath(centralDir string) string {
 func CredentialsPath(centralDir string) string {
 	return filepath.Join(centralDir, "credentials.yaml")
 }
+
+// ContribManifestPath is the global contribution ledger (清单): skill name →
+// {description, location}. It records every backed-up/contributed skill's commit
+// description and current home, and is the source of truth for commit summaries.
+// Machine-local; not part of export/import and not pushed into any git repo.
+func ContribManifestPath(centralDir string) string {
+	return filepath.Join(centralDir, "contrib-manifest.yaml")
+}

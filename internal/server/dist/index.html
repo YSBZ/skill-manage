@@ -171,6 +171,48 @@
       </div>
     </div>
 
+    <div id="contribute-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(480px,100%)">
+        <div class="modal-head">
+          <h3 id="contribute-title">备份 skill</h3>
+          <button id="contribute-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px">
+          <p class="muted" id="contribute-intro" style="margin:0 0 14px;font-size:12.5px">把该 skill 放到目标位置，并把<b>名称 + 简述</b>记进清单（备份/移动都会同步清单里的位置，之后据此定位）。<code>local</code> = 移入本地受管库；某个 git 源仓 = 转移进去。都只在本地暂存，不自动推送（待该仓「同步仓库」时再推）。</p>
+          <label class="tm-label">目标位置</label>
+          <select id="contribute-repo" style="width:100%"></select>
+          <label class="tm-label" style="margin-top:12px">简述（记入清单，默认取已有清单 / SKILL.md description，可改）</label>
+          <textarea id="contribute-desc" rows="6" placeholder="一句话描述这个 skill；可多行" style="width:100%;resize:vertical"></textarea>
+          <p class="muted hidden" id="contribute-norepo" style="margin:10px 0 0;font-size:12.5px;color:var(--danger,#c0392b)"></p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="contribute-cancel" class="ghost">取消</button>
+            <button type="button" id="contribute-ok">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="upload-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(560px,100%)">
+        <div class="modal-head">
+          <h3 id="upload-title">更新并上传</h3>
+          <button id="upload-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px">
+          <p class="muted" style="margin:0 0 12px;font-size:12.5px">该仓有以下本地改动（新增/修改/删除）。<b>确认</b> = 把这些改动<b>全部</b> commit + push，再拉取上游更新；<b>仅更新</b> = 直接拉取上游、<b>丢弃</b>这些本地改动。（不支持只上传其中一部分——镜像无法只让部分改动与上游分叉。）</p>
+          <label class="tm-label">提交信息（可编辑）</label>
+          <textarea id="upload-msg" rows="6" placeholder="提交信息" style="width:100%;resize:vertical"></textarea>
+          <label class="tm-label" style="margin-top:12px">将上传的改动（全部）</label>
+          <div id="upload-list" class="upload-list"></div>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="upload-cancel" class="ghost">取消</button>
+            <button type="button" id="upload-update-only" class="ghost" title="不上传，直接拉取上游更新——这些本地改动会被丢弃（reset --hard）">仅更新</button>
+            <button type="button" id="upload-ok" title="把以上全部改动提交并推送，再拉取上游更新">确认</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="repo-skills-modal" class="modal hidden">
       <div class="modal-card" style="width:min(640px,100%)">
         <div class="modal-head">
@@ -223,10 +265,127 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v5.0.0</span>
-              <span class="cl-date">五期 · 进行中 · 更新于 2026-06-18</span>
+              <span class="cl-ver">v5.0.14</span>
+              <span class="cl-date">五期 · 收口封板 · 更新于 2026-06-22</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.14 · 五期收口：右侧只读模型一致化 + 指南补 git 同步流程 + 死代码/重复清理 + Windows junction 读回（2026-06-22）</div>
+              <ul>
+                <li><b>右侧列表只读、卡片只放「停用」</b>：固化交互模型——本体操作（移动/删除/整仓同步/启用）只在左侧对应「源」弹窗里做；右侧每张卡按来源给出明确的卡上快捷操作：本工具启用的软链→「停用」、skills.sh 裸投影→「停用」、未知/杂散软链→「删除」（直接在卡上）。</li>
+                <li><b>整仓自动同步下「停用」置灰</b>：follow 来源的 skill 不能单独停用（会被 <code>@…/*</code> 立刻重投影），按钮显示但置灰，点击提示去源弹窗关「自动同步 skill」。</li>
+                <li><b>插件卡去掉「操作」</b>：插件只读、无本体动作，卡片不再有操作按钮（更新仍在插件组第一行委托；点卡看详情）。</li>
+                <li><b>删除/移动保留滚动位置</b>：仓弹窗删除/移动后不再弹回列表顶部。</li>
+                <li><b>细节修正</b>：仓弹窗「同步仓库 / 取消同步」按钮顺序对调；详情「创建人」行与标题/简介对齐；「自动同步 skill」按钮不再断行。</li>
+                <li><b>指南补充</b>：新增「同步仓库（git 同步）」一节，列出三种走法的有序 git 命令流程（<code>symbolic-ref / status / add / commit / push / fetch / reset --hard / clean</code>）。</li>
+                <li><b>工程收口</b>：移除死代码（autostart 包、若干孤立 JS/HTML/CSS）、抽取重复样板（<code>writeErr</code>/<code>originGuard</code>/<code>findRepoBranch</code>）、修复 Windows 目录联接（junction）目标读回，避免 reconcile 抖动与签名重认领失效。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.13 · 修复同步报错一闪而过 + 自动清理失效条目 + 全量上传（2026-06-22）</div>
+              <ul>
+                <li><b>修复「报错一闪而过」</b>：刷新（load）结尾会无条件清掉刚弹出的错误条，导致同步/上传失败的红字一闪即灭、根本看不清。现在常驻错误不会被 load 清除，需点击才关。</li>
+                <li><b>失效条目自动清理（自愈）</b>：之前移动/删除遗留的「某 skill 已不在仓里」的死启用记录，过去会让整次同步硬报错（<code>skill not found in repo</code>）。现在识别为失效条目、<b>自动从配置里清掉</b>，不再报错。</li>
+                <li><b>同步失败如实上报</b>：更新接口失败时（HTTP 200 里带 <code>state:failed</code>）不再误报「已同步」，改为常驻红字显示真实原因。</li>
+                <li><b>同步仓库改为全量上传</b>：去掉勾选——镜像无法只让部分改动与上游分叉。确认 = 全部 commit+push 再拉取；仅更新 = 拉取并丢弃本地改动。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.12 · 统一「备份」概念 + git skill 显示创建人（2026-06-21）</div>
+              <ul>
+                <li><b>统一为「备份」</b>：不再区分「移动 / 备份」。所有相关按钮、弹窗都叫「备份」；备份到任意目标（local 或 git 仓）都会把<b>名称 + 简述</b>记入清单。简述字段对所有目标都显示（含 local）——之前移到 local 不记简述，导致再往 git 备份时缺信息。</li>
+                <li><b>「同步仓库」「自动同步 skill」</b>：原「更新」改名「同步仓库」（拉取上游 + 可选上传）；follow 开关改名「自动同步 skill」，与「同步仓库」区分开。</li>
+                <li><b>git skill 显示创建人</b>：git 源仓的 skill 详情里显示「创建人（日期）· 最近修改（日期）」，取自 git 提交历史（其它来源无 git 历史不显示）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.11 · 统一暂存模型：移动/删除只暂存，「更新」合并上传（2026-06-21）</div>
+              <ul>
+                <li><b>移动/贡献不再自动推送</b>：移动、贡献、删除都只在本地<b>暂存</b>（显示为新增/删除未推送），推送统一交给「更新」。git→git 会变成两仓各自有待上传改动。</li>
+                <li><b>「更新」合并「上传」</b>：git 仓卡片（及仓弹窗顶部）的「更新」——无本地改动时直接拉取上游；有改动则弹窗列出可上传的 skill（默认全选）+ 可编辑提交信息，底部 <b>确认</b>（先 commit+push 勾选项，再拉取上游）/ <b>仅更新</b>（直接拉取上游，丢弃未上传的本地改动）。</li>
+                <li><b>移动后列表刷新</b>：移动完成后源弹窗即时重渲，不再残留旧卡片导致「该 skill 不在仓内」。</li>
+                <li>skills.sh 弹窗的「同步中」按钮同样改为「取消同步」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.10 · 按仓库布局放置 skill + git 仓内删除 + 删除算改动 + 弹窗层级/标签修正（2026-06-21）</div>
+              <ul>
+                <li><b>按仓库布局放置（修复）</b>：贡献/移动进 git 仓时，skill 现在会放到该仓实际存放 skill 的目录（如 <code>skills/</code>），不再一律塞到仓根。依据是扫描该仓现有 skill 的所在目录（取多数）；空仓或扁平仓则放仓根。drift 识别、上传、删除的路径也都跟着按真实嵌套定位。</li>
+                <li><b>git 仓内删除 skill</b>：仓弹窗每个 skill 多了「删除」——从工作区移除并拆软链，记为一次<b>本地删除</b>；需在「上传」里推送后远端才真正移除（不直接 push）。</li>
+                <li><b>删除也算改动</b>：新增「删除未推送」drift 类型，删除的 skill 会出现在「上传」清单里，推送即从远端移除。</li>
+                <li><b>弹窗层级</b>：从仓弹窗里打开的「移动」「上传」弹窗现在盖在仓弹窗之上（之前被仓弹窗挡住）。</li>
+                <li><b>自动同步按钮</b>：开启后文案由「同步中」改为「取消同步」（是动作不是状态）。</li>
+                <li>更新后自动弹出使用指南改为按版本记忆（换版再弹一次）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.9 · 上传改到 git 仓弹窗（多选 + 可编辑提交信息），git skill 卡片只读（2026-06-21）</div>
+              <ul>
+                <li><b>上传入口移到左侧「git 仓」弹窗</b>：点开某个 git 仓 → 顶部「上传」→ 列出该仓有本地改动的 skill（勾选，默认全选）+ 可编辑的提交信息（默认按勾选项的名称+描述自动生成）→ 一次 commit + push。推送会发送该分支上所有待推送的提交。</li>
+                <li><b>列表里 git 仓 skill 改为只读</b>：它们是软链，不承载 commit/push/移动 等仓级操作。详情弹窗只保留「停用」（拆当前目录软链，与 git 无关）。上传、逐条移动都在左侧仓弹窗里做。</li>
+                <li><b>逐条移动进仓弹窗</b>：git 仓弹窗里每个 skill 都有「移动」（移到另一个 git 仓或移回本地，同步全局清单）。</li>
+                <li>修正了 v5.0.8 把「快捷上传」放到 git skill 卡片上的做法。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.8 · 统一「移动」+ 全局清单 + 卡片操作收进弹窗（2026-06-21）</div>
+              <ul>
+                <li><b>统一「移动」</b>：备份/贡献/移动收敛成一个目标下拉框——默认 <code>local</code>（移入本地受管库、不推送），其余为各 git 源仓（转移进去 + commit + push）。手写 skill、本地已备份 skill、git 仓内 skill 都用这一个流程。</li>
+                <li><b>git 仓互相移动 / 移回本地</b>：支持把 skill 从一个 git 仓移到另一个，或从 git 仓移回本地。采用「目标先行、源清理后置」：任一步 push 失败都不丢数据（最坏短时两端各有一份，可「快捷上传」重推收敛），绝不 <code>--force</code>。</li>
+                <li><b>全局清单</b>：<code>~/.skillmanage/contrib-manifest.yaml</code> 记录每个 skill 的名称、描述与当前位置，作为 commit 简述来源；每次移动自动同步。纯本地，不进 git 仓、不随导出。</li>
+                <li><b>卡片瘦身</b>：skill 卡片只保留名称、徽章和一个「操作」入口（原「详情」改名）；移动/备份/快捷上传/停用/删除/更新等动作全部收进详情弹窗底部，不再在卡片上挤一排按钮。</li>
+                <li>「冲突：无」改为「冲突：0」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.7 · 修复桌面端 HTTPS 凭据失效 + 新增「贡献到 git 仓」（2026-06-21）</div>
+              <ul>
+                <li><b>修复</b>：桌面端拉取私有仓时 HTTPS 凭据不生效（报「Access denied / 鉴权失败」），即便账号密码正确。根因是桌面二进制被 git 当作凭据助手（GIT_ASKPASS）调用时不会应答——它只在 Web 版里实现了。现已抽成共享逻辑，Web 与桌面两个入口都正确应答。公开仓不受影响，故此前只有私有仓暴露此问题。</li>
+                <li><b>新功能：贡献到 git 仓</b>。手写 skill 的「备份」现可选「贡献到 git 仓」：转移进所选 git 源仓 + 原位软链 + <code>git add</code> + commit（<code>MIC-0 &lt;skill&gt; &lt;简述&gt;</code>）+ push 一次完成；简述默认取 SKILL.md description、可改。push 失败（无写权限/非快进/网络）诚实报错、保留本地提交、绝不 <code>--force</code>。</li>
+                <li><b>快捷上传</b>：git 源仓内 skill 有本地改动（含「已提交未推送」，即贡献时 push 失败的产物）时，卡片出现「快捷上传」一键 commit + push 重推。</li>
+                <li><b>更新让路</b>：更新不再无条件 <code>reset --hard</code> 销毁本地改动。检测改为<b>提交感知</b>（连「已提交未推送」也认）：新增未推送的 skill 更新时保留并提示；有修改/未推送提交则弹三选项——快捷上传 / 放弃本地改动并更新 / 取消。语义对齐正常 git，绝不静默丢失。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.6 · 修复 Windows 命令窗口闪烁（2026-06-21）</div>
+              <ul>
+                <li>Windows 桌面端调 git（拉取/同步）与建软链（mklink）时不再闪烁黑色命令行窗口——这两处之前漏设了「无窗口」标志（npx/插件命令早已设过）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.5 · Windows 自动强制接管（2026-06-18）</div>
+              <ul>
+                <li>Windows 启动时若有旧实例占着锁，现在会自动安全接管：用真正的 Windows 存活检测 + 按进程名 <code>skillmanage</code> 强制终止旧实例（绝不误伤其它程序），不再需要手动去任务管理器结束进程。</li>
+                <li>pid 记录失效/错位时，按进程名清扫残留的 SkillManage 实例（仅限本应用，永不含自身）再接管。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.4 · 空目录可搜索 + 名称清洗补全（2026-06-18）</div>
+              <ul>
+                <li>修复：还没添加任何同步目录时，在线搜索能正常出结果（之前请求成功却不渲染、也无报错）。</li>
+                <li>搜索结果里的本地 skill 名称同样按显示清洗（<code>.well-known/...</code> 布局只显示 skill 名，hover 看全名）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.3 · Windows 启动诊断（2026-06-18）</div>
+              <ul>
+                <li>桌面端启动若因「锁被其它实例占用且接管失败」而退出，现在会把原因（持有者 pid / 类型 / 是否存活）写进 <code>desktop.log</code>，便于排查「双击没反应」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.2 · 滚动条美化 + 工具栏微调（2026-06-18）</div>
+              <ul>
+                <li>Windows / Linux 上的滚动条改为 mac 风格——细、半透明、低存在感（悬停略加深），不再是系统默认的粗条。</li>
+                <li>git 仓工具栏：「导入 / 导出」靠左，「添加」靠右。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.1 · 修复 skill 名称显示（2026-06-18）</div>
+              <ul>
+                <li>采用 <code>.well-known/skills/&lt;名&gt;/SKILL.md</code> 嵌套布局的 skill（如飞书系列），名称不再显示成整条路径，只显示 skill 名（完整原名见 hover）。</li>
+                <li>在线卡名称优先完整显示，<code>owner/repo</code> 徽章改显 repo 并在空间不足时省略。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v5.0.0 · 接入 skill.sh：在线搜索 + 安装（2026-06-18）</div>
               <ul>
@@ -408,6 +567,41 @@
             <li><b>仓名前圆点</b>：<b style="color:var(--ok)">绿</b>=上次同步成功、<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据）、灰=尚未同步。</li>
           </ol>
 
+          <h4>同步仓库（git 同步：拉取上游 + 上传本地改动）</h4>
+          <p>点 git 仓卡片或仓弹窗顶部的<b>「同步仓库」</b>，是 git 源唯一的整仓同步入口（拉取 + 上传合一）。它先在本地检测该仓有无改动，再决定走哪条路：</p>
+          <ol>
+            <li><b>无本地改动</b> → 直接<b>更新</b>：拉取上游并以镜像方式对齐本地（见下「更新/对齐」命令）。</li>
+            <li><b>有本地改动</b>（新增 / 修改 / 删除 / 已提交未推送）→ 弹窗列出该仓<b>全部</b>改动 + 可编辑的提交信息，底部两个按钮：
+              <ul>
+                <li><b>确认</b> = 把全部改动 <code>commit</code> + <code>push</code> 到上游，再拉取对齐；</li>
+                <li><b>仅更新</b> = 不上传，直接拉取上游并<b>丢弃</b>这些本地改动。</li>
+              </ul>
+              不支持只上传其中一部分——镜像模型下本地必须与上游完全一致，留半数改动与上游分叉无法成立。</li>
+          </ol>
+          <p><b>底层 git 命令使用流程</b>（按实际执行顺序；均为非交互、离散 argv、绝不经 shell；<code>&lt;b&gt;</code> = 该仓分支）。三种走法各自的命令序列：</p>
+          <p style="margin-bottom:4px"><b>① 无本地改动 → 直接更新</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD   # 1 解析分支
+git status --porcelain                              # 2 检测改动（空）
+git fetch --prune origin                            # 3 取上游
+git reset --hard origin/&lt;b&gt;                          # 4 对齐到上游
+git clean -fd                                       # 5 清掉上游已删的残留</pre>
+          <p style="margin:8px 0 4px"><b>② 有改动 → 确认（先上传再更新）</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD   # 1 解析分支
+git status --porcelain                              # 2 检测到改动
+git add -- &lt;skill 路径…&gt;                             # 3 暂存全部改动
+git commit -m "&lt;提交信息&gt;"                           # 4 提交（可编辑信息）
+git push origin &lt;b&gt;                                  # 5 推送；失败则保留提交、绝不 --force
+git fetch --prune origin                            # 6 取上游
+git reset --hard origin/&lt;b&gt;                          # 7 对齐（此时本地==上游）
+git clean -fd                                       # 8 清残留</pre>
+          <p style="margin:8px 0 4px"><b>③ 有改动 → 仅更新（丢弃本地）</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD   # 1 解析分支
+git status --porcelain                              # 2 有改动（将被丢弃）
+git fetch --prune origin                            # 3 取上游
+git reset --hard origin/&lt;b&gt;                          # 4 强制对齐、丢弃本地改动
+git clean -fd                                       # 5 清残留</pre>
+          <p>「仅更新」与「确认」收尾都走 <code>reset --hard</code> + <code>clean -fd</code>——这是镜像模型：本地必须等于上游，所以<b>未上传的改动会被丢弃</b>，也因此不支持「只上传一部分」。判断「已提交未推送」额外用 <code>git rev-list --count origin/&lt;b&gt;..HEAD</code> + <code>git diff --name-only origin/&lt;b&gt;..HEAD</code>；仅检查不拉取（每小时 / 状态徽章）用 <code>git rev-parse</code> 比对 <code>git ls-remote origin &lt;b&gt;</code>；添加仓库时一次 <code>git clone</code>。私有仓鉴权见上（SSH BatchMode / HTTPS PAT，均非交互）。</p>
+
           <h4>导入 / 导出</h4>
           <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>
 
@@ -424,6 +618,7 @@
           <h3 id="modal-title"></h3>
           <button id="modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
+        <p id="modal-authorship" class="muted hidden" style="font-size:12px;margin:0;padding:10px 18px 0"></p>
         <p id="modal-desc" class="muted"></p>
         <p id="modal-source" class="modal-source hidden"></p>
         <div id="modal-actions" class="modal-actions hidden"></div>

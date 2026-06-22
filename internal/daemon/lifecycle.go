@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"skillmanage/internal/config"
@@ -46,11 +45,22 @@ func ReadPid(dir string) int {
 func TakeOver(dir, lockPath string) (*lock.Lock, error) {
 	pid := ReadPid(dir)
 	if pid <= 0 || pid == os.Getpid() {
-		return nil, lock.ErrLocked // no one to stop / stale-without-pid → defer
+		// No identifiable predecessor in the pid file, yet the lock is held. It may
+		// be a stale or mis-recorded SkillManage process (pid file lost / pid
+		// reuse). SAFE last resort: terminate OTHER SkillManage processes by image
+		// name only (never anything else), then retry once. On non-Windows this is
+		// a no-op — the pid+signal model is reliable there, so behavior is unchanged.
+		if killOtherInstancesPlatform(os.Getpid()) > 0 {
+			time.Sleep(250 * time.Millisecond)
+			if lk, err := lock.Acquire(lockPath); err == nil {
+				return lk, nil
+			}
+		}
+		return nil, lock.ErrLocked
 	}
-	signalPid(pid, false) // graceful
+	signalPid(pid, false) // graceful (Windows: safe, name-checked terminate)
 	deadline := time.Now().Add(8 * time.Second)
-	escalated := false
+	escalated, swept := false, false
 	for time.Now().Before(deadline) {
 		lk, err := lock.Acquire(lockPath)
 		if err == nil {
@@ -63,39 +73,31 @@ func TakeOver(dir, lockPath string) (*lock.Lock, error) {
 			signalPid(pid, true) // still alive past the grace window → force-kill
 			escalated = true
 		}
+		// Last-ditch (Windows): the real lock holder may not match the pid file
+		// (stale / reuse / a leftover web instance). Sweep OTHER SkillManage
+		// processes by image name — safe (only ever our own app, never self).
+		if escalated && !swept && time.Now().Add(2*time.Second).After(deadline) {
+			killOtherInstancesPlatform(os.Getpid())
+			swept = true
+		}
 		time.Sleep(150 * time.Millisecond)
 	}
 	return nil, lock.ErrLocked
 }
 
 // signalPid sends a stop signal to pid. force=false asks for a graceful shutdown
-// (SIGTERM on unix); force=true kills outright. On Windows SIGTERM is unsupported,
-// so both paths fall back to Kill.
-func signalPid(pid int, force bool) {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	if force {
-		_ = p.Kill()
-		return
-	}
-	if err := p.Signal(syscall.SIGTERM); err != nil {
-		_ = p.Kill()
-	}
-}
+// (SIGTERM on unix); force=true kills outright. Platform-specific: see proc_*.go.
+// On Windows there is no graceful signal, so it verifies the target is a
+// SkillManage process and terminates it (force flag is moot).
+func signalPid(pid int, force bool) { signalPidPlatform(pid, force) }
 
-// Alive reports whether pid is a live process (signal 0 probe). Used to tell a
-// genuinely-running peer from a stale lock/PID file.
+// Alive reports whether pid is a live process. Used to tell a genuinely-running
+// peer from a stale lock/PID file. Platform-specific: see proc_*.go.
 func Alive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return p.Signal(syscall.Signal(0)) == nil
+	return alivePlatform(pid)
 }
 
 // instanceKindPath records what kind of front end owns the instance ("desktop"

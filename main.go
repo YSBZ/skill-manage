@@ -9,14 +9,13 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
+	"skillmanage/internal/askpass"
 	"skillmanage/internal/browser"
 	"skillmanage/internal/config"
 	"skillmanage/internal/daemon"
@@ -29,10 +28,10 @@ const defaultPort = 7799
 
 func main() {
 	// Credential helper mode: git invokes this same binary as GIT_ASKPASS during
-	// a fetch that needs HTTPS credentials. Handle it and exit before the normal
-	// daemon flow. (gitsync sets SKILLMANAGE_ASKPASS + SKILLMANAGE_CENTRAL.)
-	if os.Getenv("SKILLMANAGE_ASKPASS") != "" {
-		askpass()
+	// a fetch/push that needs HTTPS credentials. Handle it and exit before the
+	// normal daemon flow. (gitsync sets SKILLMANAGE_ASKPASS + SKILLMANAGE_CENTRAL.)
+	if askpass.Active() {
+		askpass.Run()
 		return
 	}
 
@@ -51,54 +50,6 @@ func main() {
 	if err := run(dir, !*noOpen); err != nil {
 		fatal(dir, err)
 	}
-}
-
-// askpass answers git's credential prompt from the stored per-host credentials.
-// git calls it with one arg, e.g. "Username for 'https://host': " or "Password
-// for 'https://user@host': ". We print the username or PAT for that host; an
-// unknown host prints nothing, so git fails exactly as it did before (no creds).
-func askpass() {
-	prompt := ""
-	if len(os.Args) > 1 {
-		prompt = os.Args[1]
-	}
-	dir := os.Getenv("SKILLMANAGE_CENTRAL")
-	if dir == "" {
-		return
-	}
-	creds, err := config.LoadCredentials(dir)
-	if err != nil {
-		return
-	}
-	cred, ok := creds.Hosts[hostFromPrompt(prompt)]
-	if !ok {
-		return
-	}
-	switch {
-	case strings.HasPrefix(strings.ToLower(prompt), "username"):
-		fmt.Println(cred.Username)
-	case strings.HasPrefix(strings.ToLower(prompt), "password"):
-		fmt.Println(cred.Token)
-	}
-}
-
-// hostFromPrompt extracts the host from a git askpass prompt by parsing the URL
-// between single quotes (userinfo, if any, is dropped).
-func hostFromPrompt(prompt string) string {
-	i := strings.IndexByte(prompt, '\'')
-	if i < 0 {
-		return ""
-	}
-	rest := prompt[i+1:]
-	j := strings.IndexByte(rest, '\'')
-	if j < 0 {
-		return ""
-	}
-	u, err := url.Parse(rest[:j])
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
 }
 
 // fatal reports a startup failure to stderr AND a log file under the central

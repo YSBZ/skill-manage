@@ -25,6 +25,10 @@ type Summary struct {
 	Pruned    []config.LinkRecord `json:"pruned"`
 	Conflicts []linker.Conflict   `json:"conflicts"`
 	Errors    []string            `json:"errors"`
+	// Stale lists enabled selectors whose snapshot skill no longer exists in its
+	// (successfully-scanned) repo — dead entries left by an earlier move/delete.
+	// They are NOT errors; the caller may prune them from config (self-heal).
+	Stale []string `json:"stale,omitempty"`
 }
 
 // LocalNamespace is the reserved source-selector namespace for adopted skills
@@ -144,8 +148,9 @@ func (r *Reconciler) Apply(cfg config.Config, manifest *config.Manifest) Summary
 
 	// 2. Compute desired links from enabled[]. nested holds Codex-target nested
 	//    SKILL.md warnings (KTD6), produced where the scanner.Skill is in scope.
-	desired, nested, derrs := r.computeDesired(cfg)
+	desired, nested, derrs, stale := r.computeDesired(cfg)
 	sum.Errors = append(sum.Errors, derrs...)
+	sum.Stale = stale
 
 	// 3. Detect conflicts. Collisions (same target+name, different source) are
 	//    skipped pending user alias; shadowing links are still created but
@@ -212,10 +217,11 @@ func collisionSkipSet(conflicts []linker.Conflict) map[linkKey]bool {
 // mapped to a Codex target (KTD6) — produced here because the scanner.Skill
 // (which carries HasNested) is in scope, whereas linker.DetectConflicts only
 // sees DesiredLink.
-func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []linker.Conflict, []string) {
+func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []linker.Conflict, []string, []string) {
 	var desired []linker.DesiredLink
 	var nested []linker.Conflict
 	var errs []string
+	var stale []string
 
 	noteNested := func(sk scanner.Skill, target string) {
 		if sk.HasNested && harness.IsCodexTarget(target) {
@@ -277,7 +283,13 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 			}
 		}
 		if matched == nil {
-			errs = append(errs, fmt.Sprintf("skill %q not found in repo %q", sel, repo))
+			// The repo scanned fine but the skill is gone (moved/deleted earlier) →
+			// a dead enabled entry, not a sync failure. Report it as stale so the
+			// caller can self-heal; don't fail the whole sync. When the repo itself
+			// failed to scan, getSkills already recorded that error — skip both.
+			if !scanErr[repo] {
+				stale = append(stale, e.Skill)
+			}
 			continue
 		}
 		desired = append(desired, linker.DesiredLink{LinkName: matched.LinkName, Target: target, Source: matched.Dir})
@@ -301,7 +313,7 @@ func (r *Reconciler) computeDesired(cfg config.Config) ([]linker.DesiredLink, []
 		kept = append(kept, d)
 	}
 	desired = kept
-	return desired, nested, errs
+	return desired, nested, errs, stale
 }
 
 // underDir reports whether path is root or a descendant of it.

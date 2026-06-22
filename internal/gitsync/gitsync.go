@@ -54,6 +54,10 @@ type Result struct {
 	Dirty  bool
 	Err    error
 	Stderr string
+	// Drift carries the per-skill local-change detail when Dirty is set, so the
+	// UI can show what was preserved (新增/修改/已提交未推送) and offer 快捷上传.
+	// Empty on a clean or freshly-cloned repo.
+	Drift Drift
 }
 
 // Syncer runs git against a resolved git binary with an empty hooks directory
@@ -133,19 +137,26 @@ func (s *Syncer) sync(ctx context.Context, dir, remote string, opts Options) Res
 		return res
 	}
 
-	// Dirty check (R26): never silently discard local edits unless forced.
-	if out, _, err := s.run(ctx, dir, "status", "--porcelain"); err == nil && strings.TrimSpace(out) != "" {
+	ref := "origin/HEAD"
+	if opts.Branch != "" {
+		ref = "origin/" + opts.Branch
+	}
+
+	// Dirty check (R26 + commit-aware drift): never silently discard local edits
+	// unless forced. "Dirty" now means a non-empty working tree OR local commits
+	// not on the upstream ref (committed-unpushed) — the latter is invisible to
+	// `status --porcelain` and is exactly the state a push-failed contribution
+	// sits in, so without it the next reset --hard would destroy it (the P0 the
+	// plan review caught). When dirty, attach the per-skill detail for the UI.
+	if d := s.driftAt(ctx, dir, ref); d.Dirty {
 		res.Dirty = true
+		res.Drift = d
 		if !opts.Force {
 			res.Action, res.Err = ActionDirtySkip, ErrDirty
 			return res
 		}
 	}
 
-	ref := "origin/HEAD"
-	if opts.Branch != "" {
-		ref = "origin/" + opts.Branch
-	}
 	if _, stderr, err := s.run(ctx, dir, "reset", "--hard", ref); err != nil {
 		res.Action, res.Err, res.Stderr = ActionFailed, err, stderr
 		return res
@@ -161,14 +172,22 @@ func (s *Syncer) sync(ctx context.Context, dir, remote string, opts Options) Res
 }
 
 // CheckUpdate reports whether origin's branch (or HEAD when branch is empty) is
-// at a different commit than the local mirror's HEAD — i.e. an update is
-// available to pull. It uses `ls-remote` (no object download) so it is cheap,
-// but it still contacts the remote and needs the same auth as Sync; a failure
-// (auth/network) is returned so the caller can surface it. The mirror is a
-// reset --hard read-only clone, so local == last-pulled remote; remote != local
-// therefore means upstream moved.
+// at a different commit than what we last fetched — i.e. an update is available
+// to pull. It uses `ls-remote` (no object download) so it is cheap, but it still
+// contacts the remote and needs the same auth as Sync; a failure (auth/network)
+// is returned so the caller can surface it.
+//
+// It compares the upstream tip against the local remote-tracking ref
+// (refs/remotes/origin/<branch>), NOT local HEAD: once contribution lets HEAD
+// hold unpushed local commits, HEAD != upstream no longer means "upstream
+// moved". The tracking ref still reflects the last fetched upstream state, so
+// comparing against it stays correct in the presence of local drift.
 func (s *Syncer) CheckUpdate(ctx context.Context, dir, branch string) (bool, error) {
-	localOut, _, err := s.run(ctx, dir, "rev-parse", "HEAD")
+	trackRef := "refs/remotes/origin/HEAD"
+	if b := strings.TrimSpace(branch); b != "" {
+		trackRef = "refs/remotes/origin/" + b
+	}
+	localOut, _, err := s.run(ctx, dir, "rev-parse", trackRef)
 	if err != nil {
 		return false, err
 	}
@@ -194,6 +213,14 @@ func (s *Syncer) CheckUpdate(ctx context.Context, dir, branch string) (bool, err
 
 // run executes git with daemon-safe flags and env, returning (stdout, stderr, err).
 func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, string, error) {
+	return s.runEnv(ctx, dir, nil, args...)
+}
+
+// runEnv is run with caller-supplied extra environment appended last (so it
+// wins on duplicate keys). The push path uses it to set LC_ALL=C, forcing
+// git's stderr into stable English for error-code matching (KTD5 honest
+// judgment) without disturbing the read-only sync path.
+func (s *Syncer) runEnv(ctx context.Context, dir string, extraEnv []string, args ...string) (string, string, error) {
 	// Bound each invocation so a process blocked on an unreachable remote
 	// cannot hang indefinitely (a detached update-now context has no deadline
 	// of its own). A zero timeout (test-constructed Syncers) disables this.
@@ -204,6 +231,7 @@ func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, s
 	}
 	full := append([]string{"-c", "core.hooksPath=" + s.hooksDir}, args...)
 	cmd := exec.CommandContext(ctx, s.git, full...)
+	hideConsole(cmd) // Windows: suppress the flashing console window (no-op elsewhere)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -221,6 +249,9 @@ func (s *Syncer) run(ctx context.Context, dir string, args ...string) (string, s
 			"SKILLMANAGE_ASKPASS=1",
 			"SKILLMANAGE_CENTRAL="+s.centralDir,
 		)
+	}
+	if len(extraEnv) > 0 {
+		cmd.Env = append(cmd.Env, extraEnv...) // appended last → wins on dup keys
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

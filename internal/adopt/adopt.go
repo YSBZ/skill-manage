@@ -172,6 +172,95 @@ func Import(srcDir, id, personalStore string) error {
 	return nil
 }
 
+// CopyInto copies skill id from srcRoot into destRoot using the copy → verify →
+// atomic-rename safety, KEEPING the source intact. It is the durable first half
+// of a two-sided move (copy to dest, push dest, only then remove source) so a
+// failure before the destination is safe never loses the skill. It refuses to
+// clobber a DIFFERENT same-named skill already in destRoot (name_taken); an
+// identical existing copy is treated as a completed prior step (idempotent).
+func CopyInto(id, srcRoot, destRoot string) error {
+	if !validID(id) {
+		return codeErr("invalid", "illegal skill id %q", id)
+	}
+	srcAbs := harness.Expand(srcRoot)
+	destAbs := harness.Expand(destRoot)
+	src, err := resolveSourceSkill(srcAbs, id)
+	if err != nil {
+		return err
+	}
+	destParent := destSkillParent(destAbs)
+	dst := filepath.Join(destParent, id)
+	tmp := filepath.Join(destParent, ".tmp-"+id)
+
+	if !withinRoot(srcAbs, src) {
+		return codeErr("invalid", "source escapes its root: %s", src)
+	}
+	if harness.Guarded(src) {
+		return codeErr("guarded", "refusing to copy from a guarded directory: %s", src)
+	}
+	lst, err := os.Lstat(src)
+	if errors.Is(err, os.ErrNotExist) {
+		return codeErr("not_found", "no skill %q under %s", id, srcAbs)
+	}
+	if err != nil {
+		return codeErr("not_found", "stat source: %w", err)
+	}
+	if lst.Mode()&os.ModeSymlink != 0 {
+		return codeErr("invalid", "source is a symlink, not a real skill: %s", src)
+	}
+	if !lst.IsDir() {
+		return codeErr("invalid", "source is not a directory: %s", src)
+	}
+	if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+		return codeErr("invalid", "source has no SKILL.md: %s", src)
+	}
+	if err := os.MkdirAll(destParent, 0o755); err != nil {
+		return codeErr("copy_failed", "create destination skills dir: %w", err)
+	}
+	switch _, statErr := os.Stat(dst); {
+	case errors.Is(statErr, os.ErrNotExist):
+		_ = os.RemoveAll(tmp)
+		if err := linker.CopyTree(src, tmp); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("copy_failed", "copy into destination: %w", err)
+		}
+		if err := verifyTreeMatch(src, tmp); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("verify_failed", "incomplete copy, original left untouched: %w", err)
+		}
+		if err := os.Rename(tmp, dst); err != nil {
+			_ = os.RemoveAll(tmp)
+			return codeErr("copy_failed", "finalize destination copy: %w", err)
+		}
+	case statErr != nil:
+		return codeErr("copy_failed", "stat destination: %w", statErr)
+	default:
+		if err := verifyTreeMatch(src, dst); err != nil {
+			return codeErr("name_taken", "the destination already has a different skill named %q (original left untouched): %w", id, err)
+		}
+	}
+	return nil
+}
+
+// MoveInto copies id from srcRoot into destRoot (CopyInto) and then removes the
+// source — leaving NO in-place symlink. It backs "移动 @local skill 到 git 仓":
+// the store copy vanishes entirely so the skill is re-sourced from the git repo
+// (the caller migrates the @local/<id> enabled entries to <repo>/<id> and
+// reconciles, which rebuilds the links from git).
+func MoveInto(id, srcRoot, destRoot string) error {
+	if err := CopyInto(id, srcRoot, destRoot); err != nil {
+		return err
+	}
+	src, err := resolveSourceSkill(harness.Expand(srcRoot), id)
+	if err != nil {
+		return nil // already copied to destination; source already gone is fine
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return codeErr("link_failed", "remove source after copy (copy safe in destination): %w", err)
+	}
+	return nil
+}
+
 // underPlugins reports whether p has a path component named "plugins" — the
 // convention for agent plugin trees (~/.claude/plugins/…, codex equivalents).
 func underPlugins(p string) bool {
@@ -189,18 +278,34 @@ func underPlugins(p string) bool {
 // constructed with the same personalStore so the in-place link is recognized as
 // owned. It is idempotent: an already-adopted skill is a no-op.
 func Adopt(id, sourceRoot, personalStore string, mgr *linker.Manager, manifest *config.Manifest) error {
+	return Relocate(id, sourceRoot, personalStore, mgr, manifest)
+}
+
+// Relocate is the general form behind Adopt: it moves the skill id from
+// sourceRoot into destRoot (the personal store for 备份, or a cloned git repo's
+// working tree for 贡献到 git 仓) using the same copy → verify → atomic-rename
+// safety, then links it back in place. destRoot must already exist (it does for
+// both a created store and a cloned repo). It is idempotent and refuses to
+// clobber a DIFFERENT skill that already occupies destRoot/id (name_taken),
+// which for a git target means the repo already ships a skill by that name.
+func Relocate(id, sourceRoot, destRoot string, mgr *linker.Manager, manifest *config.Manifest) error {
 	if !validID(id) {
 		return codeErr("invalid", "illegal skill id %q", id)
 	}
 	rootAbs := harness.Expand(sourceRoot)
-	storeAbs := harness.Expand(personalStore)
-	src := filepath.Join(rootAbs, id)
-	dst := filepath.Join(storeAbs, id)
-	tmp := filepath.Join(storeAbs, ".tmp-"+id)
+	destAbs := harness.Expand(destRoot)
+	src, rerr := resolveSourceSkill(rootAbs, id)
+	if rerr != nil {
+		return rerr
+	}
+	destParent := destSkillParent(destAbs)
+	dst := filepath.Join(destParent, id)
+	tmp := filepath.Join(destParent, ".tmp-"+id)
 
-	// Containment + guard (KTD7): src must be a direct child of the source root
-	// and never a Codex-guarded path, regardless of how id was obtained.
-	if filepath.Dir(src) != rootAbs {
+	// Containment + guard (KTD7): src must stay within the source root (a stray
+	// "../" must never escape) and never be a Codex-guarded path, regardless of
+	// how id was obtained.
+	if !withinRoot(rootAbs, src) {
 		return codeErr("invalid", "source escapes the skills dir: %s", src)
 	}
 	if harness.Guarded(src) || harness.Guarded(rootAbs) {
@@ -228,8 +333,8 @@ func Adopt(id, sourceRoot, personalStore string, mgr *linker.Manager, manifest *
 		return codeErr("invalid", "source has no SKILL.md: %s", src)
 	}
 
-	if err := os.MkdirAll(storeAbs, 0o755); err != nil {
-		return codeErr("copy_failed", "create personal store: %w", err)
+	if err := os.MkdirAll(destParent, 0o755); err != nil {
+		return codeErr("copy_failed", "create destination skills dir: %w", err)
 	}
 
 	// Decide what an existing dst means. The personal store is flat, so two
@@ -277,6 +382,47 @@ func Adopt(id, sourceRoot, personalStore string, mgr *linker.Manager, manifest *
 }
 
 // --- helpers ---
+
+// destSkillParent is the directory under destRoot where a NEW skill folder
+// should be created, honoring the repo's existing layout (scanner.SkillRoot):
+// a repo that keeps skills under "skills/" gets destRoot/skills, a flat repo or
+// the personal store gets destRoot itself. The .tmp- staging dir lives here too
+// so the finalize rename stays on one filesystem.
+func destSkillParent(destAbs string) string {
+	if root := scanner.SkillRoot(destAbs); root != "" {
+		return filepath.Join(destAbs, filepath.FromSlash(root))
+	}
+	return destAbs
+}
+
+// resolveSourceSkill returns the real directory of skill id under rootAbs. A flat
+// layout (rootAbs/id) is used directly; otherwise the root is scanned for a skill
+// whose link or logical name is id, so a nested source (e.g. skills/id in a git
+// repo) resolves correctly. Returns not_found when neither locates it.
+func resolveSourceSkill(rootAbs, id string) (string, error) {
+	direct := filepath.Join(rootAbs, id)
+	if fi, err := os.Lstat(direct); err == nil && (fi.IsDir() || fi.Mode()&os.ModeSymlink != 0) {
+		return direct, nil
+	}
+	skills, _ := scanner.Scan(rootAbs)
+	for _, sk := range skills {
+		if sk.LinkName == id || sk.LogicalName == id {
+			return sk.Dir, nil
+		}
+	}
+	return "", codeErr("not_found", "no skill %q under %s", id, rootAbs)
+}
+
+// withinRoot reports whether p is rootAbs itself or a descendant of it — the
+// containment guard that replaces the old direct-child check now that a source
+// skill may be nested. It rejects any path that would escape via "..".
+func withinRoot(rootAbs, p string) bool {
+	rel, err := filepath.Rel(rootAbs, p)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
 
 func validID(id string) bool {
 	if id == "" || id == "." || id == ".." {

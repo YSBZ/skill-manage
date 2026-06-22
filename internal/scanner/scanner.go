@@ -158,6 +158,49 @@ func Scan(repoRoot string) ([]Skill, error) {
 	return skills, nil
 }
 
+// SkillRoot returns the repo-relative directory under which NEW skills should be
+// created, inferred from where existing skills already live: the directory that
+// holds the most skill folders. Many repos nest skills under a dedicated dir
+// (e.g. "skills/<name>/SKILL.md") rather than at the repo root; a contribution
+// must land alongside the rest, not at the root. Returns "" when the repo has no
+// skills or they sit at the root. Slash-separated, no leading/trailing slash.
+// Ties prefer a dedicated (non-root) directory so one stray root-level skill does
+// not outvote a populated "skills/" dir.
+func SkillRoot(repoDir string) string {
+	abs, err := filepath.Abs(repoDir)
+	if err != nil {
+		abs = repoDir
+	}
+	skills, err := Scan(abs)
+	if err != nil || len(skills) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	order := []string{}
+	for _, sk := range skills {
+		rel, err := filepath.Rel(abs, filepath.Dir(sk.Dir))
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			rel = ""
+		}
+		if _, ok := counts[rel]; !ok {
+			order = append(order, rel)
+		}
+		counts[rel]++
+	}
+	best, bestN := "", -1
+	for _, rel := range order {
+		n := counts[rel]
+		if n > bestN || (n == bestN && best == "" && rel != "") {
+			best, bestN = rel, n
+		}
+	}
+	return best
+}
+
 // ScanShallow returns only the skills that are DIRECT children of root — a
 // subdirectory holding a SKILL.md at its own top level. Unlike Scan it never
 // descends, so pointing it at a broad directory (e.g. ~/.claude, which holds
