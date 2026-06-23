@@ -105,7 +105,7 @@ const state = {
   invError: "",
   openGroup: undefined, // 手风琴：当前展开的组 key（undefined=尚未选择默认展开第一个；null=全部收起）
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
-  activeTarget: undefined, // active 同步目录 tab (one tab per dir)
+  activeTarget: undefined, // active 同步目录标签页 (one tab per dir)
   search: "",
   searchFold: { local: false, online: false }, // 搜索结果两区各自折叠状态（false=展开）
   onlineMinInstalls: 0, // 在线结果过滤：最低安装数（齿轮弹窗，持久化）
@@ -143,6 +143,7 @@ const CONTRIB_ERR = {
   name_taken: "目标仓已存在同名 skill，请改名后再贡献",
   copy_failed: "原 skill 未动，请检查磁盘空间或权限",
   verify_failed: "原 skill 未动，复制不完整",
+  secrets_blocked: "含疑似密钥/凭据文件，已拦截。请在仓「同步仓库」弹窗里核对并勾选确认后再推，或先从仓里移除这些文件",
   branch_failed: "无法解析推送分支",
   save_failed: "配置保存失败",
 };
@@ -527,7 +528,7 @@ async function openSkillsShModal() {
       };
       bar.append(fb);
     } else {
-      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "由 npx skills 管理。先选一个目录 tab 才能启用；更新请用侧栏卡片上的「更新」。" }));
+      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "由 npx skills 管理。先选一个目录标签页 才能启用；更新请用侧栏卡片上的「更新」。" }));
     }
     body.append(bar);
     const list = ce("div", { className: "rs-list" });
@@ -553,11 +554,16 @@ async function openSkillsShModal() {
         r1.append(sb);
       }
       r1.append(ce("span", { className: "group-spacer" }));
-      r1.append(enableControl(AGENTS_NS, name, follow, present.has(name), target, () => render(skills)));
+      // 单个更新：npx skills update <name>，更新后重拉列表刷新版本号。
+      const up = ce("button", { className: "small", textContent: "更新", title: "更新此 skill（npx skills update " + name + "）" });
+      up.onclick = () => updateSkillsShOne(name, up, async () => render((await api("GET", "/api/skillssh")) || []));
+      r1.append(up);
       // 卸载：删真身 + 所有软链；卸载后重拉列表（该 skill 应消失）。
       const rm = ce("button", { className: "danger small", textContent: "卸载", title: "卸载：删除 ~/.agents/skills 下真身 + 所有软链" });
       rm.onclick = () => uninstallSkillsSh(name, rm, async () => render((await api("GET", "/api/skillssh")) || []));
       r1.append(rm);
+      // 启用状态（停用/启用/自动同步中）放最右——与 git 仓弹窗顺序一致（动作在左、状态在最右）。
+      r1.append(enableControl(AGENTS_NS, name, follow, present.has(name), target, () => render(skills)));
       main.append(r1);
       if (sk.description) main.append(ce("div", { className: "skill-desc", textContent: sk.description }));
       // 来源 URL（可见、可选中）——更新就从这里拉取，但命令按 skill 名走，
@@ -578,6 +584,21 @@ async function openSkillsShModal() {
     body.innerHTML = "";
     body.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "加载失败：" + e.message }));
   }
+}
+
+// updateSkillsShOne updates a single skills.sh skill via `npx skills update
+// <name>` (delegated — we never take ownership). On success re-renders the list
+// so the new version shows.
+async function updateSkillsShOne(name, btn, after) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "更新中…";
+  try {
+    const d = await api("POST", "/api/skillssh/update", { name });
+    if (d && d.ok) { toast("已更新 " + cleanSkillName(name), "ok"); if (after) await after(); return; }
+    banner("更新 " + cleanSkillName(name) + " 失败：" + ((d && (d.stderr || d.error)) || "未知错误"), true);
+  } catch (e) {
+    banner("更新 " + cleanSkillName(name) + " 失败：" + e.message, true);
+  }
+  btn.disabled = false; btn.textContent = old;
 }
 
 async function updateSkillsShAll(btn) {
@@ -615,7 +636,7 @@ function openRepoSkills(repoName, opts) {
     if (target) {
       bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "启用到当前目录：" + targetLabel(target) }));
     } else {
-      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "未选择同步目录——先在上方选一个目录 tab，再启用。" }));
+      bar.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "未选择同步目录——先在上方选一个目录标签页，再启用。" }));
     }
     bar.append(ce("span", { className: "group-spacer" }));
     // 顺序：同步仓库（左）→ 取消同步 / 自动同步 skill（右）。
@@ -748,14 +769,15 @@ async function repoUpdateFlow(repo, btn) {
   if (!repo || !repo.url) { banner("无法确定仓库", true); return; }
   const old = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "检查中…"; }
-  let entries = [];
+  let entries = [], secrets = [];
   try {
     const d = await api("GET", "/api/repo-drift?repo=" + encodeURIComponent(repo.name));
     entries = (d && d.entries) || [];
+    secrets = (d && d.secrets) || [];
   } catch { entries = []; } // never-synced / uncloned → no drift, fall through to plain update
   if (btn) { btn.disabled = false; btn.textContent = old; }
   if (!entries.length) { await doRepoUpdate(repo, false, btn); return; } // clean → just update
-  openRepoUpdateModal(repo, entries);
+  openRepoUpdateModal(repo, entries, secrets);
 }
 
 // doRepoUpdate pulls a single repo's upstream and re-syncs. force=true also
@@ -767,7 +789,13 @@ async function doRepoUpdate(repo, force, btn) {
   try {
     const resp = await api("POST", "/api/repos/update", { url: repo.url, force: !!force });
     if (resp && resp.dirty && !force) {
-      openRepoUpdateModal(repo, (resp.drift && resp.drift.entries) || []);
+      openRepoUpdateModal(repo, (resp.drift && resp.drift.entries) || [], (resp.drift && resp.drift.secrets) || []);
+      return;
+    }
+    // 仅更新遇到冲突：本地改动已保留（未丢弃、未上传），交给用户用 git 解决。
+    if (resp && resp.state === "conflict") {
+      banner("更新 " + repo.name + " 失败：本地改动与上游有冲突，已保留你的改动（未丢弃、未上传）。请到镜像仓用 git 手动解决冲突后，再点「同步仓库」。" + (resp.error ? "（" + resp.error + "）" : ""), true, true);
+      await load();
       return;
     }
     // A failed update returns HTTP 200 with state:"failed" + a top-level error
@@ -819,7 +847,7 @@ async function quickUpload(i, btn) {
 // Selective upload was dropped on purpose: pushing only some changes then
 // pulling-aligning the repo would force-discard the rest (a mirror can't keep
 // half its working tree diverged from upstream), so it's all-or-nothing.
-function openRepoUpdateModal(repo, entries) {
+function openRepoUpdateModal(repo, entries, secrets) {
   const desc = {};
   (state.skillsByRepo[repo.name] || []).forEach((sk) => { desc[sk.linkName || sk.logicalName] = sk.description || ""; });
   entries = entries || [];
@@ -833,9 +861,34 @@ function openRepoUpdateModal(repo, entries) {
     row.append(ce("span", { className: "badge drift", textContent: driftLabel(e.kind) }));
     list.append(row);
   });
+  renderUploadSecrets(secrets || []); // 疑似密钥/凭据：标红 + 必须勾选确认才放开「确认」
   const ta = $("#upload-msg"); ta.dataset.touched = "0";
   refreshUploadMsg();
   $("#upload-modal").classList.remove("hidden");
+}
+
+// renderUploadSecrets warns about changed files that look like secrets/credentials
+// and gates the 确认 (push) button behind an explicit acknowledgement — pushing a
+// secret to a shared repo writes it into permanent git history. 仅更新 stays
+// enabled (it discards the changes, so it can never leak the secret).
+function renderUploadSecrets(secrets) {
+  const box = $("#upload-secrets");
+  const ok = $("#upload-ok");
+  box.innerHTML = "";
+  if (!secrets.length) { box.classList.add("hidden"); ok.disabled = false; return; }
+  box.classList.remove("hidden");
+  box.append(ce("div", { className: "us-head", textContent: "⚠ 检测到疑似密钥 / 凭据文件" }));
+  box.append(ce("div", { className: "us-note", textContent: "推送到共享仓后会永久留在 git 历史里、删不掉。请先确认这些文件确实可以公开（或在仓里移除它们后再同步）：" }));
+  const ul = ce("ul", { className: "us-list" });
+  secrets.forEach((p) => ul.append(ce("li", { textContent: p })));
+  box.append(ul);
+  const lbl = ce("label", { className: "us-ack" });
+  const cb = ce("input", { type: "checkbox", id: "upload-secrets-ack" });
+  cb.onchange = () => { ok.disabled = !cb.checked; };
+  lbl.append(cb);
+  lbl.append(ce("span", { textContent: "我已确认，仍要推送以上文件" }));
+  box.append(lbl);
+  ok.disabled = true; // 闸住，直到用户显式勾选
 }
 
 // refreshUploadMsg rebuilds the default commit message from ALL changed skills,
@@ -859,15 +912,23 @@ async function doUpdateAndUpload(btn) {
   const paths = (ctx.entries || []).map((e) => e.path || e.skill);
   if (!paths.length) { $("#upload-modal").classList.add("hidden"); await doRepoUpdate(ctx.repoObj, false, null); return; }
   const message = $("#upload-msg").value;
+  const ackEl = $("#upload-secrets-ack");
+  const confirmSecrets = !!(ackEl && ackEl.checked); // 显式确认才放行密钥文件
   const old = btn.textContent; btn.disabled = true; btn.textContent = "上传中…";
   try {
     const r = await fetch("/api/upload", {
       method: "POST",
       headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
-      body: JSON.stringify({ repo: ctx.repo, skills: paths, message }),
+      body: JSON.stringify({ repo: ctx.repo, skills: paths, message, confirmSecrets }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
+      // 密钥拦截：把后端返回的可疑文件列表渲染进弹窗（含勾选框），保持弹窗打开让用户确认后重试。
+      if (d.error_code === "secrets_blocked") {
+        renderUploadSecrets(d.secrets || []);
+        banner("检测到疑似密钥/凭据文件，已拦截。请核对后勾选确认再推送。", true, true);
+        return;
+      }
       banner((d.committed ? "上传：" : "上传失败：") + (CONTRIB_ERR[d.error_code] || d.error || r.statusText), true, true);
       return;
     }
@@ -1155,7 +1216,7 @@ function renderSearchResults(root, term) {
   head.append(ce("span", { className: "group-title", textContent: "搜索结果" }));
   head.append(ce("span", { className: "badge count", textContent: items.length + " skill" }));
   head.append(ce("span", { className: "group-spacer" }));
-  head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: target ? "启用到当前目录：" + targetLabel(target) : "先选一个目录 tab 才能启用" }));
+  head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: target ? "启用到当前目录：" + targetLabel(target) : "先选一个目录标签页 才能启用" }));
   head.onclick = () => { state.searchFold.local = !folded; renderInventory(); };
   root.append(head);
 
@@ -1400,16 +1461,22 @@ function renderInventory() {
       head.append(q);
     }
     head.append(ce("span", { className: "badge count", textContent: g.items.length + " skill" }));
-    // 插件组：在标题后说明「无法检测更新」，与 skills.sh 的组说明同位置。
-    if (g.key === "plugin" && state.status && state.status.claudeCli) {
-      head.append(ce("span", { className: "group-note", textContent: "无法检测是否有更新，按需手动委托更新（第一行）" }));
+    // 插件组：在标题后说明「全局、与当前目录无关」（+ 无法检测更新），与 skills.sh 的组说明同位置。
+    if (g.key === "plugin") {
+      let txt = "全局插件（harness 级，与当前目录无关）";
+      if (state.status && state.status.claudeCli) txt += " · 无法检测更新，按需在第一行手动委托";
+      head.append(ce("span", {
+        className: "group-note",
+        textContent: txt,
+        title: "插件不是按目录管理的：它们统一装在 ~/.claude/plugins（cc）/ ~/.codex/plugins（codex）。这里列的是该 harness 全局已装插件带的 skill，对任何目录都一样——既不是当前目录、也不是其父目录带的。所以给新目录加目录后看到一堆插件 skill 属正常。SkillManage 只读，不接管。",
+      }));
     }
     // skills.sh 组：它归 npx skills 自己的台账管理，本工具只读、不主动联网比对，
     // 因此无法显示「是否有更新」。在组头给出说明 + 一个手动「更新」入口（代调 npx）。
     if (g.key === "skillssh") {
       head.append(ce("span", {
         className: "group-note",
-        textContent: "由 skills.sh 自管、无更新检查接口，无法获取实时更新状态，请在卡片里手动更新",
+        textContent: "由 npx skills 自管、无更新检查接口，无法获取实时更新状态，请在卡片里手动更新",
         title: "skills.sh(npx skills) 不提供「检查是否有更新」的接口，本工具又不接管它，所以无法像 git 源那样预判更新。更新请在各 skill 卡片上点「更新」（代调 npx skills update），每日定时更新也会自动刷新它。",
       }));
     }
@@ -1462,7 +1529,7 @@ function groupOf(i) {
     case "skills.sh":
       // 全部归到一个「skills.sh」组——它们都归 npx skills 管，不按来源仓拆分。
       // 具体来源仓（owner/repo）显示在每张卡片的徽章上。
-      return { key: "skillssh", title: "skills.sh", order: SOURCE_ORDER["skills.sh"] };
+      return { key: "skillssh", title: "npx skills", order: SOURCE_ORDER["skills.sh"] };
     // 本地（受管存储）与各本地目录源在「使用」时合并为一个「本地源」类，不按目录拆组。
     case "local":
     case "dir": return { key: "local", title: "本地源", order: SOURCE_ORDER.local };
@@ -1499,20 +1566,23 @@ function inventoryCard(i) {
   r1.append(ce("span", { className: "skill-name", textContent: cleanSkillName(i.name), title: i.name }));
   { const vt = verTag(i.version); if (vt) r1.append(vt); }
 
-  // 徽章默认显示全名——位置够就不缩写（CSS 在真正放不下时才 ellipsis 截断，全名见 hover）。
-  let badgeText = s.label;
-  if (i.kind === "skills.sh" && i.sourceUrl) badgeText = repoFromUrl(i.sourceUrl) || hostOf(i.sourceUrl);
-  if (i.kind === "plugin" && i.plugin) badgeText = i.plugin;
-  // 本地源合并成一个组后，徽章带上各自来源：local（受管存储）或某个本地源文件夹名。
-  if (i.kind === "local") badgeText = "local";
-  if (i.kind === "dir") badgeText = dirLabel(i.repo);
-  // 缩写只针对 plugin（名字常含连字符且偏长，如 compound-engineering → ce）；npx /
-  // git / 本地源标签本身不长，保持全名。全名见 hover（plugin 的 title 在下面设置）。
-  const badge = ce("span", { className: "src-badge " + s.cls, textContent: i.kind === "plugin" ? abbrevLabel(badgeText) : badgeText });
-  if (i.kind === "skills.sh" && i.sourceUrl) badge.title = i.sourceUrl; // title is text-safe (no innerHTML)
-  if (i.kind === "plugin" && i.plugin) badge.title = i.plugin;
-  if (i.kind === "dir") badge.title = dirLabel(i.repo) + "（本地源）";
-  r1.append(badge);
+  // skills.sh 卡不放来源徽章：它已自成一组「skills.sh」，来源（台账 + URL）在详情卡的
+  // 「台账来源」行里。卡上那条 .well-known/…/SKILL.md 徽章是冗余的，还会把名字挤成一两个字，
+  // 故去掉——把整行宽度让给名称（名称仍 ellipsis 截断，不超框）。
+  if (i.kind !== "skills.sh") {
+    // 徽章默认显示全名——位置够就不缩写（CSS 在真正放不下时才 ellipsis 截断，全名见 hover）。
+    let badgeText = s.label;
+    if (i.kind === "plugin" && i.plugin) badgeText = i.plugin;
+    // 本地源合并成一个组后，徽章带上各自来源：local（受管存储）或某个本地源文件夹名。
+    if (i.kind === "local") badgeText = "local";
+    if (i.kind === "dir") badgeText = dirLabel(i.repo);
+    // 缩写只针对 plugin（名字常含连字符且偏长，如 compound-engineering → ce）；npx /
+    // git / 本地源标签本身不长，保持全名。全名见 hover（plugin 的 title 在下面设置）。
+    const badge = ce("span", { className: "src-badge " + s.cls, textContent: i.kind === "plugin" ? abbrevLabel(badgeText) : badgeText });
+    if (i.kind === "plugin" && i.plugin) badge.title = i.plugin;
+    if (i.kind === "dir") badge.title = dirLabel(i.repo) + "（本地源）";
+    r1.append(badge);
+  }
 
   if (i.collision) {
     const c = ce("span", { className: "src-badge src-shadow", textContent: "遮蔽" });

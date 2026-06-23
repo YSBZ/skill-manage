@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plugin-skill", s.requireAuth(s.handlePluginSkillDetail))
 	mux.HandleFunc("GET /api/skill-at", s.requireAuth(s.handleSkillAt))
 	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
+	mux.HandleFunc("POST /api/skillssh/update", s.requireAuth(s.handleUpdateSkillsShOne))
 	mux.HandleFunc("GET /api/skillssh/find", s.requireAuth(s.handleSkillsShFind))
 	mux.HandleFunc("POST /api/skillssh/add", s.requireAuth(s.handleSkillsShAdd))
 	mux.HandleFunc("POST /api/skillssh/remove", s.requireAuth(s.handleSkillsShRemove))
@@ -270,6 +271,50 @@ func (s *Server) handleUpdateSkillsShAll(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 180*time.Second)
 	defer cancel()
 	stdout, stderr, err := runner.UpdateAll(ctx, npx)
+	resp := map[string]any{"ok": err == nil, "stdout": stdout, "stderr": stderr}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleUpdateSkillsShOne runs `npx skills update <name>` for a single
+// skills.sh-managed skill (the per-card「更新」button). Delegated update only —
+// we never take ownership. The name is allowlist-validated AND confirmed to be a
+// direct child of the canonical ~/.agents/skills, so the arg can only name a real
+// skills.sh skill (never a flag or traversal).
+func (s *Server) handleUpdateSkillsShOne(w http.ResponseWriter, r *http.Request) {
+	if !originGuard(w, r) {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "." || name == ".." || !skillNameRe.MatchString(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid skill name"})
+		return
+	}
+	s.mu.Lock()
+	npx, runner := s.npxPath, s.runner
+	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
+	s.mu.Unlock()
+	if npx == "" || runner == nil {
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update " + name})
+		return
+	}
+	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)
+	if agentsSkillsRoot == "" || !isDirectChildDir(agentsSkillsRoot, name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不是 skills.sh 管理的 skill"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 180*time.Second)
+	defer cancel()
+	stdout, stderr, err := runner.UpdateSkill(ctx, npx, name)
 	resp := map[string]any{"ok": err == nil, "stdout": stdout, "stderr": stderr}
 	if err != nil {
 		resp["error"] = err.Error()

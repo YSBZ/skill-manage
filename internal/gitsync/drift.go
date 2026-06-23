@@ -35,6 +35,27 @@ type DriftEntry struct {
 type Drift struct {
 	Dirty   bool         `json:"dirty"`
 	Entries []DriftEntry `json:"entries,omitempty"`
+	// Secrets are repo-relative paths of CHANGED files whose names look like a
+	// credential or private key (.env, *.pem, id_rsa, .npmrc …). They are NOT
+	// silently ignored — that could hide a file the user means to push or give
+	// false safety — but surfaced so the contribute dialog can warn and require
+	// explicit confirmation before they reach a shared repo's permanent history.
+	Secrets []string `json:"secrets,omitempty"`
+}
+
+// SecretsUnder returns the flagged secret/credential paths that live under
+// repoPath (a repo-relative skill directory). Used to block a single-skill push
+// that would carry a credential — while the full-repo dialog can still
+// confirm-and-push the same files explicitly.
+func (d Drift) SecretsUnder(repoPath string) []string {
+	repoPath = strings.TrimSuffix(repoPath, "/")
+	var out []string
+	for _, s := range d.Secrets {
+		if s == repoPath || strings.HasPrefix(s, repoPath+"/") {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Has reports whether skill (matched by display name or repo-relative path) has
@@ -67,11 +88,15 @@ func (s *Syncer) Drift(ctx context.Context, dir, branch string) Drift {
 var kindRank = map[DriftKind]int{DriftModified: 4, DriftDeleted: 3, DriftCommitted: 2, DriftAdded: 1}
 
 func (s *Syncer) driftAt(ctx context.Context, dir, ref string) Drift {
+	// Make git ignore OS junk (.DS_Store etc.) before reading status, so it never
+	// shows up as drift and never gets contributed upstream. Idempotent.
+	ensureExcludes(dir)
 	// skillRoot is where this repo keeps its skills (e.g. "skills"); changed paths
 	// are mapped to the skill DIRECTORY beneath it so attribution is correct for
 	// both root-level and nested layouts.
 	skillRoot := scanner.SkillRoot(dir)
 	best := map[string]DriftKind{}
+	secrets := map[string]bool{} // raw repo-relative paths of changed files that look like secrets
 	set := func(path string, k DriftKind) {
 		if cur, ok := best[path]; !ok || kindRank[k] > kindRank[cur] {
 			best[path] = k
@@ -86,6 +111,9 @@ func (s *Syncer) driftAt(ctx context.Context, dir, ref string) Drift {
 				continue
 			}
 			code, path := line[:2], renameDest(strings.TrimSpace(line[3:]))
+			if looksSecret(path) {
+				secrets[path] = true
+			}
 			sp := skillPathOf(path, skillRoot)
 			switch {
 			case code == "??":
@@ -104,6 +132,9 @@ func (s *Syncer) driftAt(ctx context.Context, dir, ref string) Drift {
 			if names, _, derr := s.run(ctx, dir, "diff", "--name-only", ref+"..HEAD"); derr == nil {
 				for _, p := range strings.Split(names, "\n") {
 					if p = strings.TrimSpace(p); p != "" {
+						if looksSecret(p) {
+							secrets[p] = true
+						}
 						set(skillPathOf(p, skillRoot), DriftCommitted)
 					}
 				}
@@ -121,7 +152,51 @@ func (s *Syncer) driftAt(ctx context.Context, dir, ref string) Drift {
 		d.Entries = append(d.Entries, DriftEntry{Skill: lastSeg(path), Path: path, Kind: k})
 	}
 	sort.Slice(d.Entries, func(i, j int) bool { return d.Entries[i].Path < d.Entries[j].Path })
+	for p := range secrets {
+		d.Secrets = append(d.Secrets, p)
+	}
+	sort.Strings(d.Secrets)
 	return d
+}
+
+// secretSafeTemplates are *.env-style names that are intentionally committable
+// (placeholders with no real values), so they must not trip the secret warning.
+var secretSafeTemplates = map[string]bool{
+	".env.example": true, ".env.sample": true, ".env.template": true,
+	".env.dist": true, ".env.defaults": true,
+}
+
+// secretExts are file extensions that almost always denote a private key /
+// credential bundle. (.pub is deliberately absent — public keys are not secret.)
+var secretExts = []string{".pem", ".key", ".p12", ".pfx", ".p8", ".keystore", ".jks", ".asc", ".ppk"}
+
+// looksSecret reports whether a changed file's name strongly suggests a
+// credential or private key that should never be pushed to a shared skill repo
+// without the user's explicit say-so. Conservative by design: it matches names,
+// not contents, and excludes obvious templates — a false positive only adds a
+// confirm step, while a miss could leak a secret into permanent git history.
+func looksSecret(repoPath string) bool {
+	base := strings.ToLower(lastSeg(strings.TrimSuffix(repoPath, "/")))
+	if base == "" || secretSafeTemplates[base] {
+		return false
+	}
+	switch {
+	case base == ".env" || strings.HasPrefix(base, ".env."):
+		return true
+	case base == ".npmrc", base == ".netrc", base == ".pgpass", base == ".git-credentials", base == ".htpasswd":
+		return true
+	case base == "id_rsa", base == "id_dsa", base == "id_ecdsa", base == "id_ed25519":
+		return true
+	case strings.Contains(base, "credential"), strings.Contains(base, "secret"):
+		// catches credentials.yaml, aws_credentials, client_secret.json, *.secret …
+		return true
+	}
+	for _, ext := range secretExts {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // skillPathOf maps a repo-relative changed-file path to the repo-relative skill

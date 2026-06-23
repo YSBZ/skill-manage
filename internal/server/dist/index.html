@@ -199,14 +199,15 @@
           <button id="upload-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <div style="padding:16px 18px">
-          <p class="muted" style="margin:0 0 12px;font-size:12.5px">该仓有以下本地改动（新增/修改/删除）。<b>确认</b> = 把这些改动<b>全部</b> commit + push，再拉取上游更新；<b>仅更新</b> = 直接拉取上游、<b>丢弃</b>这些本地改动。（不支持只上传其中一部分——镜像无法只让部分改动与上游分叉。）</p>
+          <p class="muted" style="margin:0 0 12px;font-size:12.5px">该仓有以下本地改动（新增/修改/删除）。<b>确认</b> = 把这些改动<b>全部</b> commit + push，再拉取上游更新；<b>仅更新</b> = 只拉取上游更新并<b>保留</b>本地改动（不上传）——非冲突的改动会保留下来，下次还能再「同步仓库」上传；若与上游<b>冲突</b>则更新失败，请用 git 手动解决。（确认不支持只上传其中一部分——镜像无法只让部分改动与上游分叉。）</p>
           <label class="tm-label">提交信息（可编辑）</label>
           <textarea id="upload-msg" rows="6" placeholder="提交信息" style="width:100%;resize:vertical"></textarea>
           <label class="tm-label" style="margin-top:12px">将上传的改动（全部）</label>
           <div id="upload-list" class="upload-list"></div>
+          <div id="upload-secrets" class="upload-secrets hidden"></div>
           <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
             <button type="button" id="upload-cancel" class="ghost">取消</button>
-            <button type="button" id="upload-update-only" class="ghost" title="不上传，直接拉取上游更新——这些本地改动会被丢弃（reset --hard）">仅更新</button>
+            <button type="button" id="upload-update-only" class="ghost" title="不上传，只拉取上游更新并保留本地改动；与上游冲突时提示失败，请用 git 手动解决">仅更新</button>
             <button type="button" id="upload-ok" title="把以上全部改动提交并推送，再拉取上游更新">确认</button>
           </div>
         </div>
@@ -265,10 +266,73 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v5.0.14</span>
-              <span class="cl-date">五期 · 收口封板 · 更新于 2026-06-22</span>
+              <span class="cl-ver">v5.0.23</span>
+              <span class="cl-date">五期 · 封板后补丁 · 更新于 2026-06-23</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.23 · npx skills 组说明文案对齐（2026-06-23）</div>
+              <ul>
+                <li><b>组说明匹配标题</b>：npx skills 分组的说明从「由 skills.sh 自管…」改为「由 npx skills 自管…」，与分组标题一致。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.22 · 「仅更新」语义修正：保留本地改动，不再丢弃（2026-06-23）</div>
+              <ul>
+                <li><b>仅更新不再丢弃本地改动</b>：旧实现是 <code>reset --hard + clean -fd</code>（删掉本地新增、还原删除/修改），与「仅更新」语义不符且危险。改为:暂存本地改动 → 合并上游（fast-forward / merge）→ 还原本地改动。非冲突的新增/删除/修改全部<b>保留</b>，下次还能再「同步仓库」上传。</li>
+                <li><b>冲突即报错、交给 git</b>：若本地改动与上游冲突，更新失败并提示「请到镜像仓用 git 手动解决」——绝不自动丢弃。</li>
+                <li>全量更新里的「还原本地改动并更新」仍是显式 <code>reset --hard</code>（已明确告知用户），未变。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.21 · 列表分组名统一为「npx skills」（2026-06-23）</div>
+              <ul>
+                <li><b>分组名对齐</b>：右侧列表里 skills.sh skill 的分组标题改为「npx skills」，与左侧源区分区名一致——体现这些 skill 是通过 npx 安装管理的（registry 仍是 skills.sh，组头说明保留）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.20 · 弹窗动作顺序统一 + UI 文案一致性（2026-06-23）</div>
+              <ul>
+                <li><b>「自动同步中」位置统一</b>：skills.sh 仓弹窗的卡片控件顺序对齐 git 仓弹窗——动作（更新/卸载）在左、启用状态「自动同步中」恒在最右。</li>
+                <li><b>UI 文案一致性</b>：把「目录 tab」统一为「目录标签页」，去除中英混排。（卡片里的英文描述是 skills.sh 上游 skill 的原文内容，非本工具 UI，按原样展示不翻译。）</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.19 · npx(skills.sh) 详情卡支持单个更新（2026-06-23）</div>
+              <ul>
+                <li><b>单个更新按钮</b>：skills.sh 仓详情弹窗的每张 skill 卡新增「更新」按钮（<code>npx skills update &lt;name&gt;</code>，委托更新、不接管），更新后自动刷新列表版本号。原「全量更新」保留。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.18 · 密钥拦截下沉到后端（不止前端闸门）（2026-06-22）</div>
+              <ul>
+                <li><b>服务端硬拦截</b>：<code>/api/upload</code> 检出疑似密钥且未带 <code>confirmSecrets</code> 标志直接 409 拒绝并回传可疑文件；前端勾选确认后才带标志放行（绕过 UI 直接打 API 也拦得住）。</li>
+                <li><b>快捷上传同样堵</b>：卡片「快捷上传」无确认步骤，若该 skill 含密钥文件直接拦截，引导去「同步仓库」弹窗确认后再推。</li>
+                <li>新增单测 <code>TestLooksSecret</code> / <code>TestSecretsUnder</code> 锁定检测与归属边界。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.17 · 扩大垃圾忽略 + 同步弹窗密钥/凭据告警拦截（2026-06-22）</div>
+              <ul>
+                <li><b>扩大静默忽略</b>：除 .DS_Store 外，镜像还忽略编辑器/IDE/临时垃圾（vim/emacs swap、<code>.idea/</code> <code>.vscode/</code>、各平台临时文件）与依赖/构建产物（<code>node_modules/</code> <code>__pycache__/</code> <code>*.pyc</code> <code>.venv/</code> <code>*.log</code >），均写入各镜像 <code>.git/info/exclude</code>（本地、不推上游）。</li>
+                <li><b>密钥/凭据告警拦截</b>：检测到改动里有疑似密钥/凭据文件（<code>.env</code>、<code>*.pem</code> <code>*.key</code>、<code>id_rsa</code>、<code>.npmrc</code>、含 credential/secret 的文件等），「同步仓库」弹窗会<b>标红列出</b>并<b>闸住「确认」</b>——必须勾选「我已确认仍要推送」才能 push（<code>.env.example</code> 等模板不算）。不静默吞文件，防密钥误入共享仓永久历史。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.16 · 镜像忽略 OS 垃圾文件，杜绝 .DS_Store 被推上游（2026-06-22）</div>
+              <ul>
+                <li><b>不再把 .DS_Store 当改动上传</b>：镜像同步把 macOS/编辑器垃圾（<code>.DS_Store</code>、<code>._*</code>、<code>Thumbs.db</code> 等）写入各镜像的 <code>.git/info/exclude</code>（本地忽略，不动也不推上游 .gitignore）。这样 git status 不再报它们为「新增未推送」，commit/push 也不会带上——「同步仓库」弹窗只剩真实改动。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.15 · 卡片超框治理 + 插件组标注「全局」 + Windows 包加图标（2026-06-22）</div>
+              <ul>
+                <li><b>严禁 skill 卡超框</b>：在线卡名称改回省略号截断——名字吃满卡内可用宽度后截断，安装数、来源 badge、「安装」按钮恒在框内不再被长名顶出卡框。</li>
+                <li><b>skills.sh 卡去掉来源徽章</b>：去掉卡上那条冗余的 <code>.well-known/…/SKILL.md</code> 粉色徽章（它把名字挤成一两个字），整行宽度让给名称；来源（台账 + URL）仍在详情卡的「台账来源」行里。</li>
+                <li><b>插件组标注「全局」</b>：插件组头加说明「全局插件（harness 级，与当前目录无关）」——插件统一装在 <code>~/.claude/plugins</code>，对任何目录都一样，给新目录加目录后看到一堆插件 skill 属正常，不是识别到该目录或父目录带的插件。</li>
+                <li><b>Windows 包加图标</b>：Windows exe 现在嵌入与 macOS 同款图标（icns→png→syso，go-winres 生成），并带版本信息与 GUI manifest。<code>make winres</code> 可随版本号重生成。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v5.0.14 · 五期收口：右侧只读模型一致化 + 指南补 git 同步流程 + 死代码/重复清理 + Windows junction 读回（2026-06-22）</div>
               <ul>

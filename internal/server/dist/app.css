@@ -255,6 +255,14 @@ ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .upload-row:last-child { border-bottom: none; }
 .upload-row input[type=checkbox] { width: auto; margin: 0; flex: none; }
 .upload-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 疑似密钥/凭据告警框：红边淡红底，列出可疑文件 + 必须勾选确认才放开「确认」按钮 */
+.upload-secrets { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--err) 55%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--err) 9%, var(--bg)); padding: 12px 14px; }
+.upload-secrets .us-head { color: var(--err); font-weight: 600; font-size: 13px; }
+.upload-secrets .us-note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.upload-secrets .us-list { margin: 8px 0 4px; padding-left: 18px; max-height: 120px; overflow-y: auto; }
+.upload-secrets .us-list li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--err); word-break: break-all; }
+.upload-secrets .us-ack { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; cursor: pointer; }
+.upload-secrets .us-ack input[type=checkbox] { width: auto; margin: 0; flex: none; }
 .badge.drift { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .badge.author { color: var(--muted); border-color: var(--line); font-variant-numeric: tabular-nums; }
 
@@ -459,8 +467,8 @@ footer .error { color: var(--err); margin-top: 4px; }
 .skill.inv.online { align-items: stretch; } /* 让 skill-main 撑满卡片高度，footer 才能钉底 */
 .skill.inv.online .skill-main { display: flex; flex-direction: column; }
 .skill.inv.online .skill-row1 { align-items: center; }
-/* 在线卡：名称优先（不收缩、完整显示），owner/repo 徽章让步在先（可省略号） */
-.skill.inv.online .skill-name { flex-shrink: 0; overflow: visible; text-overflow: clip; }
+/* 在线卡：严禁超框。名字吃满可用宽度后省略号截断，安装数/badge/安装按钮恒在框内 */
+.skill.inv.online .skill-name { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill.inv.online .online-repo { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
 .install-count { font-size: 11px; color: var(--muted); white-space: nowrap; flex: 0 0 auto; }
 .online-sub { word-break: break-all; }

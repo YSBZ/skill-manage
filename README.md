@@ -1,59 +1,97 @@
 # SkillManage
 
-一个「同步 skill」的工具：跟踪多个 git skill 仓、每天自动保持最新，并把选中的 skill 软链（macOS/WSL/Linux）或目录联接（Windows）进 **Claude Code 和 Codex** 的 skill 目录——由内置浏览器 UI 驱动的单二进制 daemon。
+**English** | [中文](README-zh.md)
 
-刻意减少定制：使用者只需提供两样东西——**① git 远程仓（skill 来源）** 和 **② 要同步进去的目录**。其余都是工具的活：自动更新、选择性 / 整仓同步、把本地手写 skill 反向收编。
+A "skill sync" tool: it tracks multiple git skill repos, keeps them up to date automatically every day, and links selected skills — via symlinks (macOS/WSL/Linux) or directory junctions (Windows) — into the skill directories of **Claude Code and Codex**. It ships in two forms: a **single-binary daemon with a built-in browser UI**, and a **desktop app (macOS / Windows)** that wraps the same UI in a native window.
 
-核心机制：链接指向**活的 git 镜像**，每天 `fetch + reset --hard` 让被链接的 skill 立即最新，**零安装、零更新动作**。cc 与 codex 的 skill 通用，同一来源可同时映射进两边。
+Deliberately low-configuration: you provide just two things — **① a git remote (the skill source)** and **② the directory to sync into**. Everything else is the tool's job: auto-update, selective / whole-repo sync, adopting your hand-written local skills, and contributing local changes back upstream.
 
-## 运行
+Core idea: links point at **live git mirrors**, and a daily `fetch` makes every linked skill instantly current — **zero install, zero update steps**. cc and codex skills are interchangeable; one source can map into both at once.
 
-```sh
-make build          # 构建 host 二进制 ./skillmanage
-./skillmanage       # 启动 daemon；终端打印 UI 地址（默认 http://127.0.0.1:7799/）
-```
+## Running
 
-- 中央文件夹默认 `~/.skillmanage`（含 config.yaml、manifest.yaml、local 受管存储、lock、address、token）；用 `--central <dir>` 覆盖。
-- 浏览器 UI 里管理一切；标题旁的 `?` 有完整使用指南。
+### Option A: Desktop app (macOS / Windows)
 
-## 功能
+Download the package for your platform from Releases:
 
-- **同步目录（tab）**：顶部 `+` 添加目录，可手输 / 粘贴或点选浏览。选一个项目根（含 `.claude` / `.codex`）会自动展开成对应的 cc / codex 两个 tab，标签按路径自动识别（认不出标 `unknown`）。删除一个 tab 会拆除该目录下由本工具建立的全部软链，你自己的真身 skill 不受影响。
-- **选择性 / 整仓同步**：每个 tab 独立维护映射——勾选要同步的 skill，或对仓库「全选并跟随」整仓（上游新增自动加链、删除自动清链）。
-- **收编本地 skill**：把同步目录里你手写、未纳管的真身 skill 移入受管存储并原位软链，成为可跨 harness 复用的来源。可选「忽略 plugin 里的 skill」（默认忽略）；取消勾选会额外扫描该 tab 的插件目录（如 `~/.claude/plugins`）并列出，对它们「收编」走复制导入、不改动插件原件。
-- **更新**：每天定时自动；「立即更新」手动触发；「强制更新」丢弃本地改动与上游一致。
-- **导入 / 导出**：导出 / 导入仓库列表，便于换机重建（manifest 不随导出，避免误删别机链接）。
+- **macOS**: `SkillManage-vX.Y.Z.dmg` — drag into `/Applications` and launch (**eject the dmg volume after installing**; don't run it from the mounted volume).
+- **Windows**: `SkillManage-windows-desktop-vX.Y.Z.zip` — unzip and run `SkillManage.exe` (app icon embedded, no console window on double-click).
 
-## git 仓与鉴权
+> **macOS note**: an unsigned / un-notarized binary is blocked by Gatekeeper on first launch — right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine <app>`.
 
-仓库 URL 支持 `https://…`、`ssh://…`，以及 scp 式 `git@host:org/repo.git`；出于安全拒绝明文 `http://`、本地 `file://` 和 `ext::`（git 的任意命令传输）。
-
-机器上必须装有 **git 且在 PATH 中**（缺失时 UI 顶部会红条提示、无法同步）。自动更新（每天 `fetch + reset --hard`）在后台**非交互**运行——设了 `GIT_TERMINAL_PROMPT=0`、`ssh -o BatchMode=yes`、`GCM_INTERACTIVE=never`，**绝不弹窗或卡住**；因此私有仓必须预先配好免交互鉴权，否则只会在该仓上报错。
-
-- **公开仓**：用 `https` 直接添加，无需任何配置。
-- **私有仓 · SSH（推荐）**：配好该 git 主机的 SSH key 并加入 `ssh-agent`（带 passphrase 的 key 需先解锁，因为以 `BatchMode` 运行不会提示输入），公钥登记到 git 服务器。
-- **私有仓 · HTTPS**：点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 `~/.skillmanage/credentials.yaml`（0600，不随导出离开本机），拉取时经 `GIT_ASKPASS` 自动注入；也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。
-
-## 跨平台分发
+### Option B: Single-binary web version
 
 ```sh
-make build-all      # 产出 dist/ 下 darwin-arm64 / darwin-amd64 / windows-amd64.exe / linux-amd64
+make build          # build the host binary ./skillmanage
+./skillmanage       # start the daemon; the UI address is printed (default http://127.0.0.1:7799/)
 ```
 
-UI 是手写静态资源、`//go:embed` 进二进制，无前端构建链。WSL 用 linux 构建。
+- The central folder defaults to `~/.skillmanage` (config.yaml, manifest.yaml, the `local` managed store, lock, address, token); override with `--central <dir>`.
+- Manage everything from the browser UI; the `?` next to the title has the full guide, and the changelog lives in the version popover.
 
-分发给他人时，直接把对应平台的单文件发过去即可（无需 Go 工具链）。对方运行后用浏览器打开打印的地址，加自己的 git 仓 + 同步目录即可。
+## Concepts
 
-> **macOS 注意**：未签名/未公证的二进制首次会被 Gatekeeper 拦截，对方需 `xattr -d com.apple.quarantine <binary>` 解隔离，或右键→打开。
+**Targets (directories / tabs)** — where you sync skills into. Add a directory with the top `+`; pick a project root (containing `.claude` / `.codex`) and it expands into matching cc / codex tabs, labeled by path (unrecognized ones are marked `unknown`).
 
-## 安全
+**Sources** — where skills come from, all managed on the left, in four kinds:
 
-- 本地 HTTP server 只绑回环，每次 API 调用需 bearer token（首次生成存 `~/.skillmanage/token`，0600，注入 SPA），并校验 `Host` 头防 DNS-rebinding。
-- git 仓 URL 按白名单校验（https/ssh/git），拒 `file://`/`ext::`/元字符。
-- 同步禁用仓自带 git hook 与系统 config。
-- 绝不覆盖目标处的真实目录；只动自己创建的链接（所有权 manifest + 文件系统对账）。
-- Codex 的 `.system` / `vendor_imports/skills` 为守卫目录，永不写入、复制或收编。
+- **git repos**: tracked remote skill repos, for which the tool maintains a read-only mirror.
+- **local sources**: ① the `~/.skillmanage/local` managed store (adopted / backed-up skills live here); ② any local folder you register (its skills are detected live — not copied, not modified).
+- **npx skills**: skills installed via [skills.sh](https://skills.sh) (`npx skills`); the canonical copy lives in `~/.agents/skills`, read-only here, updated through npx.
+- **plugins**: skills managed by the harness's own plugin system (`~/.claude/plugins`, etc.) — **global, read-only**, independent of any specific directory.
 
-## 文档
+**Interaction model**: the left side is the sources — the only place to act on a skill's **body** (move / delete / whole-repo sync / enable); the right side is the skill list, read-only on the body, with a "Disable" quick action on each card.
 
-设计与实施细节见 `docs/plans/`。
+## Features
+
+- **Selective / whole-repo sync**: each tab keeps its own mapping — tick the skills to sync, or "auto-sync" a whole repo (new skills upstream get linked automatically, deletions get unlinked).
+- **Update**: scheduled daily; manually via "Sync repo" on a repo card / repo popup.
+  - No local changes → just pull upstream.
+  - Local changes (added / modified / deleted) → a dialog with two choices:
+    - **Confirm** = commit + push **all** local changes upstream, then pull;
+    - **Update only** = pull upstream while **keeping** local changes (without uploading). Non-conflicting changes are preserved and can still be uploaded later; on a **conflict** with upstream the update fails and asks you to resolve with git — local changes are **never auto-discarded**.
+- **Contribute upstream**: locally added / modified / deleted skills are committed + pushed back to the git remote via "Sync repo", with an editable commit message.
+- **Secret / credential guard**: before uploading, if a secret-looking file is detected (`.env`, `*.pem`, `id_rsa`, `.npmrc`, files containing credential/secret, etc.), the dialog lists them in red and **gates the Confirm button** behind an explicit acknowledgement; the backend enforces this too (calling the API directly, bypassing the UI, is still blocked). Templates like `.env.example` don't count.
+- **Adopt / back up local skills**: move a hand-written, unmanaged skill from a sync directory into the managed store and symlink it in place, making it a cross-harness reusable source. Optionally scan plugin directories and adopt by **copy-import** (never touching the plugin originals).
+- **OS junk auto-ignored**: mirror sync writes `.DS_Store`, `._*`, `Thumbs.db`, editor swap files, `node_modules`, `__pycache__`, etc. into each mirror's `.git/info/exclude` (local ignore, never pushed upstream), so they're never mistaken for changes.
+- **Import / export**: export / import the repo list to rebuild on a new machine (the manifest is not exported, to avoid deleting another machine's links).
+
+## Git repos & authentication
+
+Repo URLs support `https://…`, `ssh://…`, and scp-style `git@host:org/repo.git`; for safety, plaintext `http://`, local `file://`, and `ext::` (git's arbitrary-command transport) are rejected.
+
+**git must be installed and on PATH** (a red banner warns when it's missing and sync is disabled). Auto-update runs **non-interactively** in the background — with `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`, `GCM_INTERACTIVE=never` — so it **never pops a prompt or hangs**; private repos must therefore have non-interactive auth set up in advance.
+
+- **Public repos**: add via `https`, no configuration needed.
+- **Private repos · SSH (recommended)**: set up an SSH key for that git host and add it to `ssh-agent` (a passphrase-protected key must be unlocked first), with the public key registered on the server.
+- **Private repos · HTTPS**: click "Set credentials" on the repo card, enter a username + personal access token (PAT) in-app, stored locally in `~/.skillmanage/credentials.yaml` (0600, never leaves the machine via export) and injected at fetch time through `GIT_ASKPASS`; or use a system credential helper (macOS Keychain / Git Credential Manager).
+
+## Build & distribute
+
+```sh
+make build          # host web binary ./skillmanage
+make package        # web zips under dist/ for darwin-arm64 / darwin-amd64 / windows-amd64 / linux-amd64
+make desktop-dmg    # macOS desktop app (universal) → dist/SkillManage-vX.Y.Z.dmg
+make desktop-win    # Windows desktop app (cross-compiled, with icon) → dist/pkg/…windows-desktop-…zip
+make winres         # regenerate the Windows resource (icon + version info); run after a version bump
+make test           # go test ./...
+```
+
+The UI is hand-written static assets, `//go:embed`-ed into the binary — no frontend build chain. WSL uses the linux build.
+
+- **Web version**: a single file, no Go toolchain needed; the recipient runs it and opens the printed address in a browser.
+- **Desktop version**: a Wails native window around the same UI. Windows uses pure-Go WebView2 bindings, so it needs **no CGO and no Windows machine** — it cross-compiles from macOS / Linux; the icon matches macOS (icns → png → syso, generated by go-winres).
+
+## Security
+
+- The local HTTP server binds loopback only; every API call needs a bearer token (generated once into `~/.skillmanage/token`, 0600, injected into the SPA), and the `Host` header is validated against DNS-rebinding.
+- Repo URLs are allowlist-validated (https/ssh/git); `file://`/`ext::`/metacharacters are rejected.
+- Sync disables a repo's own git hooks and system config.
+- **Never overwrites a real directory at the target**; it only touches links it created (ownership manifest + filesystem reconciliation).
+- **Secrets stay out of shared repos**: contribute/upload intercepts secret / credential-looking files and requires explicit confirmation.
+- Codex's `.system` / `vendor_imports/skills` are guarded directories — never written to, copied, or adopted.
+- Windows uses directory junctions (`mklink /J`) — no admin / Developer Mode required.
+
+## Documentation
+
+See `docs/plans/` for design and implementation details.

@@ -447,7 +447,11 @@ func (s *Server) SyncOne(ctx context.Context, url string, force bool) reconcile.
 		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: "failed", Error: gitErr}
 	} else {
 		dir := filepath.Join(reposRoot, name)
-		res := s.syncRepoLocked(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force})
+		// Per-repo「仅更新」preserves local changes (KeepLocal) instead of discarding:
+		// it pulls upstream and keeps local add/delete/modify, reporting a conflict
+		// for manual git resolution rather than reset --hard. (The all-repos「全量更新」
+		// discard path lives in SyncAll, which leaves KeepLocal false.)
+		res := s.syncRepoLocked(ctx, dir, repo.URL, gitsync.Options{Branch: repo.Branch, Force: force, KeepLocal: true})
 		st = RepoStatus{URL: repo.URL, Branch: repo.Branch, Name: name, State: string(res.Action), Dirty: res.Dirty, Drift: res.Drift}
 		if res.Err != nil {
 			st.Error = res.Err.Error()

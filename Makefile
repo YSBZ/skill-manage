@@ -11,7 +11,10 @@ VERSION := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString
 # console window — and a quick exit no longer flashes a console.
 WINFLAGS := -trimpath -ldflags "-s -w -H=windowsgui"
 
-.PHONY: build test vet fmt build-all package desktop-app desktop-win install-desktop desktop-dist desktop-dmg clean clean-dist
+.PHONY: build test vet fmt build-all package desktop-app desktop-win winres install-desktop desktop-dist desktop-dmg clean clean-dist
+
+# go-winres lives in GOPATH/bin; winres bootstraps it if missing.
+GOWINRES := $(shell go env GOPATH)/bin/go-winres
 
 # macOS desktop app (Wails): a native window wrapping the daemon. Needs CGO +
 # the UniformTypeIdentifiers framework (which `wails build` would add for us);
@@ -35,11 +38,27 @@ desktop-app:
 	@codesign --force --sign - --timestamp=none "$(DIST)/$(DESKTOP_APP)" 2>/dev/null || true
 	@echo "built $(DIST)/$(DESKTOP_APP)"
 
+# Regenerate the Windows resource object (desktop/rsrc_windows_amd64.syso): the
+# app icon (same artwork as macOS — converted from build/macos/AppIcon.icns via
+# sips), version info, and a GUI manifest. The "_windows_amd64" suffix means
+# `go build` links it ONLY for windows/amd64; darwin/linux builds ignore it, so
+# the committed .syso never affects the macOS app. Run after a version bump.
+# macOS-only (uses sips), consistent with the rest of packaging.
+winres:
+	@test -x "$(GOWINRES)" || go install github.com/tc-hib/go-winres@latest
+	@sips -s format png -z 1024 1024 build/macos/AppIcon.icns --out build/windows/AppIcon.png >/dev/null
+	@cd desktop && "$(GOWINRES)" simply --arch amd64 --manifest gui \
+	  --icon ../build/windows/AppIcon.png \
+	  --product-name "SkillManage" --file-description "SkillManage" \
+	  --product-version "$(VERSION)" --file-version "$(VERSION).0"
+	@echo "regenerated desktop/rsrc_windows_amd64.syso (icon + v$(VERSION))"
+
 # Windows desktop app (Wails native window). Wails uses pure-Go WebView2 bindings
 # on Windows, so this needs NO CGO and NO Windows machine — it cross-compiles from
 # any host (macOS/Linux). -H=windowsgui = no console window on double-click.
+# Depends on winres so the .exe always carries the icon + current version.
 # Output: a shareable zip with the .exe + a Windows usage guide.
-desktop-win:
+desktop-win: winres
 	@mkdir -p "$(DIST)/pkg"
 	@rm -f $(DIST)/pkg/SkillManage-windows-desktop-*.zip   # 清掉旧版本，避免新旧并存
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -tags "desktop,production" -ldflags "-s -w -H=windowsgui" -o "$(DIST)/SkillManage.exe" ./desktop

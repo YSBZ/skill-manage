@@ -573,9 +573,21 @@ func (s *Server) handleQuickUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind, dirty := syncer.Drift(ctx, repoDir, branch).Has(req.Skill)
+	drift := syncer.Drift(ctx, repoDir, branch)
+	kind, dirty := drift.Has(req.Skill)
 	if !dirty {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "nothing": true})
+		return
+	}
+	// Secret guard: the quick action has no confirm step, so refuse outright if
+	// this skill carries a credential/key-looking file and route the user to the
+	// repo「同步仓库」dialog, which can confirm-and-push explicitly.
+	if secs := drift.SecretsUnder(skillRel); len(secs) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "error_code": "secrets_blocked",
+			"error":   "该 skill 含疑似密钥/凭据文件，快捷上传已拦截，请用「同步仓库」确认后再推",
+			"secrets": secs,
+		})
 		return
 	}
 	// Working-tree changes (new/modified/deleted) need a fresh commit; a
@@ -636,14 +648,15 @@ func (s *Server) handleRepoDrift(w http.ResponseWriter, r *http.Request) {
 		Path  string            `json:"path"`  // repo-relative dir (may be nested); what /api/upload selects by
 		Kind  gitsync.DriftKind `json:"kind"`
 	}
+	drift := syncer.Drift(ctx, repoDir, branch)
 	out := []driftItem{}
-	for _, e := range syncer.Drift(ctx, repoDir, branch).Entries {
+	for _, e := range drift.Entries {
 		if e.Skill == "" || e.Path == "" {
 			continue // repo-root file not attributable to a skill
 		}
 		out = append(out, driftItem{Skill: e.Skill, Path: e.Path, Kind: e.Kind})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "entries": out})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "entries": out, "secrets": drift.Secrets})
 }
 
 // handleSkillAuthorship returns a git-source skill's creator + last editor (with
@@ -715,9 +728,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Repo    string   `json:"repo"`
-		Skills  []string `json:"skills"` // repo-relative skill paths (from /api/repo-drift)
-		Message string   `json:"message"`
+		Repo           string   `json:"repo"`
+		Skills         []string `json:"skills"` // repo-relative skill paths (from /api/repo-drift)
+		Message        string   `json:"message"`
+		ConfirmSecrets bool     `json:"confirmSecrets"` // user explicitly acknowledged pushing secret-looking files
 	}
 	if err := readJSON(r, &req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -779,6 +793,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Working-tree changes (added/modified/deleted) are staged; a committed-unpushed
 	// skill needs no fresh staging — the existing commit is re-pushed.
 	drift := syncer.Drift(ctx, repoDir, branch)
+	// Secret guard (server-side enforcement, not just the UI checkbox): refuse to
+	// push credential/key-looking files unless the caller explicitly confirmed.
+	// Returns the offending paths so the dialog can list them. Upload is
+	// all-or-nothing, so any flagged secret in the drift would be pushed.
+	if len(drift.Secrets) > 0 && !req.ConfirmSecrets {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "error_code": "secrets_blocked",
+			"error":   "检测到疑似密钥/凭据文件，未确认不予推送",
+			"secrets": drift.Secrets,
+		})
+		return
+	}
 	var toAdd, pending, names []string
 	for _, e := range drift.Entries {
 		if e.Path == "" || !want[e.Path] {
