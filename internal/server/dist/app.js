@@ -843,7 +843,8 @@ function driftLabel(kind) {
 // repoUpdateFlow is the merged 更新/上传 entry (repo card + repo popup toolbar). It
 // checks the repo's live local changes: clean → just update (pull + reconcile);
 // dirty → open a dialog to pick what to upload, with 确认 (upload then update) or
-// 仅更新 (update only, discarding un-uploaded changes). 移动/删除/修改都是本地改动，
+// 仅更新 (update only, PRESERVING local changes via KeepLocal stash+merge+pop —
+// never discards; conflict fails for manual git). 移动/删除/修改都是本地改动，
 // 推送统一在这里发生。
 async function repoUpdateFlow(repo, btn) {
   if (!repo || !repo.url) { banner("无法确定仓库", true); return; }
@@ -860,9 +861,10 @@ async function repoUpdateFlow(repo, btn) {
   openRepoUpdateModal(repo, entries, secrets);
 }
 
-// doRepoUpdate pulls a single repo's upstream and re-syncs. force=true also
-// discards local changes (reset --hard) — used by the dialog's 仅更新 and after an
-// upload. A non-force update that unexpectedly reports dirty re-opens the dialog.
+// doRepoUpdate pulls a single repo's upstream and re-syncs. force=true means "don't
+// skip on dirty" — the per-repo path uses KeepLocal, so 仅更新 PRESERVES local changes
+// (stash+merge+pop), it does NOT reset --hard/discard. Used by the dialog's 仅更新 and
+// after an upload. A non-force update that unexpectedly reports dirty re-opens the dialog.
 async function doRepoUpdate(repo, force, btn) {
   const old = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
@@ -923,10 +925,10 @@ async function quickUpload(i, btn) {
 
 // openRepoUpdateModal shows the merged update+upload dialog: a read-only list of
 // ALL the repo's changed skills + an editable commit message. 确认 = upload them
-// ALL (commit+push) then update; 仅更新 = update only (discard the changes).
-// Selective upload was dropped on purpose: pushing only some changes then
-// pulling-aligning the repo would force-discard the rest (a mirror can't keep
-// half its working tree diverged from upstream), so it's all-or-nothing.
+// ALL (commit+push) then update; 仅更新 = update only, PRESERVING local changes
+// (KeepLocal stash+merge+pop; never discards). Selective upload was dropped on
+// purpose: a mirror can't push half its working tree and keep the rest diverged
+// from upstream, so 确认 is all-or-nothing.
 function openRepoUpdateModal(repo, entries, secrets) {
   const desc = {};
   (state.skillsByRepo[repo.name] || []).forEach((sk) => { desc[sk.linkName || sk.logicalName] = sk.description || ""; });
@@ -950,7 +952,8 @@ function openRepoUpdateModal(repo, entries, secrets) {
 // renderUploadSecrets warns about changed files that look like secrets/credentials
 // and gates the 确认 (push) button behind an explicit acknowledgement — pushing a
 // secret to a shared repo writes it into permanent git history. 仅更新 stays
-// enabled (it discards the changes, so it can never leak the secret).
+// enabled (it never uploads — only pulls upstream and keeps local changes local —
+// so it can never leak the secret to the remote).
 function renderUploadSecrets(secrets) {
   const box = $("#upload-secrets");
   const ok = $("#upload-ok");
@@ -1024,8 +1027,10 @@ async function doUpdateAndUpload(btn) {
   }
 }
 
-// doUpdateOnly (仅更新): update only — force-aligns to upstream, discarding the
-// un-uploaded local changes shown in the dialog.
+// doUpdateOnly (仅更新): pull upstream while PRESERVING local changes (server uses
+// KeepLocal → stash + merge + stash pop). Non-conflicting changes are kept and can
+// still be uploaded later; a conflict fails the update for manual git resolution —
+// local work is never discarded. (force=true here只表示「不因 dirty 跳过」，不等于丢弃。)
 async function doUpdateOnly() {
   const ctx = state.uploadCtx;
   if (!ctx) return;
@@ -1377,10 +1382,11 @@ async function runOnlineSearch() {
     // 容错：两源的错误分开存，互不遮蔽——任一源失败只在区内提示一条，不影响另一源结果。
     o.errSh = (sh && sh.error) || "";
     o.errMp = (mp && mp.error) || "";
+    o.rateLimit = (mp && mp.rateLimit) || null; // skillsmp 当日配额（每次搜索刷新）
     o.error = ""; // 仅保留给下方 catch 的「整体失败」（正常路径不触发）
   } catch (e) {
     if (gen !== o.gen) return;
-    o.available = true; o.results = []; o.errSh = ""; o.errMp = ""; o.error = e.message;
+    o.available = true; o.results = []; o.errSh = ""; o.errMp = ""; o.rateLimit = null; o.error = e.message;
   } finally {
     if (gen === o.gen) { o.loading = false; renderInventory(); }
   }
@@ -1418,6 +1424,15 @@ function renderOnlineSection(root, allLocal, enabledSel) {
   if (src !== "both") head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 仅 " + (src === "skillssh" ? "skills.sh" : "skillsmp") }));
   if (sort !== "default") head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 热度" + (sort === "desc" ? "↓" : "↑") }));
   if (limit > 0 && capped) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· " + (src === "both" ? "每源前 " + limit : "前 " + limit) + "（共 " + shown.length + "/" + totalMatched + "）" }));
+  // skillsmp 当日配额（配了 key 才显示；每次搜索后由响应头刷新）。
+  if (state.status && state.status.skillsmpKey && o.rateLimit && o.rateLimit.dailyLimit) {
+    const rl = o.rateLimit, low = rl.dailyRemaining <= 50;
+    head.append(ce("span", {
+      className: "muted", style: "font-size:12px" + (low ? ";color:var(--err)" : ""),
+      textContent: "· skillsmp 今日剩余 " + rl.dailyRemaining + "/" + rl.dailyLimit,
+      title: "skillsmp 当日剩余可用次数 / 每日上限（来自 X-RateLimit-Daily-* 响应头）。注意：skillsmp 服务端计数为最终一致、更新有延迟——看着不动属正常，真正消耗后才回落；跨天 UTC 0 点重置。",
+    }));
+  }
   head.onclick = () => { state.searchFold.online = !folded; renderInventory(); };
   root.append(head);
 
@@ -1426,11 +1441,22 @@ function renderOnlineSection(root, allLocal, enabledSel) {
   if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在查询在线源（skills.sh + skillsmp）…" })); return; }
   if (o.error) { root.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "在线搜索失败：" + o.error })); return; }
   if (!o.term) { root.append(ce("div", { className: "empty", textContent: "输入关键词后点「搜索」或回车，查在线可安装的 skill（skills.sh + skillsmp）。" })); return; }
-  // 单源失败提示（非阻塞）：失败的源不会遮蔽另一个源的结果。
-  const srcNote = (label, msg) => ce("div", { className: "empty", style: "color:var(--err);font-size:12px;text-align:left", textContent: label + " 查询失败：" + msg + "（不影响其它源）" });
+  // 单源失败提示（非阻塞）：失败的源不会遮蔽另一个源的结果。触发封控（403）时，
+  // 在文案末尾给一个可点击的《配置 API key》——平时不打扰，需要时一键去配。
+  const srcNote = (label, msg, withKeyCfg) => {
+    const d = ce("div", { className: "empty", style: "color:var(--err);font-size:12px;text-align:left" });
+    d.append(document.createTextNode(label + " 查询失败：" + msg + "（不影响其它源）"));
+    if (withKeyCfg) {
+      d.append(document.createTextNode(" "));
+      const a = ce("a", { className: "online-link", href: "#", textContent: "《配置 API key》" });
+      a.onclick = (e) => { e.preventDefault(); openSmpKeyModal(); };
+      d.append(a);
+    }
+    return d;
+  };
   const notes = [];
-  if (o.errSh) notes.push(srcNote("skills.sh", o.errSh));
-  if (o.errMp) notes.push(srcNote("skillsmp", o.errMp));
+  if (o.errSh) notes.push(srcNote("skills.sh", o.errSh, false));
+  if (o.errMp) notes.push(srcNote("skillsmp", o.errMp, /403|风控|拒绝访问|额度/.test(o.errMp)));
 
   if (!o.results.length) {
     if (notes.length) notes.forEach((n) => root.append(n));
@@ -2382,6 +2408,51 @@ $("#online-search-btn").onclick = runOnlineSearch;
       reflect(); renderInventory();
     };
   });
+})();
+
+// skillsmp API key（每位用户填自己的免费 key，绝不内置/共享；仅存本机、不随导出）。
+// 不放在筛选弹窗里（避免一进来就被配置项吓到）——平时匿名直接用，仅当触发封控（403）
+// 时，错误提示里出现《配置 API key》入口，点开此独立小弹窗再填。
+function openSmpKeyModal() {
+  const m = $("#smp-key-modal");
+  if (!m) return;
+  refreshSmpKeyStatus();
+  $("#smp-key-input").value = "";
+  m.classList.remove("hidden");
+  setTimeout(() => $("#smp-key-input").focus(), 0);
+}
+async function refreshSmpKeyStatus() {
+  const el = $("#smp-key-status");
+  if (!el) return;
+  try {
+    const r = await api("GET", "/api/skillsmp/key");
+    if (r && r.configured) el.innerHTML = "已配置 <b>" + (r.hint || "") + "</b> · 认证额度 500 次/天";
+    else el.textContent = "未配置 · 匿名 50 次/天，易触发 403 风控";
+  } catch { /* 状态获取失败不阻塞 */ }
+}
+(function wireSmpKey() {
+  const m = $("#smp-key-modal");
+  if (!m) return;
+  $("#smp-key-close").onclick = () => m.classList.add("hidden");
+  m.onclick = (e) => { if (e.target.id === "smp-key-modal") m.classList.add("hidden"); };
+  $("#smp-key-save").onclick = async () => {
+    const key = ($("#smp-key-input").value || "").trim();
+    if (!key) { toast("请先粘贴 key"); return; }
+    try {
+      await api("POST", "/api/skillsmp/key", { key });
+      toast("已保存 skillsmp API key（仅存本机）");
+      m.classList.add("hidden");
+      if (state.skillsShOnline && state.skillsShOnline.term) runOnlineSearch(); // 用新额度立刻重查
+    } catch (e) { toast("保存失败：" + e.message); }
+  };
+  $("#smp-key-clear").onclick = async () => {
+    try {
+      await api("POST", "/api/skillsmp/key", { key: "" });
+      toast("已清除 skillsmp API key");
+      await refreshSmpKeyStatus();
+      $("#smp-key-input").value = "";
+    } catch (e) { toast("清除失败：" + e.message); }
+  };
 })();
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -41,14 +42,27 @@ func (windowsRunner) SkillsAddURL(ctx context.Context, npxPath, repoURL, skill s
 	return out.String(), errb.String(), err
 }
 
-// SkillsMpFind fetches a skillsmp.com search URL with curl via cmd /c (Cloudflare
-// 403s Go's TLS fingerprint). Windows 10+ ships curl.exe. HideWindow: no console flash.
-func (windowsRunner) SkillsMpFind(ctx context.Context, url string) (string, string, error) {
+// SkillsMpFind fetches a skillsmp.com search URL with curl (Cloudflare 403s Go's
+// TLS fingerprint). curl.exe (Windows 10+) is a real exe, so we exec it DIRECTLY —
+// NOT via `cmd /c` — otherwise cmd's %VAR% expansion would mangle the %header{}
+// in the -w writeout. HideWindow/CreateNoWindow still suppress any console flash.
+func (windowsRunner) SkillsMpFind(ctx context.Context, url, apiKey string) (string, string, error) {
 	curl, err := exec.LookPath("curl")
 	if err != nil {
 		return "", "需要 curl 才能搜索 skillsmp", err
 	}
-	cmd := exec.CommandContext(ctx, "cmd", "/c", curl, "-fsS", "--max-time", "20", "-H", "Accept: application/json", url)
+	args := []string{"-fsS", "--max-time", "20", "-H", "Accept: application/json"}
+	var stdin *strings.Reader
+	if apiKey != "" {
+		// API key via curl config on stdin (not argv) — keeps the secret out of process listings.
+		args = append(args, "-K", "-")
+		stdin = strings.NewReader("header = \"Authorization: Bearer " + apiKey + "\"\n")
+	}
+	args = append(args, "-w", skillsMpRateWriteout, url) // capture daily quota headers after the body
+	cmd := exec.CommandContext(ctx, curl, args...)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

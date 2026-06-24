@@ -110,6 +110,11 @@ type Server struct {
 	firstRun    bool
 	repoStatus  map[string]RepoStatus
 	lastSummary reconcile.Summary
+	// skillsmpKey is the user's optional skillsmp API key (Bearer). Each user
+	// supplies their OWN free key — it is never bundled. Persisted 0600 in
+	// centralDir, never exported, never logged, never returned in full by any API.
+	// Empty → anonymous skillsmp search (lower quota). Guarded by mu.
+	skillsmpKey string
 
 	// repoLocks serializes git working-tree operations on a single repo dir:
 	// a sync's fetch/reset/clean must not interleave with a contribute or
@@ -296,11 +301,39 @@ func New(centralDir string) (*Server, error) {
 		npxPath:       npxPath,
 		claudePath:    claudePath,
 		runner:        defaultSkillsRunner(),
+		skillsmpKey:   loadSkillsmpKey(centralDir),
 		cfg:           cfg,
 		manifest:      manifest,
 		firstRun:      firstRun,
 		repoStatus:    map[string]RepoStatus{},
 	}, nil
+}
+
+// skillsmpKeyPath is where the user's skillsmp API key is persisted (0600).
+func skillsmpKeyPath(centralDir string) string {
+	return filepath.Join(centralDir, "skillsmp.key")
+}
+
+// loadSkillsmpKey reads the persisted skillsmp API key, or "" if absent/unreadable.
+// Never logs the value.
+func loadSkillsmpKey(centralDir string) string {
+	b, err := os.ReadFile(skillsmpKeyPath(centralDir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// saveSkillsmpKey persists (0600) or, when key=="", removes the skillsmp API key.
+func saveSkillsmpKey(centralDir, key string) error {
+	p := skillsmpKeyPath(centralDir)
+	if key == "" {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(p, []byte(key), 0o600)
 }
 
 // backfillAdoptedEnabled protects already-adopted skills written before adoption

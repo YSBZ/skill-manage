@@ -82,7 +82,7 @@ func (f *fakeRunner) SkillsAddURL(ctx context.Context, npxPath, repoURL, skill s
 	return f.stdout, f.stderr, f.err
 }
 
-func (f *fakeRunner) SkillsMpFind(ctx context.Context, url string) (string, string, error) {
+func (f *fakeRunner) SkillsMpFind(ctx context.Context, url, apiKey string) (string, string, error) {
 	f.calls++
 	if f.findStdout != "" || f.findErr != nil {
 		return f.findStdout, f.findStderr, f.findErr

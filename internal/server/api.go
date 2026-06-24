@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skillssh/update", s.requireAuth(s.handleUpdateSkillsShOne))
 	mux.HandleFunc("GET /api/skillssh/find", s.requireAuth(s.handleSkillsShFind))
 	mux.HandleFunc("GET /api/skillsmp/find", s.requireAuth(s.handleSkillsMpFind))
+	mux.HandleFunc("GET /api/skillsmp/key", s.requireAuth(s.handleSkillsMpKey))
+	mux.HandleFunc("POST /api/skillsmp/key", s.requireAuth(s.handleSkillsMpKey))
 	mux.HandleFunc("POST /api/skillssh/add", s.requireAuth(s.handleSkillsShAdd))
 	mux.HandleFunc("POST /api/skillssh/remove", s.requireAuth(s.handleSkillsShRemove))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
@@ -135,6 +138,27 @@ type statusResp struct {
 	SkillsSh     *skillsShInfo         `json:"skillsSh,omitempty"`     // skills.sh (vercel-labs/skills) directory source, if present
 	PluginCount  int                   `json:"pluginCount,omitempty"`  // number of plugin-provided skills (read-only category)
 	LocalSources []dirSourceInfo       `json:"localSources,omitempty"` // user-registered local folder sources (each its own card)
+	OS           string                `json:"os,omitempty"`           // runtime.GOOS — lets the UI show an OS-correct npx/Node install hint
+	SkillsmpKey  bool                  `json:"skillsmpKey,omitempty"`  // true → a per-user skillsmp API key is configured (value never sent)
+}
+
+// npxInstallHint returns an OS-appropriate command to install Node.js, which
+// bundles npx. Used to make "npx 不可用" errors actionable instead of a dead end.
+func npxInstallHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macOS：brew install node（或从 nodejs.org 下载）"
+	case "windows":
+		return "Windows：winget install OpenJS.NodeJS（或从 nodejs.org 下载）"
+	default: // linux / wsl / 其它
+		return "Linux/WSL：sudo apt install nodejs npm（或用 nvm / nodejs.org）"
+	}
+}
+
+// npxUnavailableErr builds a 412 message: how to install Node.js (which ships npx)
+// for this OS, plus the manual command to run once it's available.
+func npxUnavailableErr(manual string) string {
+	return "npx 不可用。安装 Node.js（含 npx）：" + npxInstallHint() + "。或手动运行：" + manual
 }
 
 // dirSourceInfo describes one user-registered local directory source for the
@@ -166,6 +190,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		GitError:     s.gitErr,
 		NpxAvailable: s.npxPath != "",
 		ClaudeCLI:    s.claudePath != "",
+		OS:           runtime.GOOS,
+		SkillsmpKey:  s.skillsmpKey != "",
 	}
 	// repo status in config order
 	for _, repo := range s.cfg.Repos {
@@ -266,7 +292,7 @@ func (s *Server) handleUpdateSkillsShAll(w http.ResponseWriter, r *http.Request)
 	npx, runner := s.npxPath, s.runner
 	s.mu.Unlock()
 	if npx == "" || runner == nil {
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update"})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": npxUnavailableErr("npx skills update")})
 		return
 	}
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 180*time.Second)
@@ -305,7 +331,7 @@ func (s *Server) handleUpdateSkillsShOne(w http.ResponseWriter, r *http.Request)
 	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
 	s.mu.Unlock()
 	if npx == "" || runner == nil {
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update " + name})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": npxUnavailableErr("npx skills update " + name)})
 		return
 	}
 	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)
@@ -518,6 +544,31 @@ func parseSkillsMp(body []byte) []skillsMpResult {
 	return out
 }
 
+// skillsMpRateWriteout is appended to the skillsmp curl via -w so the response's
+// daily quota headers (X-RateLimit-Daily-*) come back after the body on stdout.
+// Both runners reference it; %header{} needs curl ≥7.84 (macOS/Win10+ ship newer).
+const skillsMpRateWriteout = "\n@@SMPRL@@%header{x-ratelimit-daily-limit}/%header{x-ratelimit-daily-remaining}"
+
+// splitSkillsMpRate separates the JSON body from the trailing rate-limit writeout
+// and parses the daily limit/remaining. ok=false when the sentinel/values are absent.
+func splitSkillsMpRate(out string) (body string, dailyLimit, dailyRemaining int, ok bool) {
+	i := strings.LastIndex(out, "@@SMPRL@@")
+	if i < 0 {
+		return out, 0, 0, false
+	}
+	body = strings.TrimRight(out[:i], "\r\n")
+	parts := strings.SplitN(strings.TrimSpace(out[i+len("@@SMPRL@@"):]), "/", 2)
+	if len(parts) != 2 {
+		return body, 0, 0, false
+	}
+	l, e1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	r, e2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if e1 != nil || e2 != nil {
+		return body, 0, 0, false
+	}
+	return body, l, r, true
+}
+
 // handleSkillsMpFind searches skillsmp.com's REST API (a marketplace aggregating
 // github skills). Pure HTTP — needs no npx (install still does, via SkillsAddURL).
 // Failures degrade to an empty result + error string so the online section stays
@@ -533,6 +584,7 @@ func (s *Server) handleSkillsMpFind(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	runner := s.runner
+	apiKey := s.skillsmpKey // per-user key (optional); anonymous when empty
 	s.mu.Unlock()
 	if runner == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": "运行器不可用"})
@@ -542,20 +594,91 @@ func (s *Server) handleSkillsMpFind(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 25*time.Second)
 	defer cancel()
 	// Cloudflare 403s Go's net/http TLS fingerprint, so fetch via curl (passes).
-	stdout, stderr, err := runner.SkillsMpFind(ctx, endpoint)
+	// With a key, requests are authenticated (500/day vs anonymous 50/day) and avoid
+	// most CF anonymous-traffic challenges.
+	stdout, stderr, err := runner.SkillsMpFind(ctx, endpoint, apiKey)
 	if err != nil {
 		msg := strings.TrimSpace(stderr)
 		if msg == "" {
 			msg = err.Error()
 		}
 		if strings.Contains(msg, "403") {
-			msg = "拒绝访问（403，可能触发风控），稍后再试"
+			if apiKey == "" {
+				msg = "拒绝访问（403，匿名额度/风控），填入你自己的免费 skillsmp API key 可大幅缓解"
+			} else {
+				msg = "拒绝访问（403，可能触发风控或超出额度），稍后再试"
+			}
 		}
 		// 仅返回裸原因；前端的来源提示会统一加「skillsmp 查询失败：」前缀，这里不再重复。
 		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": msg})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": parseSkillsMp([]byte(stdout))})
+	body, dl, dr, okRL := splitSkillsMpRate(stdout)
+	resp := map[string]any{"available": true, "results": parseSkillsMp([]byte(body))}
+	if okRL {
+		resp["rateLimit"] = map[string]int{"dailyLimit": dl, "dailyRemaining": dr}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// skillsmpKeyReq is the POST body for setting (or clearing) the skillsmp API key.
+type skillsmpKeyReq struct {
+	Key string `json:"key"`
+}
+
+// skillsMpKeyRe validates a skillsmp API key's shape (sk_… token, alnum/_/-).
+var skillsMpKeyRe = regexp.MustCompile(`^sk_[A-Za-z0-9_\-]{8,200}$`)
+
+// maskKey returns a safe display hint for a secret — enough to recognize it,
+// never the whole value (e.g. "sk_live…Thps").
+func maskKey(k string) string {
+	if len(k) <= 12 {
+		return "已配置"
+	}
+	return k[:7] + "…" + k[len(k)-4:]
+}
+
+// handleSkillsMpKey manages the per-user skillsmp API key. GET reports whether one
+// is set (+ a masked hint — NEVER the full value). POST sets it (empty body clears).
+// The key is each user's OWN free key from skillsmp.com/developers — it is never
+// bundled into the tool, stored 0600, never logged, never returned in full.
+func (s *Server) handleSkillsMpKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.mu.Lock()
+		k := s.skillsmpKey
+		s.mu.Unlock()
+		resp := map[string]any{"configured": k != ""}
+		if k != "" {
+			resp["hint"] = maskKey(k)
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if !originGuard(w, r) {
+		return
+	}
+	var req skillsmpKeyReq
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(req.Key)
+	if key != "" && !skillsMpKeyRe.MatchString(key) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key 格式不对（应为 skillsmp 的 sk_… 开头的 API key）"})
+		return
+	}
+	s.mu.Lock()
+	err := saveSkillsmpKey(s.centralDir, key)
+	if err == nil {
+		s.skillsmpKey = key
+	}
+	configured := s.skillsmpKey != ""
+	s.mu.Unlock()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "configured": configured})
 }
 
 // skillsAddReq is the body of POST /api/skillssh/add. Either Pkg (skills.sh form
@@ -600,7 +723,7 @@ func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
 	npx, runner := s.npxPath, s.runner
 	s.mu.Unlock()
 	if npx == "" || runner == nil {
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills add"})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": npxUnavailableErr("npx skills add")})
 		return
 	}
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 300*time.Second)
@@ -681,7 +804,7 @@ func (s *Server) handleSkillsShRemove(w http.ResponseWriter, r *http.Request) {
 	dirSources := effectiveDirectorySources(s.cfg.DirectorySources)
 	s.mu.Unlock()
 	if npx == "" || runner == nil {
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills remove"})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": npxUnavailableErr("npx skills remove")})
 		return
 	}
 	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)
@@ -2065,7 +2188,7 @@ type skillsRunner interface {
 	// SkillsMpFind GETs a skillsmp.com search URL via curl. We shell to curl because
 	// Cloudflare blocks Go's net/http TLS fingerprint (403); curl's passes. Returns
 	// the raw JSON body on stdout.
-	SkillsMpFind(ctx context.Context, url string) (stdout, stderr string, err error)
+	SkillsMpFind(ctx context.Context, url, apiKey string) (stdout, stderr string, err error)
 	// UpdatePlugin delegates a harness plugin update to its own CLI
 	// (`<cliPath> plugin update <plugin> -s <scope>`); we never take ownership.
 	UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (stdout, stderr string, err error)
@@ -2210,7 +2333,7 @@ func (s *Server) handleDirSourceUpdate(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	if npx == "" || runner == nil {
-		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": "npx 不可用，请手动运行 npx skills update"})
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{"error": npxUnavailableErr("npx skills update")})
 		return
 	}
 	agentsSkillsRoot, _ := resolveAgentsLock(dirSources)

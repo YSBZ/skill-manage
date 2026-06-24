@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 )
 
 // defaultSkillsRunner runs npx directly on Unix — npx is a real executable on
@@ -41,12 +42,24 @@ func (unixRunner) SkillsAddURL(ctx context.Context, npxPath, repoURL, skill stri
 
 // SkillsMpFind fetches a skillsmp.com search URL with curl (Cloudflare 403s Go's
 // TLS fingerprint; curl's passes). -fsS: fail on HTTP>=400, silent, but show errors.
-func (unixRunner) SkillsMpFind(ctx context.Context, url string) (string, string, error) {
+func (unixRunner) SkillsMpFind(ctx context.Context, url, apiKey string) (string, string, error) {
 	curl, err := exec.LookPath("curl")
 	if err != nil {
 		return "", "需要 curl 才能搜索 skillsmp", err
 	}
-	cmd := exec.CommandContext(ctx, curl, "-fsS", "--max-time", "20", "-H", "Accept: application/json", url)
+	args := []string{"-fsS", "--max-time", "20", "-H", "Accept: application/json"}
+	var stdin *strings.Reader
+	if apiKey != "" {
+		// Pass the API key via a curl config read from stdin, NOT argv — keeps the
+		// secret out of `ps`/process listings. Key charset is alnum/_/-, no quotes.
+		args = append(args, "-K", "-")
+		stdin = strings.NewReader("header = \"Authorization: Bearer " + apiKey + "\"\n")
+	}
+	args = append(args, "-w", skillsMpRateWriteout, url) // capture daily quota headers after the body
+	cmd := exec.CommandContext(ctx, curl, args...)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err = cmd.Run()
