@@ -12,7 +12,7 @@ Core idea: links point at **live git mirrors**, and a daily `fetch` makes every 
 
 ### Option A: Desktop app (macOS / Windows)
 
-Download the package for your platform from Releases:
+Download the package for your platform from the [**Releases** page](https://github.com/YSBZ/skill-manage/releases) — no build needed:
 
 - **macOS**: `SkillManager-vX.Y.Z.dmg` — drag into `/Applications` and launch (**eject the dmg volume after installing**; don't run it from the mounted volume).
 - **Windows**: `SkillManager-windows-desktop-vX.Y.Z.zip` — unzip and run `SkillManager.exe` (app icon embedded, no console window on double-click).
@@ -20,6 +20,8 @@ Download the package for your platform from Releases:
 > **macOS note**: an unsigned / un-notarized binary is blocked by Gatekeeper on first launch — right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine <app>`.
 
 ### Option B: Single-binary web version
+
+Prefer not to build it yourself? Grab the prebuilt `skillmanager-<platform>-vX.Y.Z.zip` from the [**Releases** page](https://github.com/YSBZ/skill-manage/releases), unzip, and run the binary directly — no Go toolchain needed. Or build from source:
 
 ```sh
 make build          # build the host binary ./skillmanager

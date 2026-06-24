@@ -260,10 +260,17 @@
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v5.1.4</span>
-              <span class="cl-date">数量限制改为每源前 N · 更新于 2026-06-23</span>
+              <span class="cl-ver">v5.1.5</span>
+              <span class="cl-date">窗口标题 + skillsmp 报错修正 · 更新于 2026-06-23</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.5 · 修正桌面窗口标题与 skillsmp 报错文案（2026-06-23）</div>
+              <ul>
+                <li><b>桌面窗口标题</b>：macOS 原生标题栏从遗留的「SkillManage」修正为「SkillManager」（更名时漏改的 Wails 窗口标题）。</li>
+                <li><b>skillsmp 报错去重</b>：之前 403 等失败提示出现三重「skillsmp 查询失败：」前缀——后端不再自带前缀，由前端来源提示统一加一次。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v5.1.4 · 在线结果数量限制改为「每源各前 N」（2026-06-23）</div>
               <ul>

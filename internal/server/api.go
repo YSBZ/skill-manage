@@ -549,9 +549,10 @@ func (s *Server) handleSkillsMpFind(w http.ResponseWriter, r *http.Request) {
 			msg = err.Error()
 		}
 		if strings.Contains(msg, "403") {
-			msg = "skillsmp 拒绝访问（403，可能触发风控），稍后再试"
+			msg = "拒绝访问（403，可能触发风控），稍后再试"
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": "skillsmp 查询失败：" + msg})
+		// 仅返回裸原因；前端的来源提示会统一加「skillsmp 查询失败：」前缀，这里不再重复。
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": parseSkillsMp([]byte(stdout))})

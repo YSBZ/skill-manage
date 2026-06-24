@@ -141,7 +141,7 @@ func main() {
 
 	log.Printf("desktop: opening window")
 	err = wails.Run(&options.App{
-		Title:  "SkillManage",
+		Title:  "SkillManager",
 		Width:  1180,
 		Height: 820,
 		// The window loads the daemon's UI through its own handler — no browser,

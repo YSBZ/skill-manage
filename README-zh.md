@@ -12,7 +12,7 @@
 
 ### 方式一：桌面 app（macOS / Windows）
 
-从 Releases 下载对应平台的包：
+从 [**Releases** 页面](https://github.com/YSBZ/skill-manage/releases)下载对应平台的包——无需自行构建：
 
 - **macOS**：`SkillManager-vX.Y.Z.dmg`，拖进 `/Applications` 后启动（**装好后请弹出 dmg 卷**，别从挂载卷里直接运行）。
 - **Windows**：`SkillManager-windows-desktop-vX.Y.Z.zip`，解压后运行 `SkillManager.exe`（已嵌入应用图标，双击无控制台窗口）。
@@ -20,6 +20,8 @@
 > **macOS 注意**：未签名 / 未公证的二进制首次会被 Gatekeeper 拦截，需右键 → 打开，或 `xattr -d com.apple.quarantine <app>` 解隔离。
 
 ### 方式二：网页版单二进制
+
+不想自己构建？直接从 [**Releases** 页面](https://github.com/YSBZ/skill-manage/releases)下载对应平台的预编译包 `skillmanager-<平台>-vX.Y.Z.zip`，解压即运行，无需 Go 工具链。或从源码构建：
 
 ```sh
 make build          # 构建 host 二进制 ./skillmanager
