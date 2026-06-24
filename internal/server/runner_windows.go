@@ -30,6 +30,32 @@ func (windowsRunner) UpdateSkill(ctx context.Context, npxPath, name string) (str
 	return out.String(), errb.String(), err
 }
 
+// SkillsAddURL runs `npx skills add <repoURL> --skill <name> -g -y -a universal`
+// (skillsmp.com install form) via cmd /c. repoURL/skill allowlist-validated by caller.
+func (windowsRunner) SkillsAddURL(ctx context.Context, npxPath, repoURL, skill string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "add", repoURL, "--skill", skill, "-g", "-y", "-a", "universal")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+// SkillsMpFind fetches a skillsmp.com search URL with curl via cmd /c (Cloudflare
+// 403s Go's TLS fingerprint). Windows 10+ ships curl.exe. HideWindow: no console flash.
+func (windowsRunner) SkillsMpFind(ctx context.Context, url string) (string, string, error) {
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		return "", "需要 curl 才能搜索 skillsmp", err
+	}
+	cmd := exec.CommandContext(ctx, "cmd", "/c", curl, "-fsS", "--max-time", "20", "-H", "Accept: application/json", url)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err = cmd.Run()
+	return out.String(), errb.String(), err
+}
+
 // UpdateAll runs `npx skills update -g --yes` (no skill arg → updates everything).
 func (windowsRunner) UpdateAll(ctx context.Context, npxPath string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "cmd", "/c", npxPath, "skills", "update", "-g", "--yes")

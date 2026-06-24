@@ -260,7 +260,7 @@ func (s *Syncer) updateKeepingLocal(ctx context.Context, dir, ref string, res Re
 	// excludes the ignored OS junk, so it never stashes cruft.
 	stashed := false
 	if wt, _, err := s.run(ctx, dir, "status", "--porcelain"); err == nil && strings.TrimSpace(wt) != "" {
-		if _, stderr, perr := s.run(ctx, dir, "stash", "push", "--include-untracked", "-m", "skillmanage-update"); perr != nil {
+		if _, stderr, perr := s.run(ctx, dir, "stash", "push", "--include-untracked", "-m", "skillmanager-update"); perr != nil {
 			res.Action, res.Err, res.Stderr = ActionFailed, fmt.Errorf("stash local changes: %w", perr), stderr
 			return res
 		}

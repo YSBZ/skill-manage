@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>SkillManage</string>
+	<string>SkillManager</string>
 	<key>CFBundleExecutable</key>
-	<string>skillmanage-desktop</string>
+	<string>skillmanager-desktop</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.mcstack.skillmanage</string>
 	<key>CFBundleName</key>
-	<string>SkillManage</string>
+	<string>SkillManager</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>5.0.23</string>
+	<string>5.1.4</string>
 	<key>CFBundleVersion</key>
-	<string>28</string>
+	<string>37</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>

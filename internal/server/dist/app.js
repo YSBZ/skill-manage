@@ -103,15 +103,17 @@ const state = {
   invScope: "",
   invLoading: false,
   invError: "",
-  openGroup: undefined, // 手风琴：当前展开的组 key（undefined=尚未选择默认展开第一个；null=全部收起）
+  collapsedGroups: {}, // 目录现状各来源分组的「已收起」集合（key→true）。默认全部展开、各组独立切换，不再手风琴。
   dirSources: [], // 用户登记的本地目录源（status.localSources）：[{id,label,path,count}]
   activeTarget: undefined, // active 同步目录标签页 (one tab per dir)
   search: "",
   searchFold: { local: false, online: false }, // 搜索结果两区各自折叠状态（false=展开）
-  onlineMinInstalls: 0, // 在线结果过滤：最低安装数（齿轮弹窗，持久化）
+  onlineSrc: "both", // 在线结果来源筛选：both | skillssh | skillsmp（齿轮弹窗，持久化）
+  onlineSort: "desc", // 在线结果排序：default | desc | asc（按下载/星，默认热度↓，齿轮弹窗，持久化）
+  onlineLimit: 0, // 在线结果数量限制：0=全部 | 10 | 20 | 50（齿轮弹窗，持久化）
   // 在线搜索结果独立 state——只由显式触发更新，不挂在每次按键的渲染上。
   // gen 是世代计数器：触发时 +1，迟到的旧响应若 gen 不符则丢弃（防 stale 覆盖 fresh）。
-  skillsShOnline: { term: "", loading: false, available: true, results: [], error: "", gen: 0 },
+  skillsShOnline: { term: "", loading: false, available: true, results: [], error: "", errSh: "", errMp: "", gen: 0 },
 };
 
 // 安装并发锁：同一时刻只允许一个 npx skills add 在跑，其它安装按钮禁用。
@@ -209,6 +211,12 @@ const currentTarget = () => {
 const enabledFollow = (repo) =>
   (state.status.enabled || []).some((e) => e.skill === repo + "/*" && e.target === currentTarget());
 
+// lastSig is the fingerprint of everything the UI currently shows on screen,
+// recorded at the end of every load(). The background auto-sync (autoSyncTick)
+// compares a fresh probe against it to decide whether the disk changed.
+let lastSig = "";
+let autoSyncing = false; // reentrancy guard for the background probe
+
 // load refreshes all UI state from the daemon. Pass sync=true to first run a live
 // reconcile so the footer reflects current reality (resolved skips/conflicts clear,
 // newly-unblocked links get placed) instead of a stale last-sync snapshot.
@@ -244,6 +252,13 @@ async function load(sync) {
   catch { state.skillsShSkills = []; }
   renderStats(); renderRepos(); renderTabs(); renderSummary();
   await fetchInventory();
+  // Record the just-rendered fingerprint so the background auto-sync can tell a
+  // real out-of-band disk change from "nothing moved" and skip repainting otherwise.
+  lastSig = computeSig({
+    repos: state.status.repos, localSources: state.dirSources,
+    skillsByRepo: state.skillsByRepo, pluginSkills: state.pluginSkills,
+    skillsShSkills: state.skillsShSkills, inventory: state.inventory,
+  });
   if (state.status.gitError) {
     banner("未检测到 git：" + state.status.gitError + "。请安装 Git 并确保在 PATH 中，然后重启本工具——否则无法拉取/更新仓库。", true);
   } else if (repos.length === 0 && state.targets.length === 0) {
@@ -255,10 +270,75 @@ async function load(sync) {
   }
 }
 
+// computeSig builds a stable, order-independent fingerprint of everything the UI
+// surfaces: tracked repos (name+state+dirty), registered local sources, every
+// source's skills (name+version+description — so an in-place SKILL.md meta edit
+// is caught), plugin skills, npx skills, and the current tab's inventory. It
+// changes iff something the UI actually displays changed; intra-list reordering
+// does not trip it (tokens are sorted). Used purely to gate repaints.
+function computeSig(p) {
+  const skillTok = (arr) => (arr || [])
+    .map((s) => (s.name || s.skill || "") + "|" + (s.version || "") + "|" + (s.description || ""))
+    .sort().join(",");
+  const repoTok = (p.repos || [])
+    .map((r) => r.name + "|" + r.state + "|" + (r.drift && r.drift.dirty ? 1 : 0)).sort().join(",");
+  const srcTok = (p.localSources || [])
+    .map((d) => d.id + "|" + (d.path || d.dir || "")).sort().join(",");
+  const byRepo = Object.keys(p.skillsByRepo || {}).sort()
+    .map((k) => k + ":" + skillTok(p.skillsByRepo[k])).join(";");
+  const invTok = (p.inventory || [])
+    .map((i) => (i.name || "") + "|" + (i.kind || "") + "|" + (i.source || i.ns || "") + "|" + (i.version || "") + "|" + (i.enabled ? 1 : 0))
+    .sort().join(",");
+  return [repoTok, srcTok, byRepo, skillTok(p.pluginSkills), skillTok(p.skillsShSkills), invTok].join("§");
+}
+
+// fetchSnapshot pulls the same change-sensitive data load() reads, WITHOUT
+// committing it to state or rendering — the background probe uses it to compute
+// a fingerprint quietly. Mirrors load()'s source-name construction exactly so
+// its fingerprint lines up with the one load() records in lastSig.
+async function fetchSnapshot() {
+  const status = await api("GET", "/api/status");
+  const repos = status.repos || [];
+  const localSources = status.localSources || [];
+  const names = repos.map((r) => r.name).concat(LOCAL_NS).concat(localSources.map((d) => "@dir:" + d.id));
+  const entries = await Promise.all(names.map(async (name) => {
+    try { return [name, (await api("GET", "/api/skills?repo=" + encodeURIComponent(name))) || []]; }
+    catch { return [name, []]; }
+  }));
+  const skillsByRepo = Object.fromEntries(entries);
+  let pluginSkills = [], skillsShSkills = [], inventory = [];
+  try { pluginSkills = (await api("GET", "/api/plugins")) || []; } catch { /* probe stays best-effort */ }
+  try { skillsShSkills = (await api("GET", "/api/skillssh")) || []; } catch { /* idem */ }
+  const t = currentTarget();
+  if (t) {
+    try { inventory = ((await api("GET", "/api/inventory?target=" + encodeURIComponent(t))).items) || []; }
+    catch { /* idem */ }
+  }
+  return { repos, localSources, skillsByRepo, pluginSkills, skillsShSkills, inventory };
+}
+
+// autoSyncTick is the background auto-sync. Users may add/remove/edit local skill
+// files outside the tool; this keeps the view honest without a manual click. It
+// probes the disk fingerprint and repaints ONLY on a real change — so an idle
+// tick is invisible (no flicker, no scroll jump). It never fires while a dialog
+// is open (don't yank the UI mid-action / mid-typing) or while the tab is hidden,
+// and swallows every error (passive — just try again next tick).
+async function autoSyncTick() {
+  if (document.hidden) return;
+  if (document.querySelector(".modal:not(.hidden)")) return;
+  if (autoSyncing) return;
+  autoSyncing = true;
+  try {
+    const snap = await fetchSnapshot();
+    if (computeSig(snap) !== lastSig) await load(); // changed on disk → one clean full refresh
+  } catch { /* passive poll — ignore and retry on the next tick */ }
+  finally { autoSyncing = false; }
+}
+
 function renderStats() {
   const el = $("#stats");
   const repos = (state.status.repos || []).length;
-  // 「收录」= SkillManage 一共管控/识别了多少个 skill，跨全部源汇总：git 源 + 本地源
+  // 「收录」= SkillManager 一共管控/识别了多少个 skill，跨全部源汇总：git 源 + 本地源
   // （@local 受管存储 + @dir 登记目录，都在 skillsByRepo 里）+ npx skills.sh 源。
   // 比「某个目录里链接了几个」更能体现这个工具的整体盘子。
   let catalog = 0;
@@ -270,7 +350,7 @@ function renderStats() {
   const cfN = cf.dups.length + cf.overlaps.length;
   el.innerHTML = "";
   el.append(ce("span", { innerHTML: `仓库 <b>${repos}</b>`, title: "已登记的 git 仓数量" }));
-  el.append(ce("span", { innerHTML: `收录 skills <b>${total}</b>`, title: `SkillManage 一共收录管控的 skill 数：git 源 + 本地源 ${catalog} 个，npx(skills.sh) 源 ${npx} 个。` }));
+  el.append(ce("span", { innerHTML: `收录 skills <b>${total}</b>`, title: `SkillManager 一共收录管控的 skill 数：git 源 + 本地源 ${catalog} 个，npx(skills.sh) 源 ${npx} 个。` }));
   const c = ce("span", { innerHTML: `冲突 <b>${cfN || 0}</b>`, title: "跨源体检：名称重复 / 关键词重叠——点击查看" });
   c.className = (cfN ? "stat-warn " : "") + "clickable-stat";
   c.onclick = openConflictModal;
@@ -412,16 +492,16 @@ function renderRepos() {
     // npx 分区标题行：全量更新（代调 npx skills update），与 git 仓的全量更新对齐。
     let npxActions = [];
     if (state.npxAvailable) {
-      const npxUpdate = ce("button", { className: "ghost small", textContent: "全量更新", title: "npx skills update：更新全部 skills.sh skill" });
+      const npxUpdate = ce("button", { className: "ghost small", textContent: "全量更新", title: "npx skills update：更新全部 npx skills 的 skill" });
       npxUpdate.onclick = (e) => { e.stopPropagation(); updateSkillsShAll(npxUpdate); };
       npxActions = [npxUpdate];
     }
     ul.append(sourceDivider("npx skills", npxActions));
-    const shLi = ce("li", { className: "repo-card repo-skillssh clickable", title: "查看 skills.sh 管理的 skill" });
+    const shLi = ce("li", { className: "repo-card repo-skillssh clickable", title: "查看 npx skills 管理的 skill" });
     shLi.onclick = () => openSkillsShModal();
     const stop = ce("div", { className: "repo-top" });
-    stop.append(ce("span", { className: "repo-dot ok", title: "skills.sh 目录源" }));
-    stop.append(ce("span", { className: "repo-name", textContent: "skills.sh" }));
+    stop.append(ce("span", { className: "repo-dot ok", title: "npx skills 源（~/.agents/skills canonical）" }));
+    stop.append(ce("span", { className: "repo-name", textContent: "npx skills" }));
     stop.append(ce("span", { className: "src-badge src-skillssh", textContent: "只读" }));
     shLi.append(stop);
     shLi.append(ce("div", { className: "repo-url", textContent: (sh.root || "~/.agents/skills") + " · vercel-labs/skills（npx skills 管理）" }));
@@ -436,7 +516,7 @@ function renderRepos() {
   }
 
   // 本地源：同一类能力——都是「本地源」。区别只在来源：
-  //   · local —— SkillManage 创建的受管存储（备份/手写归此，可删 skill）
+  //   · local —— SkillManager 创建的受管存储（备份/手写归此，可删 skill）
   //   · 其余 —— 用户选择的文件夹（实时识别，不复制，整源可移除）
   // 「添加本地源」放在分区标题行右侧（选一个文件夹作为来源）。
   const addLocal = ce("button", { className: "ghost small", textContent: "添加本地源", title: "选择一个文件夹作为本地源（实时识别其中的 skill，不复制、不改动原文件）" });
@@ -445,11 +525,11 @@ function renderRepos() {
   const localLi = ce("li", { className: "repo-card repo-local clickable", title: "查看本地（已备份）skill" });
   localLi.onclick = () => openRepoSkills(LOCAL_NS, { local: true });
   const ltop = ce("div", { className: "repo-top" });
-  ltop.append(ce("span", { className: "repo-dot ok", title: "本地受管存储（SkillManage 创建）" }));
+  ltop.append(ce("span", { className: "repo-dot ok", title: "本地受管存储（SkillManager 创建）" }));
   ltop.append(ce("span", { className: "repo-name", textContent: "local" }));
   ltop.append(ce("span", { className: "src-badge src-local", textContent: "本地源" }));
   localLi.append(ltop);
-  localLi.append(ce("div", { className: "repo-url", textContent: "~/.skillmanage/local · SkillManage 创建（备份/手写归此）" }));
+  localLi.append(ce("div", { className: "repo-url", textContent: "~/.skillmanage/local · SkillManager 创建（备份/手写归此）" }));
   const lmeta = ce("div", { className: "repo-meta" });
   lmeta.append(ce("span", { className: "badge count", textContent: (state.skillsByRepo[LOCAL_NS] || []).length + " skill" }));
   localLi.append(lmeta);
@@ -502,7 +582,7 @@ function cleanSkillName(name) {
 // them into the current target / 自动同步 here (selector namespace "@agents"),
 // same as any other source.
 async function openSkillsShModal() {
-  $("#repo-skills-title").textContent = "skills.sh · npx skills";
+  $("#repo-skills-title").textContent = "npx skills";
   const body = $("#repo-skills-body");
   const render = (skills) => {
     body.innerHTML = "";
@@ -534,7 +614,7 @@ async function openSkillsShModal() {
     const list = ce("div", { className: "rs-list" });
     body.append(list);
     if (!skills) { list.append(ce("div", { className: "empty", textContent: "加载中…" })); return; }
-    if (!skills.length) { list.append(ce("div", { className: "empty", textContent: "暂无 skills.sh skill。" })); return; }
+    if (!skills.length) { list.append(ce("div", { className: "empty", textContent: "暂无已装的 npx skills skill。" })); return; }
     const present = new Set(state.inventory.filter((i) => i.managed).map((i) => i.name));
     skills.forEach((sk) => {
       const name = sk.linkName || sk.logicalName;
@@ -571,7 +651,7 @@ async function openSkillsShModal() {
       if (sk.sourceUrl) main.append(ce("div", { className: "rs-srcurl", textContent: "来源 " + sk.sourceUrl }));
       const cmd = ce("div", { className: "rs-cmdline" });
       cmd.append(ce("code", { className: "rs-cmd", textContent: "npx skills update " + name }));
-      cmd.append(ce("span", { className: "rs-cmd-note", textContent: "按名更新，URL 由 skills.sh 台账记录" }));
+      cmd.append(ce("span", { className: "rs-cmd-note", textContent: "按名更新，URL 由 npx skills 台账记录" }));
       main.append(cmd);
       card.append(main); list.append(card);
     });
@@ -1278,14 +1358,29 @@ async function runOnlineSearch() {
   o.term = term; o.loading = true; o.error = ""; o.available = true;
   renderInventory();
   try {
-    const d = await api("GET", "/api/skillssh/find?q=" + encodeURIComponent(term));
+    // 两个在线源并行：skills.sh（npx skills find）+ skillsmp（REST API）。各自失败不拖累对方。
+    const [sh, mp] = await Promise.all([
+      api("GET", "/api/skillssh/find?q=" + encodeURIComponent(term)).catch((e) => ({ error: e.message, results: [] })),
+      api("GET", "/api/skillsmp/find?q=" + encodeURIComponent(term)).catch((e) => ({ error: e.message, results: [] })),
+    ]);
     if (gen !== o.gen) return; // a newer search superseded this one
-    o.available = d && d.available !== false;
-    o.results = (d && d.results) || [];
-    o.error = (d && d.error) || "";
+    const results = [];
+    (sh && sh.results || []).forEach((r) => { r.origin = "skills.sh"; results.push(r); });
+    (mp && mp.results || []).forEach((r) => results.push({
+      origin: "skillsmp", skill: r.skill, repoUrl: r.repoUrl, url: r.url,
+      desc: r.description, author: r.author, installs: r.stars || 0,
+      installsRaw: r.stars ? "★ " + r.stars : "",
+    }));
+    // 在线安装两源都走 npx，所以可用性以 skills.sh（npx 在否）为准。
+    o.available = sh && sh.available !== false;
+    o.results = results;
+    // 容错：两源的错误分开存，互不遮蔽——任一源失败只在区内提示一条，不影响另一源结果。
+    o.errSh = (sh && sh.error) || "";
+    o.errMp = (mp && mp.error) || "";
+    o.error = ""; // 仅保留给下方 catch 的「整体失败」（正常路径不触发）
   } catch (e) {
     if (gen !== o.gen) return;
-    o.available = true; o.results = []; o.error = e.message;
+    o.available = true; o.results = []; o.errSh = ""; o.errMp = ""; o.error = e.message;
   } finally {
     if (gen === o.gen) { o.loading = false; renderInventory(); }
   }
@@ -1295,48 +1390,83 @@ async function runOnlineSearch() {
 // against local install/enable state drives which control each result shows.
 function renderOnlineSection(root, allLocal, enabledSel) {
   const o = state.skillsShOnline;
-  const min = state.onlineMinInstalls || 0;
-  const shown = min > 0 ? o.results.filter((r) => (r.installs || 0) >= min) : o.results;
+  // 来源筛选（skills.sh=下载数 / skillsmp=星数，指标不同，故按来源筛）+ 按热度（各源下载·星）排序。
+  const src = state.onlineSrc || "both";
+  const sort = state.onlineSort || "default";
+  const limit = state.onlineLimit || 0;
+  let shown = src === "both" ? o.results.slice() : o.results.filter((r) => r.origin === (src === "skillssh" ? "skills.sh" : "skillsmp"));
+  if (sort === "desc") shown.sort((a, b) => (b.installs || 0) - (a.installs || 0));
+  else if (sort === "asc") shown.sort((a, b) => (a.installs || 0) - (b.installs || 0));
+  const totalMatched = shown.length;
+  let capped = false;
+  if (limit > 0) {
+    // 数量限制：每个来源各取前 N——两源都保底露出、不会被对方挤占（沿用上面已排好的全局顺序）。
+    const perSrc = {};
+    shown = shown.filter((r) => {
+      const k = r.origin || "";
+      perSrc[k] = (perSrc[k] || 0) + 1;
+      return perSrc[k] <= limit;
+    });
+    capped = shown.length < totalMatched;
+  }
   const folded = state.searchFold.online;
   const head = ce("div", { className: "search-head online-head clickable", title: folded ? "展开" : "收起" });
   head.append(ce("span", { className: "group-chevron", textContent: folded ? "▾" : "▴" }));
-  head.append(ce("span", { className: "group-title", textContent: "在线（skills.sh）" }));
+  head.append(ce("span", { className: "group-title", textContent: "在线（npx skills）" }));
   if (o.loading) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "搜索中…" }));
   else if (o.term) head.append(ce("span", { className: "badge count", textContent: shown.length + " skill" }));
-  if (min > 0) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 已过滤 ≥ " + fmtInstalls(min) }));
+  if (src !== "both") head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 仅 " + (src === "skillssh" ? "skills.sh" : "skillsmp") }));
+  if (sort !== "default") head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· 热度" + (sort === "desc" ? "↓" : "↑") }));
+  if (limit > 0 && capped) head.append(ce("span", { className: "muted", style: "font-size:12px", textContent: "· " + (src === "both" ? "每源前 " + limit : "前 " + limit) + "（共 " + shown.length + "/" + totalMatched + "）" }));
   head.onclick = () => { state.searchFold.online = !folded; renderInventory(); };
   root.append(head);
 
   if (folded) return; // 在线区折叠：只显示标题
   if (!o.available) { root.append(ce("div", { className: "empty", textContent: "在线搜索当前不可用（需联网，且本机要有 npx）。本地搜索不受影响。" })); return; }
-  if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在向 skills.sh 查询…" })); return; }
+  if (o.loading) { root.append(ce("div", { className: "empty", textContent: "正在查询在线源（skills.sh + skillsmp）…" })); return; }
   if (o.error) { root.append(ce("div", { className: "empty", style: "color:var(--err)", textContent: "在线搜索失败：" + o.error })); return; }
-  if (!o.term) { root.append(ce("div", { className: "empty", textContent: "输入关键词后点「搜索」或回车，查 skills.sh 上可安装的 skill。" })); return; }
-  if (!o.results.length) { root.append(ce("div", { className: "empty", textContent: "skills.sh 上没有匹配「" + o.term + "」的 skill。" })); return; }
-  if (!shown.length) { root.append(ce("div", { className: "empty", textContent: "匹配「" + o.term + "」的结果都低于 ≥ " + fmtInstalls(min) + "。点 ⚙ 放宽过滤。" })); return; }
+  if (!o.term) { root.append(ce("div", { className: "empty", textContent: "输入关键词后点「搜索」或回车，查在线可安装的 skill（skills.sh + skillsmp）。" })); return; }
+  // 单源失败提示（非阻塞）：失败的源不会遮蔽另一个源的结果。
+  const srcNote = (label, msg) => ce("div", { className: "empty", style: "color:var(--err);font-size:12px;text-align:left", textContent: label + " 查询失败：" + msg + "（不影响其它源）" });
+  const notes = [];
+  if (o.errSh) notes.push(srcNote("skills.sh", o.errSh));
+  if (o.errMp) notes.push(srcNote("skillsmp", o.errMp));
+
+  if (!o.results.length) {
+    if (notes.length) notes.forEach((n) => root.append(n));
+    else root.append(ce("div", { className: "empty", textContent: "在线没有匹配「" + o.term + "」的 skill。" }));
+    return;
+  }
+  if (!shown.length) { root.append(ce("div", { className: "empty", textContent: "当前来源筛选（仅 " + (src === "skillssh" ? "skills.sh" : "skillsmp") + "）下无匹配，点 ⚙ 换来源。" })); notes.forEach((n) => root.append(n)); return; }
 
   const installed = installedSkillsShNames();
   const body = ce("div", { className: "inv-group-body" });
   shown.forEach((r) => {
+    const mp = r.origin === "skillsmp";
     const nm = (r.skill || "").toLowerCase();
     const isInstalled = installed.has(nm);
     const isEnabled = enabledSel.has(AGENTS_NS + "/" + (r.skill || ""));
-    const card = ce("div", { className: "skill inv online" + (r.url ? " clickable" : ""), title: r.url ? "在 skills.sh 查看详情" : "" });
-    if (r.url) card.onclick = (e) => { if (e.target.closest("button, a")) return; window.open(r.url, "_blank"); };
+    const card = ce("div", { className: "skill inv online" + (r.url ? " clickable" : ""), title: r.url ? "查看详情" : "" });
+    if (r.url) card.onclick = (e) => { if (e.target.closest("button, a")) return; openExternal(r.url); };
     const main = ce("div", { className: "skill-main" });
     const r1 = ce("div", { className: "skill-row1" });
     r1.append(ce("span", { className: "skill-name", textContent: r.skill || r.pkg, title: r.skill || r.pkg }));
-    if (r.installsRaw) r1.append(ce("span", { className: "install-count", title: "安装数", textContent: "↓ " + r.installsRaw }));
-    const ownerRepo = r.owner ? r.owner + "/" + r.repo : "skills.sh";
-    r1.append(ce("span", { className: "src-badge src-skillssh online-repo", title: ownerRepo, textContent: r.repo || ownerRepo }));
+    if (r.installsRaw) r1.append(ce("span", { className: "install-count", title: mp ? "GitHub stars" : "安装数", textContent: (mp ? "" : "↓ ") + r.installsRaw }));
+    // 来源徽章：区分 skills.sh 与 skillsmp（两者都走 npx，但发现源不同）。
+    if (mp) {
+      r1.append(ce("span", { className: "src-badge src-skillsmp", title: "来自 skillsmp.com" + (r.author ? "（" + r.author + "）" : ""), textContent: "skillsmp" }));
+    } else {
+      const ownerRepo = r.owner ? r.owner + "/" + r.repo : "skills.sh";
+      r1.append(ce("span", { className: "src-badge src-skillssh online-repo", title: ownerRepo, textContent: r.repo || ownerRepo }));
+    }
     r1.append(ce("span", { className: "group-spacer" }));
     r1.append(onlineAction(r, isInstalled, isEnabled));
     main.append(r1);
-    main.append(ce("div", { className: "skill-desc online-sub", textContent: r.pkg }));
+    main.append(ce("div", { className: "skill-desc online-sub", textContent: mp ? (r.desc || r.repoUrl || "") : r.pkg }));
     if (r.url) {
-      // 「↗ skills.sh」钉在卡片左下角（footer + margin-top:auto，同行卡片对齐）。
+      // 外链钉在卡片左下角（footer + margin-top:auto，同行卡片对齐）。
       const foot = ce("div", { className: "online-foot" });
-      const link = ce("a", { href: r.url, textContent: "↗ skills.sh", className: "online-link", title: "在系统浏览器中打开" });
+      const link = ce("a", { href: r.url, textContent: mp ? "↗ skillsmp" : "↗ skills.sh", className: "online-link", title: "在系统浏览器中打开" });
       link.onclick = (e) => { e.preventDefault(); openExternal(r.url); };
       foot.append(link);
       main.append(foot);
@@ -1345,6 +1475,7 @@ function renderOnlineSection(root, allLocal, enabledSel) {
     body.append(card);
   });
   root.append(body);
+  notes.forEach((n) => root.append(n)); // 有结果时仍提示哪个源失败了（不影响已显示的结果）
 }
 
 // onlineAction returns the right control for one online result: an install button
@@ -1361,17 +1492,19 @@ function onlineAction(r, isInstalled, isEnabled) {
 
 // installOnline runs the two-layer install:
 //   1. npx skills add -g -y -a universal  → install ONLY to canonical (~/.agents/skills)
-//   2. SkillManage's own linker            → symlink (enable) into the CURRENT tab dir
-// Layer 2 is SkillManage's capability, not npx's: the link is manifest-owned and
+//   2. SkillManager's own linker            → symlink (enable) into the CURRENT tab dir
+// Layer 2 is SkillManager's capability, not npx's: the link is manifest-owned and
 // can be 停用 like any other. So "install where you are" at least links to the
 // directory you're looking at. Button state machine: idle→安装中→已安装 / fail(复原)。
 async function installOnline(r, btn) {
   if (installingPkg) return;
   const target = currentTarget();
-  installingPkg = r.pkg;
+  installingPkg = r.pkg || (r.repoUrl + "#" + r.skill); // 并发锁键（skillsmp 无 pkg）
   btn.disabled = true; btn.textContent = "安装中…";
   try {
-    const d = await api("POST", "/api/skillssh/add", { pkg: r.pkg });
+    // skills.sh：npx skills add <pkg>；skillsmp：npx skills add <repoUrl> --skill <name>。
+    const addBody = r.origin === "skillsmp" ? { url: r.repoUrl, skill: r.skill } : { pkg: r.pkg };
+    const d = await api("POST", "/api/skillssh/add", addBody);
     if (!(d && d.ok)) throw new Error((d && (d.error || d.stderr)) || "未知错误");
     // Installed to canonical. Now enable into the current directory via our linker.
     let enabled = false, enableErr = "";
@@ -1443,15 +1576,10 @@ function renderInventory() {
     groups.get(g.key).items.push(i);
   });
   const ordered = [...groups.values()].sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
-  // 手风琴：每次只展开一个组。openGroup===undefined 时默认展开第一个；===null 时全部收起。
-  // 若当前展开的组在本次筛选后已不存在，回落到默认（展开第一个）。
-  let open = state.openGroup;
-  if (open === undefined || (open !== null && !ordered.some((g) => g.key === open))) {
-    open = ordered.length ? ordered[0].key : null;
-    state.openGroup = open;
-  }
+  // 各组独立展开 / 收起，默认全部展开（不再手风琴）。只记录被「收起」的组 key——
+  // 没记录的即展开，新出现的组也默认展开。
   ordered.forEach((g) => {
-    const collapsed = g.key !== open;
+    const collapsed = !!state.collapsedGroups[g.key];
     const grp = ce("div", { className: "inv-group" + (collapsed ? " collapsed" : "") });
     const head = ce("div", { className: "inv-group-head", title: collapsed ? "展开" : "收起" });
     head.append(ce("span", { className: "group-title", textContent: g.title }));
@@ -1468,7 +1596,7 @@ function renderInventory() {
       head.append(ce("span", {
         className: "group-note",
         textContent: txt,
-        title: "插件不是按目录管理的：它们统一装在 ~/.claude/plugins（cc）/ ~/.codex/plugins（codex）。这里列的是该 harness 全局已装插件带的 skill，对任何目录都一样——既不是当前目录、也不是其父目录带的。所以给新目录加目录后看到一堆插件 skill 属正常。SkillManage 只读，不接管。",
+        title: "插件不是按目录管理的：它们统一装在 ~/.claude/plugins（cc）/ ~/.codex/plugins（codex）。这里列的是该 harness 全局已装插件带的 skill，对任何目录都一样——既不是当前目录、也不是其父目录带的。所以给新目录加目录后看到一堆插件 skill 属正常。SkillManager 只读，不接管。",
       }));
     }
     // skills.sh 组：它归 npx skills 自己的台账管理，本工具只读、不主动联网比对，
@@ -1483,8 +1611,9 @@ function renderInventory() {
     // 右侧上下箭头：展开时朝上（点击收起），收起时朝下（点击展开）。
     head.append(ce("span", { className: "group-chevron", textContent: collapsed ? "▾" : "▴" }));
     head.onclick = () => {
-      // 点已展开的组 → 全部收起；点其它组 → 只展开它（手风琴）。
-      state.openGroup = collapsed ? g.key : null;
+      // 只切换本组的展开 / 收起，互不影响其它组。
+      if (collapsed) delete state.collapsedGroups[g.key];
+      else state.collapsedGroups[g.key] = true;
       renderInventory();
     };
     grp.append(head);
@@ -1537,8 +1666,8 @@ function groupOf(i) {
     case "handwritten": return { key: "hand", title: "未备份（可备份）", order: SOURCE_ORDER.handwritten, help: {
       title: "「备份」是做什么的？",
       paras: [
-        { text: "这一组是直接在该目录里手写的 skill——真身文件就放在当前目录里，没有副本。它不在 SkillManage 的受管范围，也不跟随自动更新；一旦误删目录或机器故障，就彻底丢了。" },
-        { h: "点卡片上的「备份」会：", text: "① 把真身目录移动到受管存储 ~/.skillmanage/local/<名字>；② 在原位置建一个软链指回去，所以各 harness 看到的路径和内容完全不变，照常生效；③ 从此它归 SkillManage 管理，纳入统一的启用/停用与同步。" },
+        { text: "这一组是直接在该目录里手写的 skill——真身文件就放在当前目录里，没有副本。它不在 SkillManager 的受管范围，也不跟随自动更新；一旦误删目录或机器故障，就彻底丢了。" },
+        { h: "点卡片上的「备份」会：", text: "① 把真身目录移动到受管存储 ~/.skillmanage/local/<名字>；② 在原位置建一个软链指回去，所以各 harness 看到的路径和内容完全不变，照常生效；③ 从此它归 SkillManager 管理，纳入统一的启用/停用与同步。" },
         { h: "影响：", text: "原目录会从「真实文件」变成「软链」，内容不变、不会中断使用。备份后它会从「未备份」移到「本地（已备份）」分组。这一步只搬运、不删除、不联网，可随时再停用拆掉软链。" },
       ],
     } };
@@ -1593,7 +1722,7 @@ function inventoryCard(i) {
   // 右侧只放动作（详情 / 停用 / 更新 / 删除）。
   if (i.kind === "plugin") {
     const ro = ce("span", { className: "src-badge src-readonly", textContent: "只读" });
-    ro.title = "由 harness 插件系统管理，SkillManage 只读不接管";
+    ro.title = "由 harness 插件系统管理，SkillManager 只读不接管";
     r1.append(ro);
   }
 
@@ -1616,7 +1745,7 @@ function inventoryCard(i) {
     off.onclick = () => disableSkill(i, off);
     r1.append(off);
   } else if (i.kind === "skills.sh") {
-    const off = ce("button", { className: "danger small", textContent: "停用", title: "拆除 skills.sh 在当前目录的投影软链（下次 update 可能重新投影回来）" });
+    const off = ce("button", { className: "danger small", textContent: "停用", title: "拆除 npx skills 在当前目录的投影软链（下次 update 可能重新投影回来）" });
     off.onclick = () => disableSkillsShLink(i, off);
     r1.append(off);
   } else if (i.kind === "unknown") {
@@ -1886,7 +2015,7 @@ function humanizeSyncError(raw) {
     if (/non-owned path|foreign link|occupied/.test(inner)) {
       return {
         why: `跳过链接「${name}」：目标位置已被一个非本工具创建的文件/链接占用，按「绝不覆盖真身」原则未做改动。`,
-        fix: `若要让 SkillManage 接管，请先手动移除该位置的占用项；或为本工具的 skill 起一个别名避开撞名。`,
+        fix: `若要让 SkillManager 接管，请先手动移除该位置的占用项；或为本工具的 skill 起一个别名避开撞名。`,
       };
     }
     if (/real path|diverged/.test(inner)) {
@@ -1989,7 +2118,7 @@ function setInventoryActions(i) {
 function setSkillsShActions(name) {
   const el = $("#modal-actions");
   el.innerHTML = "";
-  el.append(ce("span", { className: "ma-note", textContent: "skills.sh 管理（只读）。更新在卡片里委托；卸载见右。" }));
+  el.append(ce("span", { className: "ma-note", textContent: "npx skills 管理（只读）。更新在卡片里委托；卸载见右。" }));
   el.append(ce("span", { className: "group-spacer" }));
   const btn = ce("button", { className: "danger small", textContent: "卸载" });
   btn.onclick = () => uninstallSkillsSh(name, btn);
@@ -1998,7 +2127,7 @@ function setSkillsShActions(name) {
 }
 
 // uninstallSkillsSh delegates `npx skills remove <name> -g -y` (drops canonical +
-// all agent symlinks skills.sh made) after SkillManage tears down its own links.
+// all agent symlinks skills.sh made) after SkillManager tears down its own links.
 async function uninstallSkillsSh(name, btn, onDone) {
   if (!(await confirmModal("卸载 " + name + "？\n会删除 ~/.agents/skills 下的真身文件 + 所有软链（含本工具建立的、以及 skills.sh 装到各 agent 的）。此操作不可撤销。", "卸载", true))) return;
   const old = btn.textContent; btn.disabled = true; btn.textContent = "卸载中…";
@@ -2210,26 +2339,49 @@ $("#search").oninput = (e) => { state.search = e.target.value; renderInventory()
 $("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") runOnlineSearch(); });
 $("#online-search-btn").onclick = runOnlineSearch;
 
-// 齿轮弹窗：在线结果按安装数过滤（用 find 自带的安装数，纯客户端，不查 GitHub）。
+// 齿轮 → 在线结果筛选弹窗：两组单选——「来源」（全部/skills.sh/skillsmp，可扩展）+
+// 「排序」（默认/按下载·星 降序/升序）。两源指标不同（下载 vs 星），故来源按源筛、排序
+// 统一按各源的热度数值。纯客户端，持久化到 localStorage。
 (function wireOnlineFilter() {
-  const btn = $("#online-filter-btn"), pop = $("#online-filter-pop");
-  state.onlineMinInstalls = parseInt(localStorage.getItem("sm.onlineMin") || "0", 10) || 0;
+  const btn = $("#online-filter-btn"), modal = $("#online-filter-modal");
+  const validSrc = { both: 1, skillssh: 1, skillsmp: 1 };
+  const validSort = { default: 1, desc: 1, asc: 1 };
+  const validLimit = { 0: 1, 10: 1, 20: 1, 50: 1 };
+  state.onlineSrc = validSrc[localStorage.getItem("sm.onlineSrc")] ? localStorage.getItem("sm.onlineSrc") : "both";
+  state.onlineSort = validSort[localStorage.getItem("sm.onlineSort")] ? localStorage.getItem("sm.onlineSort") : "desc";
+  state.onlineLimit = validLimit[parseInt(localStorage.getItem("sm.onlineLimit"), 10)] ? parseInt(localStorage.getItem("sm.onlineLimit"), 10) : 0;
   const reflect = () => {
-    pop.querySelectorAll('input[name="minInstalls"]').forEach((r) => { r.checked = +r.value === state.onlineMinInstalls; });
-    btn.classList.toggle("active", state.onlineMinInstalls > 0); // 有过滤时齿轮高亮
+    modal.querySelectorAll('input[name="onlineSrc"]').forEach((r) => { r.checked = r.value === state.onlineSrc; });
+    modal.querySelectorAll('input[name="onlineSort"]').forEach((r) => { r.checked = r.value === state.onlineSort; });
+    modal.querySelectorAll('input[name="onlineLimit"]').forEach((r) => { r.checked = +r.value === state.onlineLimit; });
+    btn.classList.toggle("active", state.onlineSrc !== "both" || state.onlineSort !== "default" || state.onlineLimit !== 0); // 有筛选时齿轮高亮
   };
   reflect();
-  btn.onclick = (e) => { e.stopPropagation(); pop.classList.toggle("hidden"); };
-  pop.addEventListener("click", (e) => e.stopPropagation());
-  pop.querySelectorAll('input[name="minInstalls"]').forEach((r) => {
+  btn.onclick = () => { reflect(); modal.classList.remove("hidden"); };
+  $("#online-filter-close").onclick = () => modal.classList.add("hidden");
+  modal.onclick = (e) => { if (e.target.id === "online-filter-modal") modal.classList.add("hidden"); };
+  modal.querySelectorAll('input[name="onlineSrc"]').forEach((r) => {
     r.onchange = () => {
-      state.onlineMinInstalls = parseInt(r.value, 10) || 0;
-      localStorage.setItem("sm.onlineMin", String(state.onlineMinInstalls));
+      state.onlineSrc = validSrc[r.value] ? r.value : "both";
+      localStorage.setItem("sm.onlineSrc", state.onlineSrc);
       reflect(); renderInventory();
     };
   });
-  // 点别处关闭弹窗
-  document.addEventListener("click", () => pop.classList.add("hidden"));
+  modal.querySelectorAll('input[name="onlineSort"]').forEach((r) => {
+    r.onchange = () => {
+      state.onlineSort = validSort[r.value] ? r.value : "default";
+      localStorage.setItem("sm.onlineSort", state.onlineSort);
+      reflect(); renderInventory();
+    };
+  });
+  modal.querySelectorAll('input[name="onlineLimit"]').forEach((r) => {
+    r.onchange = () => {
+      const v = parseInt(r.value, 10) || 0;
+      state.onlineLimit = validLimit[v] ? v : 0;
+      localStorage.setItem("sm.onlineLimit", String(state.onlineLimit));
+      reflect(); renderInventory();
+    };
+  });
 })();
 
 // submitGitRepo handles the git-source add form. The HTTPS credential is entered
@@ -2639,6 +2791,15 @@ $("#upload-ok").onclick = (e) => doUpdateAndUpload(e.currentTarget);
 $("#upload-update-only").onclick = doUpdateOnly;
 $("#upload-msg").oninput = () => { $("#upload-msg").dataset.touched = "1"; };
 $("#help-btn").onclick = () => $("#help-modal").classList.remove("hidden");
+
+// 同步本地：重扫磁盘实际状态（后端各 /api 都是实时 ScanInventory），刷新工具显示。
+// 用于用户在工具外直接增删本地文件后，让显示与磁盘一致。
+$("#resync-btn").onclick = async (e) => {
+  const b = e.currentTarget, old = b.textContent;
+  b.disabled = true; b.textContent = "同步中…";
+  try { await load(); toast("已同步本地状态"); }
+  finally { b.disabled = false; b.textContent = old; }
+};
 $("#help-close").onclick = () => $("#help-modal").classList.add("hidden");
 $("#help-modal").onclick = (e) => { if (e.target.id === "help-modal") $("#help-modal").classList.add("hidden"); };
 $("#tab-add").onclick = openTargetModal;
@@ -2732,3 +2893,11 @@ $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").classLis
 // every hour so the「有更新」badges stay current without a manual button.
 load(true).then(() => checkUpdates());
 setInterval(() => checkUpdates(), 60 * 60 * 1000);
+
+// 自动同步本地：用户可能在工具外直接增删 / 改本地 skill 文件，导致工具显示与磁盘
+// 不一致。每 15s 静默探测一次磁盘指纹，仅在确有变化时整体刷新一次（无变化绝不重绘，
+// 因此空闲时完全无感——不闪烁、不跳滚动条）。只在标签页可见且没有打开任何弹窗时运行，
+// 避免打断用户操作 / 输入。切回标签页或窗口重新获得焦点时立即探测一次，秒级反映改动。
+setInterval(autoSyncTick, 15 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) autoSyncTick(); });
+window.addEventListener("focus", autoSyncTick);

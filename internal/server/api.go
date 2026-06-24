@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/skillssh/update-all", s.requireAuth(s.handleUpdateSkillsShAll))
 	mux.HandleFunc("POST /api/skillssh/update", s.requireAuth(s.handleUpdateSkillsShOne))
 	mux.HandleFunc("GET /api/skillssh/find", s.requireAuth(s.handleSkillsShFind))
+	mux.HandleFunc("GET /api/skillsmp/find", s.requireAuth(s.handleSkillsMpFind))
 	mux.HandleFunc("POST /api/skillssh/add", s.requireAuth(s.handleSkillsShAdd))
 	mux.HandleFunc("POST /api/skillssh/remove", s.requireAuth(s.handleSkillsShRemove))
 	mux.HandleFunc("POST /api/check-updates", s.requireAuth(s.handleCheckUpdates))
@@ -456,9 +457,112 @@ func (s *Server) handleSkillsShFind(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": parseSkillsFind(stdout)})
 }
 
-// skillsAddReq is the body of POST /api/skillssh/add.
+// skillsMpResult is one normalized hit from skillsmp.com's search API, shaped for
+// the online card. RepoURL is the install target: the skill's github repo ROOT
+// (githubUrl with any /tree/<branch>/<path> suffix stripped), used as
+// `npx skills add <RepoURL> --skill <Skill>`.
+type skillsMpResult struct {
+	Skill       string `json:"skill"` // skill name = the --skill arg
+	Author      string `json:"author"`
+	Description string `json:"description"`
+	RepoURL     string `json:"repoUrl"` // github repo root, the install URL
+	URL         string `json:"url"`     // skillsmp detail page
+	Stars       int    `json:"stars"`
+}
+
+// githubRepoRootRe matches a github repo URL and captures the root, dropping any
+// /tree/... suffix. Anchored to https://github.com to reject non-github sources.
+var githubRepoRootRe = regexp.MustCompile(`(?i)^(https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+?)(?:\.git)?(?:/tree/.*)?$`)
+
+// skillsMpRepoRoot returns the github repo root of a (possibly /tree/-suffixed)
+// github URL, or "" when it is not a github URL we can install from.
+func skillsMpRepoRoot(u string) string {
+	m := githubRepoRootRe.FindStringSubmatch(strings.TrimSpace(u))
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// parseSkillsMp parses skillsmp.com /api/v1/skills/search JSON into normalized
+// results. Skills whose githubUrl is not an installable github repo URL (or with an
+// empty name) are dropped. Pure (no I/O) so it is unit-tested.
+func parseSkillsMp(body []byte) []skillsMpResult {
+	// The API wraps results in an envelope: {success, data:{skills:[...]}, meta}.
+	var raw struct {
+		Data struct {
+			Skills []struct {
+				Name        string `json:"name"`
+				Author      string `json:"author"`
+				Description string `json:"description"`
+				GithubURL   string `json:"githubUrl"`
+				SkillURL    string `json:"skillUrl"`
+				Stars       int    `json:"stars"`
+			} `json:"skills"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &raw) != nil {
+		return nil
+	}
+	out := []skillsMpResult{}
+	for _, s := range raw.Data.Skills {
+		root := skillsMpRepoRoot(s.GithubURL)
+		if root == "" || strings.TrimSpace(s.Name) == "" {
+			continue
+		}
+		out = append(out, skillsMpResult{
+			Skill: s.Name, Author: s.Author, Description: s.Description,
+			RepoURL: root, URL: s.SkillURL, Stars: s.Stars,
+		})
+	}
+	return out
+}
+
+// handleSkillsMpFind searches skillsmp.com's REST API (a marketplace aggregating
+// github skills). Pure HTTP — needs no npx (install still does, via SkillsAddURL).
+// Failures degrade to an empty result + error string so the online section stays
+// usable. Anonymous calls are rate-limited by skillsmp (~50/day).
+func (s *Server) handleSkillsMpFind(w http.ResponseWriter, r *http.Request) {
+	if !originGuard(w, r) {
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}})
+		return
+	}
+	s.mu.Lock()
+	runner := s.runner
+	s.mu.Unlock()
+	if runner == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": "运行器不可用"})
+		return
+	}
+	endpoint := "https://skillsmp.com/api/v1/skills/search?limit=30&q=" + url.QueryEscape(q)
+	ctx, cancel := context.WithTimeout(s.detachedCtx(), 25*time.Second)
+	defer cancel()
+	// Cloudflare 403s Go's net/http TLS fingerprint, so fetch via curl (passes).
+	stdout, stderr, err := runner.SkillsMpFind(ctx, endpoint)
+	if err != nil {
+		msg := strings.TrimSpace(stderr)
+		if msg == "" {
+			msg = err.Error()
+		}
+		if strings.Contains(msg, "403") {
+			msg = "skillsmp 拒绝访问（403，可能触发风控），稍后再试"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": []skillsMpResult{}, "error": "skillsmp 查询失败：" + msg})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "results": parseSkillsMp([]byte(stdout))})
+}
+
+// skillsAddReq is the body of POST /api/skillssh/add. Either Pkg (skills.sh form
+// owner/repo@skill) OR URL+Skill (skillsmp form: github repo root + skill name).
 type skillsAddReq struct {
-	Pkg string `json:"pkg"`
+	Pkg   string `json:"pkg"`
+	URL   string `json:"url"`
+	Skill string `json:"skill"`
 }
 
 // handleSkillsShAdd installs a skills.sh package globally into the canonical
@@ -476,8 +580,18 @@ func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	// Two install forms: skillsmp (url + --skill name) takes precedence when url is
+	// present; otherwise the skills.sh form (pkg = owner/repo@skill).
+	useURL := strings.TrimSpace(req.URL) != ""
+	repoURL := strings.TrimSpace(req.URL)
+	skill := strings.TrimSpace(req.Skill)
 	pkg := strings.TrimSpace(req.Pkg)
-	if !skillsPkgRe.MatchString(pkg) {
+	if useURL {
+		if skillsMpRepoRoot(repoURL) != repoURL || !skillNameRe.MatchString(skill) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的安装参数（应为 github 仓根 URL + skill 名）"})
+			return
+		}
+	} else if !skillsPkgRe.MatchString(pkg) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的 skill 包名（应形如 owner/repo@skill）"})
 		return
 	}
@@ -490,7 +604,13 @@ func (s *Server) handleSkillsShAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(s.detachedCtx(), 300*time.Second)
 	defer cancel()
-	stdout, stderr, err := runner.SkillsAdd(ctx, npx, pkg)
+	var stdout, stderr string
+	var err error
+	if useURL {
+		stdout, stderr, err = runner.SkillsAddURL(ctx, npx, repoURL, skill)
+	} else {
+		stdout, stderr, err = runner.SkillsAdd(ctx, npx, pkg)
+	}
 	clean := ansiRe.ReplaceAllString(stdout+"\n"+stderr, "")
 	// Honest classification, calibrated against the real CLI (KTD5):
 	//   success → "✓ <skill> (copied)" + "Installed" (re-install is idempotent, same
@@ -827,7 +947,7 @@ func (s *Server) handleExportRepos(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "导出目录不存在或不是文件夹"})
 			return
 		}
-		path = filepath.Join(p, "skillmanage-repos.json")
+		path = filepath.Join(p, "skillmanager-repos.json")
 	} else {
 		path = exportFilePath(s.centralDir)
 	}
@@ -843,7 +963,7 @@ func (s *Server) handleExportRepos(w http.ResponseWriter, r *http.Request) {
 // folder when it exists (most discoverable for "move to another machine"),
 // otherwise the central dir (always writable).
 func exportFilePath(centralDir string) string {
-	const name = "skillmanage-repos.json"
+	const name = "skillmanager-repos.json"
 	if home, err := os.UserHomeDir(); err == nil {
 		dl := filepath.Join(home, "Downloads")
 		if fi, err := os.Stat(dl); err == nil && fi.IsDir() {
@@ -1937,6 +2057,14 @@ func validHTTPURL(raw string) string {
 type skillsRunner interface {
 	UpdateSkill(ctx context.Context, npxPath, name string) (stdout, stderr string, err error)
 	UpdateAll(ctx context.Context, npxPath string) (stdout, stderr string, err error)
+	// SkillsAddURL installs a single skill from a github repo by URL +「--skill」name
+	// (`npx skills add <repoURL> --skill <name> -g -y`), the form skillsmp.com gives.
+	// Same canonical (~/.agents/skills) and non-ownership as SkillsAdd.
+	SkillsAddURL(ctx context.Context, npxPath, repoURL, skill string) (stdout, stderr string, err error)
+	// SkillsMpFind GETs a skillsmp.com search URL via curl. We shell to curl because
+	// Cloudflare blocks Go's net/http TLS fingerprint (403); curl's passes. Returns
+	// the raw JSON body on stdout.
+	SkillsMpFind(ctx context.Context, url string) (stdout, stderr string, err error)
 	// UpdatePlugin delegates a harness plugin update to its own CLI
 	// (`<cliPath> plugin update <plugin> -s <scope>`); we never take ownership.
 	UpdatePlugin(ctx context.Context, cliPath, plugin, scope string) (stdout, stderr string, err error)

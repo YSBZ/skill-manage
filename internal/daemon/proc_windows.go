@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// procName returns the lowercased base image name of pid (e.g. "skillmanage.exe"),
+// procName returns the lowercased base image name of pid (e.g. "skillmanager.exe"),
 // or "" if the process can't be opened/queried. Used as the SAFETY GATE before any
 // termination: we only ever kill a process we've confirmed is SkillManage's own.
 func procName(pid int) string {
@@ -37,7 +37,7 @@ func isOurProcess(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	return strings.Contains(procName(pid), "skillmanage")
+	return strings.Contains(procName(pid), "skillmanager")
 }
 
 // alivePlatform reports whether pid is a running process. WAIT_TIMEOUT from a
@@ -93,7 +93,7 @@ func killOtherInstancesPlatform(self int) int {
 		pid := int(e.ProcessID)
 		if pid != self && pid > 0 {
 			name := strings.ToLower(windows.UTF16ToString(e.ExeFile[:]))
-			if strings.Contains(name, "skillmanage") {
+			if strings.Contains(name, "skillmanager") {
 				if h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid)); err == nil {
 					if windows.TerminateProcess(h, 1) == nil {
 						killed++

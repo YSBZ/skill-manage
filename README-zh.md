@@ -1,4 +1,4 @@
-# SkillManage
+# SkillManager
 
 [English](README.md) | **中文**
 
@@ -14,16 +14,16 @@
 
 从 Releases 下载对应平台的包：
 
-- **macOS**：`SkillManage-vX.Y.Z.dmg`，拖进 `/Applications` 后启动（**装好后请弹出 dmg 卷**，别从挂载卷里直接运行）。
-- **Windows**：`SkillManage-windows-desktop-vX.Y.Z.zip`，解压后运行 `SkillManage.exe`（已嵌入应用图标，双击无控制台窗口）。
+- **macOS**：`SkillManager-vX.Y.Z.dmg`，拖进 `/Applications` 后启动（**装好后请弹出 dmg 卷**，别从挂载卷里直接运行）。
+- **Windows**：`SkillManager-windows-desktop-vX.Y.Z.zip`，解压后运行 `SkillManager.exe`（已嵌入应用图标，双击无控制台窗口）。
 
 > **macOS 注意**：未签名 / 未公证的二进制首次会被 Gatekeeper 拦截，需右键 → 打开，或 `xattr -d com.apple.quarantine <app>` 解隔离。
 
 ### 方式二：网页版单二进制
 
 ```sh
-make build          # 构建 host 二进制 ./skillmanage
-./skillmanage       # 启动 daemon；终端打印 UI 地址（默认 http://127.0.0.1:7799/）
+make build          # 构建 host 二进制 ./skillmanager
+./skillmanager       # 启动 daemon；终端打印 UI 地址（默认 http://127.0.0.1:7799/）
 ```
 
 - 中央文件夹默认 `~/.skillmanage`（含 config.yaml、manifest.yaml、local 受管存储、lock、address、token）；用 `--central <dir>` 覆盖。
@@ -37,7 +37,7 @@ make build          # 构建 host 二进制 ./skillmanage
 
 - **git 仓**：跟踪的远程 skill 仓，本工具维护其只读镜像。
 - **本地源**：① `~/.skillmanage/local` 受管存储（收编 / 备份的真身归此）；② 你登记的任意本地文件夹（实时识别其中的 skill，不复制、不改动）。
-- **npx skills**：通过 [skills.sh](https://skills.sh)（`npx skills`）安装的 skill，canonical 在 `~/.agents/skills`，本工具只读、更新走 npx。
+- **npx skills**：通过 `npx skills` 从 [skills.sh](https://skills.sh) 或 [skillsmp](https://skillsmp.com) 安装的 skill，canonical 在 `~/.agents/skills`，本工具只读、更新走 npx（见下「在线搜索并安装」）。
 - **插件（plugins）**：harness 自带插件系统管理的 skill（`~/.claude/plugins` 等），**全局、只读**，与具体目录无关。
 
 **交互模型**：左侧是源，是操作 skill **本体**（移动 / 删除 / 整仓同步 / 启用）的唯一入口；右侧是 skill 列表，对本体只读，但卡片上带「停用」快捷操作。
@@ -52,8 +52,10 @@ make build          # 构建 host 二进制 ./skillmanage
     - **仅更新** = 只拉取上游更新并**保留**本地改动（不上传）。非冲突的改动会保留，下次还能再同步上传；与上游**冲突**则更新失败，提示用 git 手动解决——**绝不自动丢弃本地改动**。
 - **贡献回上游**：本地新增 / 修改 / 删除的 skill 通过「同步仓库」commit + push 回 git 远程，提交信息可编辑。
 - **密钥 / 凭据保护**：上传前若检出疑似密钥文件（`.env`、`*.pem`、`id_rsa`、`.npmrc`、含 credential/secret 的文件等），弹窗标红列出并**闸住「确认」**，必须显式勾选才推；后端也强制拦截（绕过 UI 直接打 API 同样拦得住）。`.env.example` 等模板不算。
+- **在线搜索并安装**：顶部搜索框同时查本地各源与两个在线市场——[skills.sh](https://skills.sh) 与 [skillsmp](https://skillsmp.com)。在线卡片按来源打徽章（skills.sh ↓下载数 / skillsmp ★星数）；安装统一走 `npx skills add`，装进 canonical `~/.agents/skills`（归「npx skills」源），更新 / 停用与其它 npx skill 一致。齿轮 ⚙ 按来源 / 排序 / 数量筛选；两源并行查询，任一源失败不影响另一源。
 - **收编 / 备份本地 skill**：把同步目录里手写、未纳管的真身 skill 移入受管存储并原位软链，成为可跨 harness 复用的来源。可选扫描插件目录并以**复制导入**方式收编（不改动插件原件）。
 - **OS 垃圾自动忽略**：镜像同步把 `.DS_Store`、`._*`、`Thumbs.db`、编辑器 swap、`node_modules`、`__pycache__` 等写入各镜像 `.git/info/exclude`（本地忽略、不推上游），不会被当改动误传。
+- **自动同步本地改动**：你可能在工具外直接增删 / 改动本地 skill 文件。打开期间每 15 秒后台静默探测磁盘指纹，仅在确有变化时刷新（无变化绝不重绘，空闲无感、不闪烁不跳滚动条）；打开弹窗 / 输入时与标签页不可见时暂停，切回标签页或窗口聚焦时立即探测。右上角「↻ 同步本地」按钮可随时手动重扫。
 - **导入 / 导出**：导出 / 导入仓库列表，便于换机重建（manifest 不随导出，避免误删别机链接）。
 
 ## git 仓与鉴权
@@ -69,9 +71,9 @@ make build          # 构建 host 二进制 ./skillmanage
 ## 构建与分发
 
 ```sh
-make build          # host 网页版二进制 ./skillmanage
+make build          # host 网页版二进制 ./skillmanager
 make package        # dist/ 下 darwin-arm64 / darwin-amd64 / windows-amd64 / linux-amd64 网页版 zip
-make desktop-dmg    # macOS 桌面 app（universal）→ dist/SkillManage-vX.Y.Z.dmg
+make desktop-dmg    # macOS 桌面 app（universal）→ dist/SkillManager-vX.Y.Z.dmg
 make desktop-win    # Windows 桌面 app（交叉编译，带图标）→ dist/pkg/…windows-desktop-…zip
 make winres         # 重新生成 Windows 资源（图标 + 版本信息），版本号升级后跑
 make test           # go test ./...

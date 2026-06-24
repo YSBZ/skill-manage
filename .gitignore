@@ -1,4 +1,6 @@
-# built binary (module name)
+# built binary
+/skillmanager
+/skillmanager.exe
 /skillmanage
 /skillmanage.exe
 # cross-compiled artifacts

@@ -1,4 +1,4 @@
-// Command skillmanage is a single-binary daemon that tracks git skill repos,
+// Command skillmanager is a single-binary daemon that tracks git skill repos,
 // keeps them fresh on a daily schedule, and links selected skills into Claude
 // Code's skill directories — driven by an embedded browser UI.
 package main
@@ -57,10 +57,10 @@ func main() {
 // built windowless (no console to read stderr from) — without it a failed
 // launch is just a window that flashes and vanishes.
 func fatal(dir string, err error) {
-	msg := "skillmanage: " + err.Error()
+	msg := "skillmanager: " + err.Error()
 	fmt.Fprintln(os.Stderr, msg)
 	if dir != "" {
-		if f, e := os.OpenFile(filepath.Join(dir, "skillmanage.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); e == nil {
+		if f, e := os.OpenFile(filepath.Join(dir, "skillmanager.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); e == nil {
 			fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), msg)
 			_ = f.Close()
 		}
@@ -87,16 +87,16 @@ func run(dir string, openBrowser bool) error {
 		// identify/stop it, fall back to pointing at the existing instance.
 		if lk, err = daemon.TakeOver(dir, lockPath); err != nil {
 			if url := daemon.ReadAddressURL(dir); url != "" {
-				fmt.Printf("skillmanage: 已在运行且无法接管，控制台 %s\n", url)
+				fmt.Printf("skillmanager: 已在运行且无法接管，控制台 %s\n", url)
 				if openBrowser {
 					_ = browser.Open(url)
 				}
 			} else {
-				fmt.Println("skillmanage: 已有一个实例在运行，且无法接管。")
+				fmt.Println("skillmanager: 已有一个实例在运行，且无法接管。")
 			}
 			return nil
 		}
-		fmt.Println("skillmanage: 已关闭上一个实例并接管。")
+		fmt.Println("skillmanager: 已关闭上一个实例并接管。")
 	} else if err != nil {
 		return err
 	}
@@ -135,10 +135,10 @@ func run(dir string, openBrowser bool) error {
 		return err
 	}
 	if err := srv.WriteAddress(ln.Addr().String()); err != nil {
-		fmt.Fprintln(os.Stderr, "skillmanage: warning: could not write address file:", err)
+		fmt.Fprintln(os.Stderr, "skillmanager: warning: could not write address file:", err)
 	}
 	url := fmt.Sprintf("http://%s/", ln.Addr().String())
-	fmt.Printf("skillmanage: UI at %s\n", url)
+	fmt.Printf("skillmanager: UI at %s\n", url)
 	// Open the UI for an interactive launch (double-click / manual run). Skipped
 	// for autostart-launched instances, which pass --no-open.
 	if openBrowser {

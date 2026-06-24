@@ -5,16 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!-- The daemon injects the per-install API token here at serve time (KTD11). -->
     <meta name="sm-token" content="__SM_TOKEN__" />
-    <title>SkillManage</title>
+    <title>SkillManager</title>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
     <header>
       <div class="brand">
-        <span class="logo">◆</span> SkillManage
+        <span class="logo">◆</span> SkillManager
         <button id="help-btn" class="help-btn" title="使用指南 / 设计说明">?</button>
       </div>
       <div class="stats" id="stats"></div>
+      <button id="resync-btn" class="ghost small resync-btn" title="重新扫描本地文件（各源目录 + 已链接的 skill），让工具显示与磁盘实际一致。若你在工具外直接增删了本地文件，点这个刷新。">↻ 同步本地</button>
     </header>
 
     <div id="banner" class="banner hidden"></div>
@@ -33,16 +34,9 @@
         </div>
         <div class="list-pane">
           <div class="main-head">
-            <input id="search" type="search" placeholder="搜索全部源的 skill（本地 + skills.sh 线上），可直接启用到当前目录…" />
-            <button id="online-search-btn" class="small" title="搜索本地与 skills.sh 线上 skill">搜索</button>
-            <button id="online-filter-btn" class="ghost small" title="过滤在线（skills.sh）结果——按安装数">⚙</button>
-            <div id="online-filter-pop" class="filter-pop hidden">
-              <div class="filter-pop-title">在线结果过滤 · 最低安装数</div>
-              <label><input type="radio" name="minInstalls" value="0" /> 全部</label>
-              <label><input type="radio" name="minInstalls" value="1000" /> ≥ 1K</label>
-              <label><input type="radio" name="minInstalls" value="10000" /> ≥ 10K</label>
-              <label><input type="radio" name="minInstalls" value="100000" /> ≥ 100K</label>
-            </div>
+            <input id="search" type="search" placeholder="搜索全部源的 skill（本地 + 在线 skills.sh / skillsmp），可直接启用到当前目录…" />
+            <button id="online-search-btn" class="small" title="搜索本地与在线 skill（skills.sh + skillsmp）">搜索</button>
+            <button id="online-filter-btn" class="ghost small" title="筛选在线结果（来源 / 排序）">⚙</button>
           </div>
           <div id="skills"></div>
         </div>
@@ -258,18 +252,60 @@
     <div id="help-modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
-          <h3>SkillManage 使用指南</h3>
+          <h3>SkillManager 使用指南</h3>
           <button id="help-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
         </div>
         <div class="help-body">
-          <p class="lead">SkillManage 是 skill 的<b>统一控制面</b>，不是又一个安装器。它把来自各种渠道的 skill（git 仓、本地手写、skills.sh 等）映射进各 harness 的 skill 目录，并在不破坏业内目录规则的前提下统一管理。你提供<b>来源</b>与<b>目标目录</b>，其余交给工具：选择性 / 整仓同步、备份手写 skill、识别并代调别家工具更新。</p>
+          <p class="lead">SkillManager 是 skill 的<b>统一控制面</b>，不是又一个安装器。它把来自各种渠道的 skill（git 仓、本地手写、skills.sh 等）映射进各 harness 的 skill 目录，并在不破坏业内目录规则的前提下统一管理。你提供<b>来源</b>与<b>目标目录</b>，其余交给工具：选择性 / 整仓同步、备份手写 skill、识别并代调别家工具更新。</p>
 
           <div class="changelog">
             <div class="changelog-head">
-              <span class="cl-ver">v5.0.23</span>
-              <span class="cl-date">五期 · 封板后补丁 · 更新于 2026-06-23</span>
+              <span class="cl-ver">v5.1.4</span>
+              <span class="cl-date">数量限制改为每源前 N · 更新于 2026-06-23</span>
             </div>
             <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.4 · 在线结果数量限制改为「每源各前 N」（2026-06-23）</div>
+              <ul>
+                <li><b>每源保底露出</b>：在线筛选的「数量限制」由「两源合计前 N」改为<b>每个来源各取前 N</b>——避免下载数（skills.sh）与星数（skillsmp）量纲不同导致一源占满前 N、另一源被挤掉。沿用已排好的全局热度顺序，仅按来源各自封顶。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.3 · 目录现状分组改为各自独立展开（2026-06-23）</div>
+              <ul>
+                <li><b>取消手风琴</b>：目录现状视图的来源分组（git 仓 / npx skills / 本地源 / 插件等）不再「同时只展开一个」——<b>默认全部展开</b>，点组标题可单独收起 / 展开该组，互不影响。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.2 · 自动同步本地改动（2026-06-23）</div>
+              <ul>
+                <li><b>自动同步</b>：每 15 秒在后台静默探测磁盘指纹，发现本地 skill 文件被工具外增删 / 改动时自动刷新——你不必再手点「同步本地」。<b>仅在确有变化时整体刷新一次</b>，无变化绝不重绘，空闲时完全无感（不闪烁、不跳滚动条）。</li>
+                <li><b>不打断操作</b>：打开任何弹窗 / 输入时、以及标签页不可见时都暂停探测；切回标签页或窗口重新获得焦点时立即探测一次，秒级反映改动。手动「↻ 同步本地」按钮保留。</li>
+                <li>实测各扫描接口均为本地 stat 级（≤20ms、限深、跳过 node_modules），15s 轮询开销可忽略。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.1 · 新增「同步本地」按钮（2026-06-23）</div>
+              <ul>
+                <li><b>同步本地</b>：右上角新增「↻ 同步本地」按钮，重新扫描磁盘实际状态（各源目录 + 已链接 skill）并刷新显示。用于你在工具外直接增删本地文件后，让显示与磁盘一致（后端各接口本就实时扫描，此按钮触发前端整体重拉）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.0 · 接入 skillsmp 市场 + 更名 SkillManager（2026-06-23）</div>
+              <ul>
+                <li><b>更名 SkillManager</b>：产品名从 SkillManage 更正为 SkillManager——UI / 应用显示名 / README / 安装包名，以及二进制 <code>skillmanage</code>→<code>skillmanager</code> 全部更新；数据目录 <code>~/.skillmanage</code> 与 Go 模块路径保持不变（现有配置零影响）。</li>
+                <li><b>新增 skillsmp 在线源</b>：在线搜索并行查 skills.sh 与 <a href="https://skillsmp.com" class="online-link">skillsmp.com</a>，结果按来源打徽章（skills.sh ↓下载数 / skillsmp ★星数）；任一源失败只提示一条、不遮蔽另一源结果。</li>
+                <li><b>统一走 npx 安装</b>：skillsmp 命中复用 <code>npx skills add &lt;github 仓根&gt; --skill &lt;名&gt;</code>，装进同一 canonical <code>~/.agents/skills</code>、归入 npx skills 组——零额外管理层。</li>
+                <li><b>筛选弹窗</b>：齿轮 ⚙ 分三组横排单选——来源（全部 / skills.sh / skillsmp，可扩展）+ 排序（默认 / 按下载·星 升降序）+ 数量限制（全部 / 前 N 条）。</li>
+                <li><b>技术</b>：skillsmp 经 curl 拉取（绕过 Cloudflare 对 Go net/http TLS 指纹返回的 403）；解析适配其 <code>{success, data:{skills:[…]}}</code> 封套。匿名 API 约 50 次/天限流。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.24 · 源身份名称统一为「npx skills」（2026-06-23）</div>
+              <ul>
+                <li><b>源名称统一</b>：左侧源卡名、弹窗标题及配套提示从「skills.sh」改为「npx skills」，与右侧分组一致——该源代表整个 npx canonical（<code>~/.agents/skills</code>），不专指 skills.sh 注册站。指 skills.sh 注册站本身的地方（在线搜索区、↗ 外链、共存说明）保留原名。</li>
+              </ul>
+            </div>
             <div class="cl-rel">
               <div class="cl-rel-head">v5.0.23 · npx skills 组说明文案对齐（2026-06-23）</div>
               <ul>
@@ -420,7 +456,7 @@
               <div class="cl-rel-head">v5.0.5 · Windows 自动强制接管（2026-06-18）</div>
               <ul>
                 <li>Windows 启动时若有旧实例占着锁，现在会自动安全接管：用真正的 Windows 存活检测 + 按进程名 <code>skillmanage</code> 强制终止旧实例（绝不误伤其它程序），不再需要手动去任务管理器结束进程。</li>
-                <li>pid 记录失效/错位时，按进程名清扫残留的 SkillManage 实例（仅限本应用，永不含自身）再接管。</li>
+                <li>pid 记录失效/错位时，按进程名清扫残留的 SkillManager 实例（仅限本应用，永不含自身）再接管。</li>
               </ul>
             </div>
             <div class="cl-rel">
@@ -456,7 +492,7 @@
                 <li>点「搜索」/回车即同时搜本地 + skills.sh 线上可安装的 skill；结果分「本地 / 在线」两区。</li>
                 <li>在线结果显示安装数 / 来源 / 链接；已装的标「已安装」，不重复给安装按钮。</li>
                 <li>齿轮 ⚙ 可按<b>安装数过滤</b>在线结果（全部 / ≥1K / ≥10K / ≥100K），过滤偏好记忆。</li>
-                <li>「安装」两层：<code>npx skills add -g -y -a universal</code> 只装到 canonical（<code>~/.agents/skills</code>，不乱链）；再由 SkillManage 自己的能力<b>软链（启用）到你当前所在的目录 tab</b>——这条链受管、可随时停用。</li>
+                <li>「安装」两层：<code>npx skills add -g -y -a universal</code> 只装到 canonical（<code>~/.agents/skills</code>，不乱链）；再由 SkillManager 自己的能力<b>软链（启用）到你当前所在的目录 tab</b>——这条链受管、可随时停用。</li>
                 <li>不接管 skills.sh（更新仍交其原生方式）；安装/启用成功或失败都如实提示。</li>
               </ul>
             </div>
@@ -570,8 +606,8 @@
           <p>侧栏按来源分三区，<b>点任意卡片可弹窗查看该来源的全部 skill</b>：</p>
           <ol>
             <li><b>git 仓（我们管）</b>：clone 到 <code>~/.skillmanage/repos</code>，可拉取更新。弹窗里只读；要整仓移除用卡片上的「移除」。</li>
-            <li><b>本地源</b>：本地文件夹里的 skill，能力相同、按来源分两种——<b><code>local</code></b> 是 SkillManage 创建的受管存储（备份 / 手写归入 <code>~/.skillmanage/local</code>，弹窗里每个可<b>删除</b>）；点分区标题的<b>「添加本地源」</b>可把你选的<b>任意文件夹</b>登记为一个独立本地源（实时识别、<b>不复制</b>，软链直接指向原文件，可取别名、整源可「移除」）。侧栏按文件夹分卡，使用时（管理 / 现状）合并为一个「本地源」类。</li>
-            <li><b>npx skills（<code>skills.sh</code>）</b>：<code>~/.agents/skills</code> 里由 <code>npx skills</code> 装的 skill，只读识别。卡片上有<b>「更新」</b>代调 <code>npx skills update</code>（需本机有 <code>npx</code>）；绝不接管或改动它的真身与台账。</li>
+            <li><b>本地源</b>：本地文件夹里的 skill，能力相同、按来源分两种——<b><code>local</code></b> 是 SkillManager 创建的受管存储（备份 / 手写归入 <code>~/.skillmanage/local</code>，弹窗里每个可<b>删除</b>）；点分区标题的<b>「添加本地源」</b>可把你选的<b>任意文件夹</b>登记为一个独立本地源（实时识别、<b>不复制</b>，软链直接指向原文件，可取别名、整源可「移除」）。侧栏按文件夹分卡，使用时（管理 / 现状）合并为一个「本地源」类。</li>
+            <li><b>npx skills（<code>skills.sh</code> / <code>skillsmp</code>）</b>：<code>~/.agents/skills</code> 里由 <code>npx skills</code> 装的 skill，只读识别——无论来自 <a href="https://skills.sh" class="online-link">skills.sh</a> 还是 <a href="https://skillsmp.com" class="online-link">skillsmp</a>，都归这一类（见下「在线搜索并安装」）。卡片上有<b>「更新」</b>代调 <code>npx skills update</code>（需本机有 <code>npx</code>）；绝不接管或改动它的真身与台账。</li>
           </ol>
 
           <h4>git 仓与鉴权</h4>
@@ -590,7 +626,7 @@
           </ol>
 
           <h4>目录现状视图</h4>
-          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源折叠成组</b>（手风琴：每次展开一个，点已展开的组可全部收起）。</p>
+          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源分组</b>——各组<b>默认全部展开</b>，点组标题可单独收起 / 展开该组，互不影响。</p>
           <ol>
             <li><b>来源分组</b>：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每卡带标签区分归属）、<code>git</code>、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。</li>
             <li><b>本工具管理的</b>（git / 本地源）：带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果。自动同步进来的不单独切换——要取消请点开左侧该来源卡片，在弹窗里关掉「自动同步」。</li>
@@ -599,7 +635,7 @@
           <p>组标题旁的 <code>?</code> 点开有说明。</p>
 
           <h4>启用 / 自动同步（在源卡片弹窗里）</h4>
-          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / skills.sh / 本地源）打开它的 skill 弹窗。</p>
+          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / npx skills / 本地源）打开它的 skill 弹窗。</p>
           <ol>
             <li><b>单个启用</b>：每个 skill 行的<b>「启用」</b>按钮做单个映射，已启用的标「已启用」、同步中的标「自动同步中」。</li>
             <li><b>整源同步</b>：弹窗顶部「启用到当前目录」旁的<b>「自动同步」</b>开关让整个来源自动同步——之后该来源新增 skill 自动加链、删除的自动清链。</li>
@@ -613,22 +649,39 @@
             <li><b>删除</b>：永久删除该真身目录（不可恢复，删前强确认，且只删确含 SKILL.md 的目录）。</li>
           </ol>
 
-          <h4>与 skills.sh 等工具共存</h4>
-          <p>本工具<b>只识别、不接管</b>别家（skills.sh、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。</p>
+          <h4>在线搜索并安装（skills.sh / skillsmp）</h4>
+          <p>顶部搜索框同时搜<b>本地全部源</b>与<b>两个在线市场</b>——<a href="https://skills.sh" class="online-link">skills.sh</a> 与 <a href="https://skillsmp.com" class="online-link">skillsmp</a>，命中即可一键安装到本机。</p>
+          <ol>
+            <li><b>结果来源</b>：在线卡片按来源打徽章——skills.sh 显示 <code>↓</code> 下载数、skillsmp 显示 <code>★</code> 星数；本地命中不带在线徽章。</li>
+            <li><b>安装</b>：点在线卡片的<b>「安装」</b>统一走 <code>npx skills add</code>，装进 canonical <code>~/.agents/skills</code>、归入左侧<b>「npx skills」</b>源——零额外管理层，之后更新 / 停用与其它 npx skill 一致（需本机有 <code>npx</code>）。</li>
+            <li><b>筛选（齿轮 ⚙）</b>：分三组横排单选——<b>来源</b>（全部 / skills.sh / skillsmp）+ <b>排序</b>（默认 / 按下载·星 升降序，默认按热度降序）+ <b>数量限制</b>（全部 / 每个来源各取前 N 条——两源都保底露出，不会被对方挤占）；选择本地持久化。</li>
+            <li><b>容错</b>：两源并行查询，任一源失败（超时 / 限流 / 网络）只在结果区提示一条，<b>不影响另一源</b>结果展示。skillsmp 经 curl 拉取（绕过其 Cloudflare 对 Go TLS 指纹的 403），匿名 API 约 50 次/天限流。</li>
+          </ol>
+
+          <h4>与 npx skills（skills.sh / skillsmp）等工具共存</h4>
+          <p>本工具<b>只识别、不接管</b>别家（skills.sh / skillsmp、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。</p>
           <ol>
             <li><b>真身位置</b>：安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>。</li>
-            <li><b>停用投影</b>：现状视图里可停用某一处的软链投影（拆软链、真身不动，且 skills.sh 下次 update 可能重新投影回来），彻底卸载仍交给它自己。</li>
-            <li><b>更新交给它</b>：来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>）；侧栏 skills.sh 卡片的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</li>
+            <li><b>停用投影</b>：现状视图里可停用某一处的软链投影（拆软链、真身不动，且下次 npx update 可能重新投影回来），彻底卸载仍交给它自己。</li>
+            <li><b>更新交给它</b>：来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>）；侧栏 <b>npx skills</b> 卡片的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</li>
           </ol>
 
           <h4>更新：每天定时 + 手动全量 / 强制</h4>
           <ol>
-            <li><b>每天定时</b>：每天早上 09:40（本地时间）自动更新一次全部源——拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 skills.sh 源，然后重新同步软链。</li>
-            <li><b>手动</b>：随时点「全量更新」（git 仓标题行只更 git；skills.sh 卡片的「更新」代调 npx；单仓卡片只更该仓）。</li>
+            <li><b>每天定时</b>：每天早上 09:40（本地时间）自动更新一次全部源——拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 npx skills 源，然后重新同步软链。</li>
+            <li><b>手动</b>：随时点「全量更新」（git 仓标题行只更 git；npx skills 卡片的「更新」代调 npx；单仓卡片只更该仓）。</li>
             <li><b>有本地改动时</b>：被跳过并提示是否<b>还原并更新</b>（git reset --hard 丢弃本地改动、与上游一致，谨慎使用，仅作用于 git 源）。</li>
             <li><b>检查节奏</b>：启动时只重建软链、不拉取；打开期间<b>每小时检查一次</b>上游（只检查不拉取，有更新的仓标「有更新」徽章）。</li>
             <li><b>非交互拉取</b>：以 BatchMode 运行、不弹窗输密码；私有仓需先配好免交互鉴权，否则该仓标红、拉取失败。</li>
             <li><b>仓名前圆点</b>：<b style="color:var(--ok)">绿</b>=上次同步成功、<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据）、灰=尚未同步。</li>
+          </ol>
+
+          <h4>同步本地（自动反映工具外的文件改动）</h4>
+          <p>你可能不经本工具、直接在文件系统里增删 / 改动本地 skill 文件。工具会自动让显示与磁盘保持一致——后端各接口本就<b>每次请求实时扫描磁盘</b>，前端只需重拉（这与上面的「更新」是两件事：更新是拉取 git / npx <b>上游</b>，同步本地是反映<b>本机</b>文件变化）。</p>
+          <ol>
+            <li><b>自动同步</b>：打开期间<b>每 15 秒</b>在后台静默探测磁盘指纹，发现本地 skill 被工具外增删 / 改动时自动刷新一次。<b>仅在确有变化时整体刷新</b>，无变化绝不重绘，空闲时完全无感（不闪烁、不跳滚动条）。</li>
+            <li><b>不打断操作</b>：打开任何弹窗 / 输入时、以及标签页不可见时都暂停探测；切回标签页或窗口重新获得焦点时立即探测一次，秒级反映。</li>
+            <li><b>手动</b>：右上角<b>「↻ 同步本地」</b>按钮随时手动重扫，立即刷新。</li>
           </ol>
 
           <h4>同步仓库（git 同步：拉取上游 + 上传本地改动）</h4>
@@ -675,6 +728,42 @@ git clean -fd                                       # 5 清残留</pre>
       </div>
     </div>
 
+
+    <div id="online-filter-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(420px,100%)">
+        <div class="modal-head">
+          <h3>在线结果筛选</h3>
+          <button id="online-filter-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:16px">
+          <div class="filter-group">
+            <div class="filter-group-title">来源</div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineSrc" value="both" /> 全部</label>
+              <label><input type="radio" name="onlineSrc" value="skillssh" /> skills.sh ↓</label>
+              <label><input type="radio" name="onlineSrc" value="skillsmp" /> skillsmp ★</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <div class="filter-group-title">排序（按下载 / 星数）</div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineSort" value="default" /> 默认</label>
+              <label><input type="radio" name="onlineSort" value="desc" /> 热度 ↓</label>
+              <label><input type="radio" name="onlineSort" value="asc" /> 热度 ↑</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <div class="filter-group-title">数量限制 <span style="font-weight:400;opacity:.6;font-size:12px">（每个来源各取前 N，两源都保底露出）</span></div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineLimit" value="0" /> 全部</label>
+              <label><input type="radio" name="onlineLimit" value="10" /> 前 10</label>
+              <label><input type="radio" name="onlineLimit" value="20" /> 前 20</label>
+              <label><input type="radio" name="onlineLimit" value="50" /> 前 50</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="modal" class="modal hidden">
       <div class="modal-card">

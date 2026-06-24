@@ -13,7 +13,7 @@ import (
 )
 
 // ErrLocked means another instance already holds the lock.
-var ErrLocked = errors.New("another skillmanage instance is already running")
+var ErrLocked = errors.New("another skillmanager instance is already running")
 
 // Lock is a held single-instance lock.
 type Lock struct {

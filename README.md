@@ -1,4 +1,4 @@
-# SkillManage
+# SkillManager
 
 **English** | [中文](README-zh.md)
 
@@ -14,16 +14,16 @@ Core idea: links point at **live git mirrors**, and a daily `fetch` makes every 
 
 Download the package for your platform from Releases:
 
-- **macOS**: `SkillManage-vX.Y.Z.dmg` — drag into `/Applications` and launch (**eject the dmg volume after installing**; don't run it from the mounted volume).
-- **Windows**: `SkillManage-windows-desktop-vX.Y.Z.zip` — unzip and run `SkillManage.exe` (app icon embedded, no console window on double-click).
+- **macOS**: `SkillManager-vX.Y.Z.dmg` — drag into `/Applications` and launch (**eject the dmg volume after installing**; don't run it from the mounted volume).
+- **Windows**: `SkillManager-windows-desktop-vX.Y.Z.zip` — unzip and run `SkillManager.exe` (app icon embedded, no console window on double-click).
 
 > **macOS note**: an unsigned / un-notarized binary is blocked by Gatekeeper on first launch — right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine <app>`.
 
 ### Option B: Single-binary web version
 
 ```sh
-make build          # build the host binary ./skillmanage
-./skillmanage       # start the daemon; the UI address is printed (default http://127.0.0.1:7799/)
+make build          # build the host binary ./skillmanager
+./skillmanager       # start the daemon; the UI address is printed (default http://127.0.0.1:7799/)
 ```
 
 - The central folder defaults to `~/.skillmanage` (config.yaml, manifest.yaml, the `local` managed store, lock, address, token); override with `--central <dir>`.
@@ -37,7 +37,7 @@ make build          # build the host binary ./skillmanage
 
 - **git repos**: tracked remote skill repos, for which the tool maintains a read-only mirror.
 - **local sources**: ① the `~/.skillmanage/local` managed store (adopted / backed-up skills live here); ② any local folder you register (its skills are detected live — not copied, not modified).
-- **npx skills**: skills installed via [skills.sh](https://skills.sh) (`npx skills`); the canonical copy lives in `~/.agents/skills`, read-only here, updated through npx.
+- **npx skills**: skills installed via `npx skills` from either [skills.sh](https://skills.sh) or [skillsmp](https://skillsmp.com); the canonical copy lives in `~/.agents/skills`, read-only here, updated through npx (see **Online search & install** below).
 - **plugins**: skills managed by the harness's own plugin system (`~/.claude/plugins`, etc.) — **global, read-only**, independent of any specific directory.
 
 **Interaction model**: the left side is the sources — the only place to act on a skill's **body** (move / delete / whole-repo sync / enable); the right side is the skill list, read-only on the body, with a "Disable" quick action on each card.
@@ -52,8 +52,10 @@ make build          # build the host binary ./skillmanage
     - **Update only** = pull upstream while **keeping** local changes (without uploading). Non-conflicting changes are preserved and can still be uploaded later; on a **conflict** with upstream the update fails and asks you to resolve with git — local changes are **never auto-discarded**.
 - **Contribute upstream**: locally added / modified / deleted skills are committed + pushed back to the git remote via "Sync repo", with an editable commit message.
 - **Secret / credential guard**: before uploading, if a secret-looking file is detected (`.env`, `*.pem`, `id_rsa`, `.npmrc`, files containing credential/secret, etc.), the dialog lists them in red and **gates the Confirm button** behind an explicit acknowledgement; the backend enforces this too (calling the API directly, bypassing the UI, is still blocked). Templates like `.env.example` don't count.
+- **Online search & install**: the top search box queries your local sources plus two online marketplaces — [skills.sh](https://skills.sh) and [skillsmp](https://skillsmp.com) — at once. Online cards are badged by origin (skills.sh ↓ downloads / skillsmp ★ stars); installing routes through `npx skills add` into the canonical `~/.agents/skills` (the **npx skills** source), so update / disable behave like any other npx skill. A gear ⚙ filters by source / sort / count; the two sources are queried in parallel and one failing never blocks the other.
 - **Adopt / back up local skills**: move a hand-written, unmanaged skill from a sync directory into the managed store and symlink it in place, making it a cross-harness reusable source. Optionally scan plugin directories and adopt by **copy-import** (never touching the plugin originals).
 - **OS junk auto-ignored**: mirror sync writes `.DS_Store`, `._*`, `Thumbs.db`, editor swap files, `node_modules`, `__pycache__`, etc. into each mirror's `.git/info/exclude` (local ignore, never pushed upstream), so they're never mistaken for changes.
+- **Auto-sync local changes**: you may add / remove / edit local skill files outside the tool; while the app is open it silently probes a disk fingerprint **every 15s** and repaints only on a real change (idle ticks are invisible — no flicker / scroll jump), pausing while a dialog is open or the tab is hidden and probing immediately on tab / window focus. A top-right **↻ Sync local** button forces a rescan on demand.
 - **Import / export**: export / import the repo list to rebuild on a new machine (the manifest is not exported, to avoid deleting another machine's links).
 
 ## Git repos & authentication
@@ -69,9 +71,9 @@ Repo URLs support `https://…`, `ssh://…`, and scp-style `git@host:org/repo.g
 ## Build & distribute
 
 ```sh
-make build          # host web binary ./skillmanage
+make build          # host web binary ./skillmanager
 make package        # web zips under dist/ for darwin-arm64 / darwin-amd64 / windows-amd64 / linux-amd64
-make desktop-dmg    # macOS desktop app (universal) → dist/SkillManage-vX.Y.Z.dmg
+make desktop-dmg    # macOS desktop app (universal) → dist/SkillManager-vX.Y.Z.dmg
 make desktop-win    # Windows desktop app (cross-compiled, with icon) → dist/pkg/…windows-desktop-…zip
 make winres         # regenerate the Windows resource (icon + version info); run after a version bump
 make test           # go test ./...

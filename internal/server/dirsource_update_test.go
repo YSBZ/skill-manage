@@ -21,12 +21,12 @@ type fakeRunner struct {
 
 	// per-op overrides for SkillsFind / SkillsAdd (fall back to stdout/err when
 	// empty), plus capture of the last args so handler tests can assert them.
-	findStdout, findStderr string
-	findErr                error
-	lastFindQuery          string
-	addStdout, addStderr   string
-	addErr                 error
-	lastAddPkg             string
+	findStdout, findStderr     string
+	findErr                    error
+	lastFindQuery              string
+	addStdout, addStderr       string
+	addErr                     error
+	lastAddPkg                 string
 	removeStdout, removeStderr string
 	removeErr                  error
 	lastRemoveName             string
@@ -69,6 +69,23 @@ func (f *fakeRunner) SkillsAdd(ctx context.Context, npxPath, pkg string) (string
 	f.lastAddPkg = pkg
 	if f.addStdout != "" || f.addStderr != "" || f.addErr != nil {
 		return f.addStdout, f.addStderr, f.addErr
+	}
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) SkillsAddURL(ctx context.Context, npxPath, repoURL, skill string) (string, string, error) {
+	f.calls++
+	f.lastAddPkg = repoURL + " --skill " + skill
+	if f.addStdout != "" || f.addStderr != "" || f.addErr != nil {
+		return f.addStdout, f.addStderr, f.addErr
+	}
+	return f.stdout, f.stderr, f.err
+}
+
+func (f *fakeRunner) SkillsMpFind(ctx context.Context, url string) (string, string, error) {
+	f.calls++
+	if f.findStdout != "" || f.findErr != nil {
+		return f.findStdout, f.findStderr, f.findErr
 	}
 	return f.stdout, f.stderr, f.err
 }

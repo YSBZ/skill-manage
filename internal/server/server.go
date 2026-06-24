@@ -196,7 +196,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		// Detached from any single request; still cancels on daemon shutdown.
 		s.SyncAll(ctx, false)
 		if _, err := s.UpdateSkillsShAll(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "skillmanage: scheduled npx skills update failed:", err)
+			fmt.Fprintln(os.Stderr, "skillmanager: scheduled npx skills update failed:", err)
 		}
 	}
 }

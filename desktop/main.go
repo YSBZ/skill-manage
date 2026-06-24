@@ -112,7 +112,7 @@ func main() {
 		}
 		if lk, err = daemon.TakeOver(dir, lockPath); err != nil {
 			log.Printf("desktop: 接管失败：另一个实例 (pid=%d, kind=%q) 仍占用锁且无法停止 —— %v。"+
-				"请在任务管理器结束所有 skillmanage.exe / SkillManage.exe 后重试。", holder, kind, err)
+				"请在任务管理器结束所有 skillmanager.exe / SkillManager.exe 后重试。", holder, kind, err)
 			fmt.Fprintln(os.Stderr, "desktop: 已有一个实例在运行且无法接管")
 			os.Exit(1)
 		}
