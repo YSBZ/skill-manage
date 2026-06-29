@@ -1,0 +1,19 @@
+# OPTIONAL private feed override. The public build already has a default update
+# feed baked in (this project's GitHub raw latest.json → public release assets,
+# no token needed). You only need this file to point the desktop self-update at a
+# DIFFERENT, private feed (e.g. a self-hosted GitLab) — typically for an internal
+# distribution. COPY to build/update.local (gitignored) on the build machine.
+#
+#   cp build/update.local.example build/update.local   # then fill in, build-machine only
+#
+# The Makefile `-include`s build/update.local AFTER the public default, so these
+# assignments win. Values are injected via -ldflags -X main.updateFeed /
+# -X main.updateToken; build/update.local itself is never committed.
+
+# URL of your feed's latest.json (a raw file or a release asset).
+UPDATE_FEED = https://<your-host>/<group>/skill-manager/-/raw/main/release/latest.json
+
+# A read-only token if your feed needs auth (private host); leave empty for a
+# public feed. Low-privilege and revocable; lives ONLY here on the build machine
+# and is baked into that build — never committed.
+UPDATE_TOKEN = <read-only-token-or-empty>

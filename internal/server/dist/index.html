@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The daemon injects the per-install API token here at serve time (KTD11). -->
+    <meta name="sm-token" content="__SM_TOKEN__" />
+    <title>SkillManager</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">◆</span> SkillManager<span id="brand-ver" class="brand-ver"></span>
+        <button id="help-btn" class="help-btn" title="使用指南 / 设计说明">?</button>
+      </div>
+      <div class="stats" id="stats"></div>
+      <button id="resync-btn" class="ghost small resync-btn" title="重新扫描本地文件（各源目录 + 已链接的 skill），让工具显示与磁盘实际一致。若你在工具外直接增删了本地文件，点这个刷新。">↻ 同步本地</button>
+      <button id="update-btn" class="small hidden" title="下载并安装新版本，完成后自动重启">↑ 更新</button>
+    </header>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <div class="layout">
+      <aside>
+        <ul id="repo-list"></ul>
+      </aside>
+
+      <main>
+        <div class="pinned">
+          <div class="targets-bar">
+            <div id="target-tabs" class="tabs"></div>
+            <button id="tab-add" class="tab-add" title="添加同步目录"><span class="plus">+</span></button>
+          </div>
+        </div>
+        <div class="list-pane">
+          <div class="main-head">
+            <input id="search" type="search" placeholder="搜索全部源的 skill（本地 + 在线 skills.sh / skillsmp），可直接启用到当前目录…" />
+            <button id="online-search-btn" class="small" title="搜索本地与在线 skill（skills.sh + skillsmp）">搜索</button>
+            <button id="online-filter-btn" class="ghost small" title="筛选在线结果（来源 / 排序）">⚙</button>
+          </div>
+          <div id="skills"></div>
+        </div>
+      </main>
+    </div>
+
+    <footer id="summary"></footer>
+
+    <div id="localsrc-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>添加本地源</h3>
+          <button id="localsrc-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="add-localsrc" style="display:block;padding:16px 18px">
+          <label class="tm-label">选择一个文件夹（它本身是 skill，或含 skill 子目录）</label>
+          <input id="localsrc-path" placeholder="如 ~/code/my-skills/" required style="width:100%" />
+          <div id="localsrc-browser" class="dir-browser"></div>
+          <label class="tm-label" style="margin-top:14px">别名（可选，默认用文件夹名）</label>
+          <input id="localsrc-alias" placeholder="如 我的技能库" style="width:100%" />
+          <p class="muted" style="font-size:12px;margin-top:8px">把该文件夹<b>登记为一个本地源</b>（侧栏单独成卡）：<b>不复制</b>、实时识别其中的 skill。启用 / 自动同步时，软链<b>直接指向原文件</b>（绝不改动原文件夹）。改了原文件夹即时生效。</p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="localsrc-modal-cancel" class="ghost">取消</button>
+            <button type="submit">添加</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="target-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>添加同步目录</h3>
+          <button id="target-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="add-target" style="display:block;padding:16px 18px">
+          <label class="tm-label">目录路径（可手输 / 粘贴，或在下方点选）</label>
+          <input id="target-path" placeholder="如 ~/.claude/skills/" required style="width:100%" />
+          <div id="target-browser" class="dir-browser"></div>
+          <label class="tm-label" style="margin-top:14px">别名（可选）</label>
+          <input id="target-alias" placeholder="如 我的CC技能" style="width:100%" />
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="target-modal-cancel" class="ghost">取消</button>
+            <button type="submit">添加</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="export-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>导出 git 源列表</h3>
+          <button id="export-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="do-export" style="display:block;padding:16px 18px">
+          <label class="tm-label">导出到哪个文件夹（可手输 / 粘贴，或在下方点选）</label>
+          <input id="export-path" placeholder="如 ~/Downloads/" required style="width:100%" />
+          <div id="export-browser" class="dir-browser"></div>
+          <p class="muted" style="font-size:12px;margin-top:8px">会在该文件夹生成 <code>skillmanage-repos.json</code>（含全部 git 源 URL / 分支），用于在另一台机器点「导入」重建来源。</p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="export-modal-cancel" class="ghost">取消</button>
+            <button type="submit">导出到此处</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="git-repo-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3>添加 git 仓</h3>
+          <button id="git-repo-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="add-repo" style="display:block;padding:16px 18px">
+          <label class="tm-label">git 仓地址</label>
+          <input id="repo-url" placeholder="https / ssh / git@…" required style="width:100%" />
+          <label class="tm-label" style="margin-top:14px">分支（可选）</label>
+          <input id="repo-branch" placeholder="留空用仓库默认分支" style="width:100%" />
+          <div id="repo-cred-section" class="hidden" style="margin-top:14px">
+            <p id="repo-cred-status" class="muted" style="font-size:12px;margin:0 0 8px"></p>
+            <div id="repo-cred-fields">
+              <label class="tm-label">用户名（可选，部分平台需要）</label>
+              <input id="repo-cred-user" placeholder="如 your-name" style="width:100%" autocomplete="off" />
+              <label class="tm-label" style="margin-top:12px">密码 / 访问令牌(PAT)</label>
+              <input id="repo-cred-token" type="password" placeholder="私有仓粘贴令牌；公开仓留空直接添加" style="width:100%" autocomplete="off" />
+            </div>
+          </div>
+          <p class="muted" style="font-size:12px;margin-top:8px">添加后会拉取为<b>只读镜像</b>并自动同步。HTTPS 私有仓在上面填令牌即可；SSH 仓用 SSH key（加入 ssh-agent）。凭据仅存本机、不随导出离开。</p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="git-repo-modal-cancel" class="ghost">取消</button>
+            <button type="submit">添加</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="health-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(640px,100%)">
+        <div class="modal-head">
+          <h3>健康度 — 撞名 / 遮蔽 / 嵌套 / 同步错误</h3>
+          <button id="health-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div id="health-body" style="padding:16px 18px;overflow-y:auto;max-height:72vh"></div>
+      </div>
+    </div>
+
+    <div id="conflict-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(640px,100%)">
+        <div class="modal-head">
+          <h3>冲突 — 跨源重复 / 重叠</h3>
+          <button id="conflict-modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div id="conflict-body" style="padding:16px 18px;overflow-y:auto;max-height:72vh"></div>
+      </div>
+    </div>
+
+    <div id="confirm-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(440px,100%)">
+        <div class="modal-head"><h3>确认</h3></div>
+        <div class="help-body"><p id="confirm-msg" style="white-space:pre-wrap;color:var(--text)"></p></div>
+        <div class="row" style="justify-content:flex-end;gap:8px;padding:0 18px 18px">
+          <button id="confirm-cancel" class="ghost">取消</button>
+          <button id="confirm-ok">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="contribute-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(480px,100%)">
+        <div class="modal-head">
+          <h3 id="contribute-title">备份 skill</h3>
+          <button id="contribute-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px">
+          <p class="muted" id="contribute-intro" style="margin:0 0 14px;font-size:12.5px">把该 skill 放到目标位置，并把<b>名称 + 简述</b>记进清单（备份/移动都会同步清单里的位置，之后据此定位）。<code>local</code> = 移入本地受管库；<b>某个本地源</b> = 移入你登记的那个文件夹（与 local 同理，无推送）；某个 git 源仓 = 转移进去（只暂存，待该仓「同步仓库」时再推）。</p>
+          <label class="tm-label">目标位置</label>
+          <select id="contribute-repo" style="width:100%"></select>
+          <label class="tm-label" style="margin-top:12px">简述（记入清单，默认取已有清单 / SKILL.md description，可改）</label>
+          <textarea id="contribute-desc" rows="6" placeholder="一句话描述这个 skill；可多行" style="width:100%;resize:vertical"></textarea>
+          <p class="muted hidden" id="contribute-norepo" style="margin:10px 0 0;font-size:12.5px;color:var(--danger,#c0392b)"></p>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="contribute-cancel" class="ghost">取消</button>
+            <button type="button" id="contribute-ok">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="upload-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(560px,100%)">
+        <div class="modal-head">
+          <h3 id="upload-title">更新并上传</h3>
+          <button id="upload-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px">
+          <p class="muted" style="margin:0 0 12px;font-size:12.5px">该仓有以下本地改动（新增/修改/删除）。<b>确认</b> = 把这些改动<b>全部</b> commit + push，再拉取上游更新；<b>仅更新</b> = 只拉取上游更新并<b>保留</b>本地改动（不上传）——非冲突的改动会保留下来，下次还能再「同步仓库」上传；若与上游<b>冲突</b>则更新失败，请用 git 手动解决。（确认不支持只上传其中一部分——镜像无法只让部分改动与上游分叉。）</p>
+          <label class="tm-label">提交信息（可编辑）</label>
+          <textarea id="upload-msg" rows="6" placeholder="提交信息" style="width:100%;resize:vertical"></textarea>
+          <label class="tm-label" style="margin-top:12px">将上传的改动（全部）</label>
+          <div id="upload-list" class="upload-list"></div>
+          <div id="upload-secrets" class="upload-secrets hidden"></div>
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="upload-cancel" class="ghost">取消</button>
+            <button type="button" id="upload-update-only" class="ghost" title="不上传，只拉取上游更新并保留本地改动；与上游冲突时提示失败，请用 git 手动解决">仅更新</button>
+            <button type="button" id="upload-ok" title="把以上全部改动提交并推送，再拉取上游更新">确认</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="repo-skills-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(640px,100%)">
+        <div class="modal-head">
+          <h3 id="repo-skills-title"></h3>
+          <button id="repo-skills-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div id="repo-skills-body" class="repo-skills-body"></div>
+      </div>
+    </div>
+
+    <div id="info-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(520px,100%)">
+        <div class="modal-head">
+          <h3 id="info-title"></h3>
+          <button id="info-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div class="help-body" id="info-body"></div>
+      </div>
+    </div>
+
+    <div id="cred-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(460px,100%)">
+        <div class="modal-head">
+          <h3>填写 HTTPS 凭据</h3>
+          <button id="cred-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <form id="cred-form" style="display:block;padding:16px 18px">
+          <p class="muted" style="margin:0 0 14px;font-size:12.5px">为 <b id="cred-host"></b> 配置 HTTPS 凭据（账号密码或访问令牌均可），仅存本机、不随导出离开。</p>
+          <label class="tm-label">用户名（可选，部分平台需要）</label>
+          <input id="cred-user" placeholder="如 your-name" style="width:100%" />
+          <label class="tm-label" style="margin-top:12px">密码 / 访问令牌(PAT)</label>
+          <input id="cred-token" type="password" placeholder="粘贴账号密码或访问令牌" style="width:100%" autocomplete="off" />
+          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" id="cred-cancel" class="ghost">取消</button>
+            <button type="button" id="cred-skip" class="ghost hidden">公开仓，跳过</button>
+            <button type="submit">保存并继续</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="help-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>SkillManager 使用指南</h3>
+          <button id="help-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div class="help-body">
+          <p class="lead">SkillManager 是 skill 的<b>统一控制面</b>，不是又一个安装器。它把来自各种渠道的 skill（git 仓、本地手写、skills.sh 等）映射进各 harness 的 skill 目录，并在不破坏业内目录规则的前提下统一管理。你提供<b>来源</b>与<b>目标目录</b>，其余交给工具：选择性 / 整仓同步、备份手写 skill、识别并代调别家工具更新。</p>
+
+          <div class="changelog">
+            <div class="changelog-head">
+              <span class="cl-ver">v6.0.3</span>
+              <span class="cl-date">修复 Windows 自更新不生效（改用 cmd 批处理 + 脱离作业对象）· 更新于 2026-06-28</span>
+            </div>
+            <div class="changelog-scroll">
+            <div class="cl-rel">
+              <div class="cl-rel-head">v6.0.3 · 修复 Windows 一键更新「提示重启但没替换、没拉起」（2026-06-28）</div>
+              <ul>
+                <li><b>根因</b>：Windows 上负责替换的更新器在 App 退出后启动,但要么被「作业对象（Job Object）」随 App 连带终止,要么被组策略 / AppLocker / 受限语言模式禁止运行未签名 PowerShell 脚本 —— 表现为「提示更新成功、正在重启」,实际既没替换 exe 也没重启(下载包和脚本都在却没执行)。</li>
+                <li><b>改用 cmd 批处理</b>：更新器由 PowerShell 改为 <code>.bat</code>,不受 PowerShell 执行策略限制;解压用 Win10 自带的 <code>tar.exe</code>,完全不依赖 PowerShell。</li>
+                <li><b>脱离作业对象</b>：用 <code>CREATE_BREAKAWAY_FROM_JOB</code> 启动以脱离 App 进程组独立存活;若禁止脱离则自动回退。</li>
+                <li><b>等待加上限 + 复制重试 + 回滚</b>：等待主进程退出设 60s 上限(防 PID 复用死等);替换失败自动重试并在失败时回滚,任何情况都会重新拉起。</li>
+                <li><b>必有日志</b>：Go 侧在启动更新器前先写一行,加上批处理全程记录,日志落在 <code>%USERPROFILE%\.skillmanage\update.log</code>,出问题可一眼定位。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v6.0.1 · 自更新器加固：安全替换 + 失败回滚 + 更新日志（2026-06-25）</div>
+              <ul>
+                <li><b>消除「先删后移」空窗（macOS）</b>：旧逻辑先 <code>rm</code> 旧 App 再 <code>mv</code> 新的,万一移动失败就两头空。改为「旧 App 先改名备份 → 移入新包 → 成功才删备份,失败自动回滚」,任何环节出错都不会让用户没有 App。</li>
+                <li><b>失败回滚 + 兜底重启（Windows）</b>：替换 exe 前先备份,<code>Copy-Item</code> 包在 try/catch 里,失败自动用备份回滚并重新拉起——文件被占用 / 权限不足(如放在 Program Files)也不会静默关闭后起不来。</li>
+                <li><b>更新日志</b>：替换过程全程写入 <code>~/.skillmanage/update.log</code>,更新器是分离 + 无窗口的,出问题可据此排查。</li>
+                <li><b>打包改用 ditto（macOS）</b>：桌面 zip 改用 <code>ditto</code> 生成,完整保留 .app 的代码签名与扩展属性。另提供 <b>dmg</b> 分发方式(拖入「应用程序」,避免 App Translocation)。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v6.0.0 · 第六期：桌面端在线更新 —— 检查新版本 + 一键自更新（2026-06-25）</div>
+              <ul>
+                <li><b>自动检查更新</b>：桌面端启动 / 窗口聚焦时静默向更新源查询是否有新版本（最多每小时一次），有则在顶部显示「↑ 更新到 vX.Y.Z」按钮。无法访问更新源时静默跳过，不报错。</li>
+                <li><b>一键自更新</b>：点按钮 → 下载新版安装包 → <b>校验 sha256</b>（不符立即中止，绝不用未校验的包替换）→ 后台脚本等本进程退出后替换 App 并自动重启。macOS 替换 <code>.app</code> 包、Windows 替换 <code>.exe</code>。自下载的包无 Gatekeeper 隔离标记，重启无需手动放行。</li>
+                <li><b>仅桌面端</b>：网页单文件版面向自行编译的开发者，不做自更新；其更新源未配置时整套机制静默禁用。</li>
+                <li><b>修复「导出 skill」失效</b>：skill 详情的「导出 skill」与 git 仓列表「导出」共用了同名前端函数（后者覆盖前者），导致点「导出 skill」实际走了仓列表导出、报「导出目录不存在或不是文件夹」。已拆分函数名，导出 skill 恢复正常。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.10 · 修复「&lt;真名&gt;/skill/SKILL.md」布局被全部识别成 skill（2026-06-25）</div>
+              <ul>
+                <li><b>命名修复</b>：当 <code>SKILL.md</code> 装在一个通用包装目录（字面 <code>skill</code> / <code>skills</code>）里时，改用<b>上一层目录名</b>作 skill 名。此前 <code>&lt;真名&gt;/skill/SKILL.md</code> 布局（如 nebulae 的 <code>rtl</code>/<code>faw</code>/<code>expect-biz</code>）会全部显示成 <code>skill</code>，且启用到同一目录会软链撞名。</li>
+                <li>不影响 <code>.well-known/skills/&lt;名&gt;/</code>、<code>nova-*</code> 等目录名即真名的 skill。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.9 · skillsmp 403 缓解：浏览器 UA + 自动重试（2026-06-25）</div>
+              <ul>
+                <li><b>降低 skillsmp 403</b>：搜索请求改带浏览器 User-Agent（curl 默认 <code>curl/x</code> 是 Cloudflare 风控的机器人信号）；遇 403 自动重试一次（间隔 700ms，搜索幂等、额度充足）。</li>
+                <li><b>文案订正</b>：明确 403 是 <b>Cloudflare 边缘风控</b>（请求到达 skillsmp、校验 key 之前就被拦），<b>与 key / 额度无关</b>——key 只把日额度 50→500，挡不住边缘风控。错误提示改为「被 Cloudflare 边缘风控拦截（403，与 key/额度无关，已自动重试），稍后再试」。</li>
+                <li>坦白局限：CF 还按 TLS 握手指纹识别（curl 无法伪装），403 能显著减少但无法 100% 根除。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.8 · skill 详情新增「导出 zip」（2026-06-24）</div>
+              <ul>
+                <li><b>导出 skill 为 zip</b>：skill 详情弹窗操作区右侧新增「导出 skill」（与停用 / 备份等动作并排），把该 skill 打包成 zip 存到 <code>~/.skillmanage/exports/</code>（文件名 <code>&lt;名称&gt;-v&lt;版本&gt;-&lt;时间戳&gt;.zip</code>，解压得到单个顶层 skill 文件夹）。打包用 Go 原生 <code>archive/zip</code>，<b>跨平台一致</b>（macOS / Windows / Linux 产物相同，不依赖系统 zip 工具）。</li>
+                <li><b>软链也支持</b>：项目目录里的 skill 多是软链（Windows 为目录联接 / 拷贝）——导出时会<b>解析到真身目录</b>再打包，所以左侧「源」详情与右侧「现状」详情都能导出。导出是<b>只读</b>操作，不改动真身。</li>
+                <li>插件 skill 由 harness 管理，详情里不提供导出。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.7 · 注册本地源成为「移动」体系的双向一等公民（2026-06-24）</div>
+              <ul>
+                <li><b>本地源可作移动目标</b>：把手写 / <code>local</code> 受管库 / git 仓里的 skill <b>移入</b>你登记的本地文件夹——移动下拉框新增各本地源选项，与移入 <code>local</code> 完全一致（转移真身 + 原位软链改指该文件夹）。</li>
+                <li><b>本地源可作移动源</b>：本地源弹窗里每个 skill 现有「移动」按钮，可把它<b>移出</b>到 <code>local</code> / 另一个本地源 / git 仓。</li>
+                <li><b>显式移动可写入本地源</b>：移入会在你的文件夹里新建一个 skill 目录、移出会删除对应子目录——这是<b>显式操作</b>才发生；<b>自动同步 / 对账仍只读</b>，绝不改动其中既有内容。护栏：若某本地源本身就是「单个 skill 文件夹」，禁止把它当移出源（会清空该文件夹），提示改用侧栏「移除」。</li>
+                <li><b>本地源路径存绝对路径</b>：新登记的本地源在 <code>config.yaml</code> 里保存为<b>绝对路径</b>（不再保留 <code>~</code>/相对，避免随工作目录漂移）；已有旧条目运行时照常解析，无需迁移。</li>
+                <li><b>Windows 跨盘</b>：本地源与目标目录跨盘时，原地留下的是<b>可刷新的拷贝</b>（而非目录联接），由链接层自动处理。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.6 · skillsmp API key（每用户自备）+ npx 缺失安装建议（2026-06-23）</div>
+              <ul>
+                <li><b>skillsmp API key（按需配置，不打扰）</b>：平时<b>匿名直接用</b>（50 次/天）；当被 Cloudflare 风控返回 403 时，错误提示里出现可点击的《配置 API key》入口，点开填入<b>你自己</b>的免费 key 即可——认证额度 <b>500 次/天</b>、显著减少 403。key <b>仅存本机</b>（<code>~/.skillmanage/skillsmp.key</code>，0600）、绝不内置进工具、不随导出、不入库、不记日志；经 curl stdin-config 传递（不进 argv/ps）。获取：登录 <a href="https://skillsmp.com/developers" class="online-link">skillsmp.com/developers</a> 生成。</li>
+                <li><b>当日配额显示</b>：配置 key 后，在线区标题显示 skillsmp <b>今日剩余 / 上限</b>（取自 <code>X-RateLimit-Daily-*</code> 响应头，每次搜索后刷新，剩余≤50 标红）。</li>
+                <li><b>纠正认知</b>：skillsmp 的 <b>403 是 Cloudflare 边缘风控</b>（首个请求就可能触发，与次数无关）——不是应用层 50/天限额（那返回 429）。一次搜索只发 1 次请求,打字不触发、自动同步不碰 skillsmp。</li>
+                <li><b>npx 缺失给安装建议</b>：未装 npx 的报错按当前系统给命令——macOS <code>brew install node</code> / Windows <code>winget install OpenJS.NodeJS</code> / Linux·WSL <code>sudo apt install nodejs npm</code>（或 nodejs.org）。</li>
+                <li><b>指南订正</b>：本指南「同步仓库」③「仅更新」原误写为 <code>reset --hard</code> 丢弃本地——实为<b>保留</b>本地（暂存 → 合并 → 还原，冲突才失败），已与代码 / README 对齐（全量更新的「还原并更新」才是丢弃，二者不同）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.5 · 修正桌面窗口标题与 skillsmp 报错文案（2026-06-23）</div>
+              <ul>
+                <li><b>桌面窗口标题</b>：macOS 原生标题栏从遗留的「SkillManage」修正为「SkillManager」（更名时漏改的 Wails 窗口标题）。</li>
+                <li><b>skillsmp 报错去重</b>：之前 403 等失败提示出现三重「skillsmp 查询失败：」前缀——后端不再自带前缀，由前端来源提示统一加一次。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.4 · 在线结果数量限制改为「每源各前 N」（2026-06-23）</div>
+              <ul>
+                <li><b>每源保底露出</b>：在线筛选的「数量限制」由「两源合计前 N」改为<b>每个来源各取前 N</b>——避免下载数（skills.sh）与星数（skillsmp）量纲不同导致一源占满前 N、另一源被挤掉。沿用已排好的全局热度顺序，仅按来源各自封顶。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.3 · 目录现状分组改为各自独立展开（2026-06-23）</div>
+              <ul>
+                <li><b>取消手风琴</b>：目录现状视图的来源分组（git 仓 / npx skills / 本地源 / 插件等）不再「同时只展开一个」——<b>默认全部展开</b>，点组标题可单独收起 / 展开该组，互不影响。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.2 · 自动同步本地改动（2026-06-23）</div>
+              <ul>
+                <li><b>自动同步</b>：每 15 秒在后台静默探测磁盘指纹，发现本地 skill 文件被工具外增删 / 改动时自动刷新——你不必再手点「同步本地」。<b>仅在确有变化时整体刷新一次</b>，无变化绝不重绘，空闲时完全无感（不闪烁、不跳滚动条）。</li>
+                <li><b>不打断操作</b>：打开任何弹窗 / 输入时、以及标签页不可见时都暂停探测；切回标签页或窗口重新获得焦点时立即探测一次，秒级反映改动。手动「↻ 同步本地」按钮保留。</li>
+                <li>实测各扫描接口均为本地 stat 级（≤20ms、限深、跳过 node_modules），15s 轮询开销可忽略。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.1 · 新增「同步本地」按钮（2026-06-23）</div>
+              <ul>
+                <li><b>同步本地</b>：右上角新增「↻ 同步本地」按钮，重新扫描磁盘实际状态（各源目录 + 已链接 skill）并刷新显示。用于你在工具外直接增删本地文件后，让显示与磁盘一致（后端各接口本就实时扫描，此按钮触发前端整体重拉）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.1.0 · 接入 skillsmp 市场 + 更名 SkillManager（2026-06-23）</div>
+              <ul>
+                <li><b>更名 SkillManager</b>：产品名从 SkillManage 更正为 SkillManager——UI / 应用显示名 / README / 安装包名，以及二进制 <code>skillmanage</code>→<code>skillmanager</code> 全部更新；数据目录 <code>~/.skillmanage</code> 与 Go 模块路径保持不变（现有配置零影响）。</li>
+                <li><b>新增 skillsmp 在线源</b>：在线搜索并行查 skills.sh 与 <a href="https://skillsmp.com" class="online-link">skillsmp.com</a>，结果按来源打徽章（skills.sh ↓下载数 / skillsmp ★星数）；任一源失败只提示一条、不遮蔽另一源结果。</li>
+                <li><b>统一走 npx 安装</b>：skillsmp 命中复用 <code>npx skills add &lt;github 仓根&gt; --skill &lt;名&gt;</code>，装进同一 canonical <code>~/.agents/skills</code>、归入 npx skills 组——零额外管理层。</li>
+                <li><b>筛选弹窗</b>：齿轮 ⚙ 分三组横排单选——来源（全部 / skills.sh / skillsmp，可扩展）+ 排序（默认 / 按下载·星 升降序）+ 数量限制（全部 / 前 N 条）。</li>
+                <li><b>技术</b>：skillsmp 经 curl 拉取（绕过 Cloudflare 对 Go net/http TLS 指纹返回的 403）；解析适配其 <code>{success, data:{skills:[…]}}</code> 封套。匿名 API 约 50 次/天限流。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.24 · 源身份名称统一为「npx skills」（2026-06-23）</div>
+              <ul>
+                <li><b>源名称统一</b>：左侧源卡名、弹窗标题及配套提示从「skills.sh」改为「npx skills」，与右侧分组一致——该源代表整个 npx canonical（<code>~/.agents/skills</code>），不专指 skills.sh 注册站。指 skills.sh 注册站本身的地方（在线搜索区、↗ 外链、共存说明）保留原名。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.23 · npx skills 组说明文案对齐（2026-06-23）</div>
+              <ul>
+                <li><b>组说明匹配标题</b>：npx skills 分组的说明从「由 skills.sh 自管…」改为「由 npx skills 自管…」，与分组标题一致。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.22 · 「仅更新」语义修正：保留本地改动，不再丢弃（2026-06-23）</div>
+              <ul>
+                <li><b>仅更新不再丢弃本地改动</b>：旧实现是 <code>reset --hard + clean -fd</code>（删掉本地新增、还原删除/修改），与「仅更新」语义不符且危险。改为:暂存本地改动 → 合并上游（fast-forward / merge）→ 还原本地改动。非冲突的新增/删除/修改全部<b>保留</b>，下次还能再「同步仓库」上传。</li>
+                <li><b>冲突即报错、交给 git</b>：若本地改动与上游冲突，更新失败并提示「请到镜像仓用 git 手动解决」——绝不自动丢弃。</li>
+                <li>全量更新里的「还原本地改动并更新」仍是显式 <code>reset --hard</code>（已明确告知用户），未变。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.21 · 列表分组名统一为「npx skills」（2026-06-23）</div>
+              <ul>
+                <li><b>分组名对齐</b>：右侧列表里 skills.sh skill 的分组标题改为「npx skills」，与左侧源区分区名一致——体现这些 skill 是通过 npx 安装管理的（registry 仍是 skills.sh，组头说明保留）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.20 · 弹窗动作顺序统一 + UI 文案一致性（2026-06-23）</div>
+              <ul>
+                <li><b>「自动同步中」位置统一</b>：skills.sh 仓弹窗的卡片控件顺序对齐 git 仓弹窗——动作（更新/卸载）在左、启用状态「自动同步中」恒在最右。</li>
+                <li><b>UI 文案一致性</b>：把「目录 tab」统一为「目录标签页」，去除中英混排。（卡片里的英文描述是 skills.sh 上游 skill 的原文内容，非本工具 UI，按原样展示不翻译。）</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.19 · npx(skills.sh) 详情卡支持单个更新（2026-06-23）</div>
+              <ul>
+                <li><b>单个更新按钮</b>：skills.sh 仓详情弹窗的每张 skill 卡新增「更新」按钮（<code>npx skills update &lt;name&gt;</code>，委托更新、不接管），更新后自动刷新列表版本号。原「全量更新」保留。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.18 · 密钥拦截下沉到后端（不止前端闸门）（2026-06-22）</div>
+              <ul>
+                <li><b>服务端硬拦截</b>：<code>/api/upload</code> 检出疑似密钥且未带 <code>confirmSecrets</code> 标志直接 409 拒绝并回传可疑文件；前端勾选确认后才带标志放行（绕过 UI 直接打 API 也拦得住）。</li>
+                <li><b>快捷上传同样堵</b>：卡片「快捷上传」无确认步骤，若该 skill 含密钥文件直接拦截，引导去「同步仓库」弹窗确认后再推。</li>
+                <li>新增单测 <code>TestLooksSecret</code> / <code>TestSecretsUnder</code> 锁定检测与归属边界。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.17 · 扩大垃圾忽略 + 同步弹窗密钥/凭据告警拦截（2026-06-22）</div>
+              <ul>
+                <li><b>扩大静默忽略</b>：除 .DS_Store 外，镜像还忽略编辑器/IDE/临时垃圾（vim/emacs swap、<code>.idea/</code> <code>.vscode/</code>、各平台临时文件）与依赖/构建产物（<code>node_modules/</code> <code>__pycache__/</code> <code>*.pyc</code> <code>.venv/</code> <code>*.log</code >），均写入各镜像 <code>.git/info/exclude</code>（本地、不推上游）。</li>
+                <li><b>密钥/凭据告警拦截</b>：检测到改动里有疑似密钥/凭据文件（<code>.env</code>、<code>*.pem</code> <code>*.key</code>、<code>id_rsa</code>、<code>.npmrc</code>、含 credential/secret 的文件等），「同步仓库」弹窗会<b>标红列出</b>并<b>闸住「确认」</b>——必须勾选「我已确认仍要推送」才能 push（<code>.env.example</code> 等模板不算）。不静默吞文件，防密钥误入共享仓永久历史。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.16 · 镜像忽略 OS 垃圾文件，杜绝 .DS_Store 被推上游（2026-06-22）</div>
+              <ul>
+                <li><b>不再把 .DS_Store 当改动上传</b>：镜像同步把 macOS/编辑器垃圾（<code>.DS_Store</code>、<code>._*</code>、<code>Thumbs.db</code> 等）写入各镜像的 <code>.git/info/exclude</code>（本地忽略，不动也不推上游 .gitignore）。这样 git status 不再报它们为「新增未推送」，commit/push 也不会带上——「同步仓库」弹窗只剩真实改动。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.15 · 卡片超框治理 + 插件组标注「全局」 + Windows 包加图标（2026-06-22）</div>
+              <ul>
+                <li><b>严禁 skill 卡超框</b>：在线卡名称改回省略号截断——名字吃满卡内可用宽度后截断，安装数、来源 badge、「安装」按钮恒在框内不再被长名顶出卡框。</li>
+                <li><b>skills.sh 卡去掉来源徽章</b>：去掉卡上那条冗余的 <code>.well-known/…/SKILL.md</code> 粉色徽章（它把名字挤成一两个字），整行宽度让给名称；来源（台账 + URL）仍在详情卡的「台账来源」行里。</li>
+                <li><b>插件组标注「全局」</b>：插件组头加说明「全局插件（harness 级，与当前目录无关）」——插件统一装在 <code>~/.claude/plugins</code>，对任何目录都一样，给新目录加目录后看到一堆插件 skill 属正常，不是识别到该目录或父目录带的插件。</li>
+                <li><b>Windows 包加图标</b>：Windows exe 现在嵌入与 macOS 同款图标（icns→png→syso，go-winres 生成），并带版本信息与 GUI manifest。<code>make winres</code> 可随版本号重生成。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.14 · 五期收口：右侧只读模型一致化 + 指南补 git 同步流程 + 死代码/重复清理 + Windows junction 读回（2026-06-22）</div>
+              <ul>
+                <li><b>右侧列表只读、卡片只放「停用」</b>：固化交互模型——本体操作（移动/删除/整仓同步/启用）只在左侧对应「源」弹窗里做；右侧每张卡按来源给出明确的卡上快捷操作：本工具启用的软链→「停用」、skills.sh 裸投影→「停用」、未知/杂散软链→「删除」（直接在卡上）。</li>
+                <li><b>整仓自动同步下「停用」置灰</b>：follow 来源的 skill 不能单独停用（会被 <code>@…/*</code> 立刻重投影），按钮显示但置灰，点击提示去源弹窗关「自动同步 skill」。</li>
+                <li><b>插件卡去掉「操作」</b>：插件只读、无本体动作，卡片不再有操作按钮（更新仍在插件组第一行委托；点卡看详情）。</li>
+                <li><b>删除/移动保留滚动位置</b>：仓弹窗删除/移动后不再弹回列表顶部。</li>
+                <li><b>细节修正</b>：仓弹窗「同步仓库 / 取消同步」按钮顺序对调；详情「创建人」行与标题/简介对齐；「自动同步 skill」按钮不再断行。</li>
+                <li><b>指南补充</b>：新增「同步仓库（git 同步）」一节，列出三种走法的有序 git 命令流程（<code>symbolic-ref / status / add / commit / push / fetch / reset --hard / clean</code>）。</li>
+                <li><b>工程收口</b>：移除死代码（autostart 包、若干孤立 JS/HTML/CSS）、抽取重复样板（<code>writeErr</code>/<code>originGuard</code>/<code>findRepoBranch</code>）、修复 Windows 目录联接（junction）目标读回，避免 reconcile 抖动与签名重认领失效。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.13 · 修复同步报错一闪而过 + 自动清理失效条目 + 全量上传（2026-06-22）</div>
+              <ul>
+                <li><b>修复「报错一闪而过」</b>：刷新（load）结尾会无条件清掉刚弹出的错误条，导致同步/上传失败的红字一闪即灭、根本看不清。现在常驻错误不会被 load 清除，需点击才关。</li>
+                <li><b>失效条目自动清理（自愈）</b>：之前移动/删除遗留的「某 skill 已不在仓里」的死启用记录，过去会让整次同步硬报错（<code>skill not found in repo</code>）。现在识别为失效条目、<b>自动从配置里清掉</b>，不再报错。</li>
+                <li><b>同步失败如实上报</b>：更新接口失败时（HTTP 200 里带 <code>state:failed</code>）不再误报「已同步」，改为常驻红字显示真实原因。</li>
+                <li><b>同步仓库改为全量上传</b>：去掉勾选——镜像无法只让部分改动与上游分叉。确认 = 全部 commit+push 再拉取；仅更新 = 拉取并丢弃本地改动。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.12 · 统一「备份」概念 + git skill 显示创建人（2026-06-21）</div>
+              <ul>
+                <li><b>统一为「备份」</b>：不再区分「移动 / 备份」。所有相关按钮、弹窗都叫「备份」；备份到任意目标（local 或 git 仓）都会把<b>名称 + 简述</b>记入清单。简述字段对所有目标都显示（含 local）——之前移到 local 不记简述，导致再往 git 备份时缺信息。</li>
+                <li><b>「同步仓库」「自动同步 skill」</b>：原「更新」改名「同步仓库」（拉取上游 + 可选上传）；follow 开关改名「自动同步 skill」，与「同步仓库」区分开。</li>
+                <li><b>git skill 显示创建人</b>：git 源仓的 skill 详情里显示「创建人（日期）· 最近修改（日期）」，取自 git 提交历史（其它来源无 git 历史不显示）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.11 · 统一暂存模型：移动/删除只暂存，「更新」合并上传（2026-06-21）</div>
+              <ul>
+                <li><b>移动/贡献不再自动推送</b>：移动、贡献、删除都只在本地<b>暂存</b>（显示为新增/删除未推送），推送统一交给「更新」。git→git 会变成两仓各自有待上传改动。</li>
+                <li><b>「更新」合并「上传」</b>：git 仓卡片（及仓弹窗顶部）的「更新」——无本地改动时直接拉取上游；有改动则弹窗列出可上传的 skill（默认全选）+ 可编辑提交信息，底部 <b>确认</b>（先 commit+push 勾选项，再拉取上游）/ <b>仅更新</b>（直接拉取上游，丢弃未上传的本地改动）。</li>
+                <li><b>移动后列表刷新</b>：移动完成后源弹窗即时重渲，不再残留旧卡片导致「该 skill 不在仓内」。</li>
+                <li>skills.sh 弹窗的「同步中」按钮同样改为「取消同步」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.10 · 按仓库布局放置 skill + git 仓内删除 + 删除算改动 + 弹窗层级/标签修正（2026-06-21）</div>
+              <ul>
+                <li><b>按仓库布局放置（修复）</b>：贡献/移动进 git 仓时，skill 现在会放到该仓实际存放 skill 的目录（如 <code>skills/</code>），不再一律塞到仓根。依据是扫描该仓现有 skill 的所在目录（取多数）；空仓或扁平仓则放仓根。drift 识别、上传、删除的路径也都跟着按真实嵌套定位。</li>
+                <li><b>git 仓内删除 skill</b>：仓弹窗每个 skill 多了「删除」——从工作区移除并拆软链，记为一次<b>本地删除</b>；需在「上传」里推送后远端才真正移除（不直接 push）。</li>
+                <li><b>删除也算改动</b>：新增「删除未推送」drift 类型，删除的 skill 会出现在「上传」清单里，推送即从远端移除。</li>
+                <li><b>弹窗层级</b>：从仓弹窗里打开的「移动」「上传」弹窗现在盖在仓弹窗之上（之前被仓弹窗挡住）。</li>
+                <li><b>自动同步按钮</b>：开启后文案由「同步中」改为「取消同步」（是动作不是状态）。</li>
+                <li>更新后自动弹出使用指南改为按版本记忆（换版再弹一次）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.9 · 上传改到 git 仓弹窗（多选 + 可编辑提交信息），git skill 卡片只读（2026-06-21）</div>
+              <ul>
+                <li><b>上传入口移到左侧「git 仓」弹窗</b>：点开某个 git 仓 → 顶部「上传」→ 列出该仓有本地改动的 skill（勾选，默认全选）+ 可编辑的提交信息（默认按勾选项的名称+描述自动生成）→ 一次 commit + push。推送会发送该分支上所有待推送的提交。</li>
+                <li><b>列表里 git 仓 skill 改为只读</b>：它们是软链，不承载 commit/push/移动 等仓级操作。详情弹窗只保留「停用」（拆当前目录软链，与 git 无关）。上传、逐条移动都在左侧仓弹窗里做。</li>
+                <li><b>逐条移动进仓弹窗</b>：git 仓弹窗里每个 skill 都有「移动」（移到另一个 git 仓或移回本地，同步全局清单）。</li>
+                <li>修正了 v5.0.8 把「快捷上传」放到 git skill 卡片上的做法。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.8 · 统一「移动」+ 全局清单 + 卡片操作收进弹窗（2026-06-21）</div>
+              <ul>
+                <li><b>统一「移动」</b>：备份/贡献/移动收敛成一个目标下拉框——默认 <code>local</code>（移入本地受管库、不推送），其余为各 git 源仓（转移进去 + commit + push）。手写 skill、本地已备份 skill、git 仓内 skill 都用这一个流程。</li>
+                <li><b>git 仓互相移动 / 移回本地</b>：支持把 skill 从一个 git 仓移到另一个，或从 git 仓移回本地。采用「目标先行、源清理后置」：任一步 push 失败都不丢数据（最坏短时两端各有一份，可「快捷上传」重推收敛），绝不 <code>--force</code>。</li>
+                <li><b>全局清单</b>：<code>~/.skillmanage/contrib-manifest.yaml</code> 记录每个 skill 的名称、描述与当前位置，作为 commit 简述来源；每次移动自动同步。纯本地，不进 git 仓、不随导出。</li>
+                <li><b>卡片瘦身</b>：skill 卡片只保留名称、徽章和一个「操作」入口（原「详情」改名）；移动/备份/快捷上传/停用/删除/更新等动作全部收进详情弹窗底部，不再在卡片上挤一排按钮。</li>
+                <li>「冲突：无」改为「冲突：0」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.7 · 修复桌面端 HTTPS 凭据失效 + 新增「贡献到 git 仓」（2026-06-21）</div>
+              <ul>
+                <li><b>修复</b>：桌面端拉取私有仓时 HTTPS 凭据不生效（报「Access denied / 鉴权失败」），即便账号密码正确。根因是桌面二进制被 git 当作凭据助手（GIT_ASKPASS）调用时不会应答——它只在 Web 版里实现了。现已抽成共享逻辑，Web 与桌面两个入口都正确应答。公开仓不受影响，故此前只有私有仓暴露此问题。</li>
+                <li><b>新功能：贡献到 git 仓</b>。手写 skill 的「备份」现可选「贡献到 git 仓」：转移进所选 git 源仓 + 原位软链 + <code>git add</code> + commit（<code>&lt;skill&gt; &lt;简述&gt;</code>）+ push 一次完成；简述默认取 SKILL.md description、可改。push 失败（无写权限/非快进/网络）诚实报错、保留本地提交、绝不 <code>--force</code>。</li>
+                <li><b>快捷上传</b>：git 源仓内 skill 有本地改动（含「已提交未推送」，即贡献时 push 失败的产物）时，卡片出现「快捷上传」一键 commit + push 重推。</li>
+                <li><b>更新让路</b>：更新不再无条件 <code>reset --hard</code> 销毁本地改动。检测改为<b>提交感知</b>（连「已提交未推送」也认）：新增未推送的 skill 更新时保留并提示；有修改/未推送提交则弹三选项——快捷上传 / 放弃本地改动并更新 / 取消。语义对齐正常 git，绝不静默丢失。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.6 · 修复 Windows 命令窗口闪烁（2026-06-21）</div>
+              <ul>
+                <li>Windows 桌面端调 git（拉取/同步）与建软链（mklink）时不再闪烁黑色命令行窗口——这两处之前漏设了「无窗口」标志（npx/插件命令早已设过）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.5 · Windows 自动强制接管（2026-06-18）</div>
+              <ul>
+                <li>Windows 启动时若有旧实例占着锁，现在会自动安全接管：用真正的 Windows 存活检测 + 按进程名 <code>skillmanage</code> 强制终止旧实例（绝不误伤其它程序），不再需要手动去任务管理器结束进程。</li>
+                <li>pid 记录失效/错位时，按进程名清扫残留的 SkillManager 实例（仅限本应用，永不含自身）再接管。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.4 · 空目录可搜索 + 名称清洗补全（2026-06-18）</div>
+              <ul>
+                <li>修复：还没添加任何同步目录时，在线搜索能正常出结果（之前请求成功却不渲染、也无报错）。</li>
+                <li>搜索结果里的本地 skill 名称同样按显示清洗（<code>.well-known/...</code> 布局只显示 skill 名，hover 看全名）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.3 · Windows 启动诊断（2026-06-18）</div>
+              <ul>
+                <li>桌面端启动若因「锁被其它实例占用且接管失败」而退出，现在会把原因（持有者 pid / 类型 / 是否存活）写进 <code>desktop.log</code>，便于排查「双击没反应」。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.2 · 滚动条美化 + 工具栏微调（2026-06-18）</div>
+              <ul>
+                <li>Windows / Linux 上的滚动条改为 mac 风格——细、半透明、低存在感（悬停略加深），不再是系统默认的粗条。</li>
+                <li>git 仓工具栏：「导入 / 导出」靠左，「添加」靠右。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.1 · 修复 skill 名称显示（2026-06-18）</div>
+              <ul>
+                <li>采用 <code>.well-known/skills/&lt;名&gt;/SKILL.md</code> 嵌套布局的 skill（如飞书系列），名称不再显示成整条路径，只显示 skill 名（完整原名见 hover）。</li>
+                <li>在线卡名称优先完整显示，<code>owner/repo</code> 徽章改显 repo 并在空间不足时省略。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v5.0.0 · 接入 skill.sh：在线搜索 + 安装（2026-06-18）</div>
+              <ul>
+                <li>点「搜索」/回车即同时搜本地 + skills.sh 线上可安装的 skill；结果分「本地 / 在线」两区。</li>
+                <li>在线结果显示安装数 / 来源 / 链接；已装的标「已安装」，不重复给安装按钮。</li>
+                <li>齿轮 ⚙ 可按<b>安装数过滤</b>在线结果（全部 / ≥1K / ≥10K / ≥100K），过滤偏好记忆。</li>
+                <li>「安装」两层：<code>npx skills add -g -y -a universal</code> 只装到 canonical（<code>~/.agents/skills</code>，不乱链）；再由 SkillManager 自己的能力<b>软链（启用）到你当前所在的目录 tab</b>——这条链受管、可随时停用。</li>
+                <li>不接管 skills.sh（更新仍交其原生方式）；安装/启用成功或失败都如实提示。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.3 · 修复版本徽章显示（2026-06-18）</div>
+              <ul>
+                <li>只有标准语义版本号（如 3.13.1）才算版本并显示徽章。</li>
+                <li>commit 哈希（commit 锁定的插件，如 frontend-design）、unknown、空值一律不算版本，不显示徽章——不再出现 <code>vunknown</code>。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.2 · 修复插件委托更新假成功（2026-06-18）</div>
+              <ul>
+                <li>委托更新改为按 <code>claude plugin list</code> 记录的真实 scope 执行，不再盲猜（之前对 project 作用域插件误用 user scope，导致更新无效）。</li>
+                <li>诚实判定更新结果：CLI 失败时退出码仍为 0，过去会误报「已更新」；现在识别失败标记并弹出真实原因，只有真正成功才提示重启生效。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3.1 · 修复启动闪烁循环（2026-06-17）</div>
+              <ul>
+                <li>单实例守护加固：已有桌面窗口在运行时，新启动直接退出、不再杀掉旧实例——避免外部重复拉起（Dock / 登录项 / 残留 LaunchAgent）造成「开一下关一下」的闪烁死循环。takeover 仅用于替换无窗口的 CLI 守护或接管失效锁。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.3 · 徽章与插件更新（2026-06-17）</div>
+              <ul>
+                <li>plugin 徽章按连字符首字母缩写（compound-engineering → ce）；徽章不再被截断、版本号完整显示。</li>
+                <li>插件委托更新：「插件」组第一行逐插件「更新」+「全部更新」（CLI 不提供版本对比，无法检测更新，故为手动委托模式）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.2 · 凭据与目标（2026-06-17）</div>
+              <ul>
+                <li>添加 git 仓内联填 HTTPS 凭据，同主机已存凭据自动复用，不再二次弹窗。</li>
+                <li>添加项目目标时自动补建缺失的 .claude / .codex skills 子目录。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.1 · 健康度与冲突（2026-06-16）</div>
+              <ul>
+                <li>健康度独立入口（页脚）：撞名 / 遮蔽 / 嵌套 / 同步错误，弹窗内解决。</li>
+                <li>遮蔽按「父 ⇄ 子」成对分组，可按文件夹批量取舍；兄弟项目不再误判冲突。</li>
+                <li>顶部「冲突」改为跨源体检：名称重复 + 关键词重叠。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v4.0 · 桌面封装（2026-06-16）</div>
+              <ul>
+                <li>桌面应用（Wails）封装；启动加固 PATH，GUI 也能找到 npx / git / claude。</li>
+                <li>进页面自动检查更新（静默 ls-remote，不拉取）。</li>
+                <li>导出可选位置、导入导出收拢到左侧；同步进度改为轻提示；搜索覆盖全部源并可实时启用。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v3.2 · 新鲜度与检查更新（2026-06-15）</div>
+              <ul>
+                <li>检查更新——识别各仓上游是否有新提交（只 ls-remote、不拉取）；进页面自动静默检查。</li>
+                <li>已克隆仓圆点为绿（可用即绿），新鲜度改由「有更新」徽章表达。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v3.1 · skills.sh 共存与现状视图（2026-06-15）</div>
+              <ul>
+                <li>来源归类引擎 + skills.sh lockfile 只读识别（U5）；目录现状视图 API（U6）。</li>
+                <li>目录现状视图 + 启用 / 停用 + 代调 <code>npx skills update</code>（U7–U9）。</li>
+                <li>现状按来源分组 + 手风琴；未知软链反查指向 + 删除；skills.sh 按来源仓分组。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v3.0 · 三期 · 源模型抽象（2026-06-15）</div>
+              <ul>
+                <li>源类型抽象：git 源 / 目录源 / 本地源（U1）；跨平台位置注册表，发现 <code>~/.agents/skills</code> 目录源（U2）。</li>
+                <li>扫描深度上限 / 跳过 node_modules + 项目级优先 scope 判定（U3）；never-break 第④不变式（U4）。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v2.2 · HTTPS 凭据与使用指南（2026-06-15）</div>
+              <ul>
+                <li>应用内填 HTTPS 凭据(PAT) 让私有仓免交互更新；每仓连通状态点，红点可点击重填；移除仓时清掉其 host 凭据（无其他仓使用时）。</li>
+                <li>取消忽略 plugin 时扫描插件目录并列出可收编（复制导入、不改原件）；标题加 <code>?</code> 使用指南弹窗。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v2.1 · 多 tab 同步目录（2026-06-14）</div>
+              <ul>
+                <li>同步目录改为多 tab，一目录一 tab、各自独立映射，自动展开 cc / codex（别名按 harness 加后缀）。</li>
+                <li>main 区改手风琴（同时只展开一个）；移除「停用」三态——软链=用、不链=不用。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v2.0 · 二期 · 跨 harness 映射与收编（2026-06-14）</div>
+              <ul>
+                <li>Codex 个人 + 项目 skill 目标，守卫目录强制（U1/U2）；nested-SKILL.md 守卫（U3）。</li>
+                <li>收编 / 备份手写 skill 到受管存储（U5）；跨 harness 冲突识别 + 状态徽章（U4）。</li>
+                <li>压平为「仓库 + 同步目录」纯同步模型，cc / codex 简写。</li>
+              </ul>
+            </div>
+            <div class="cl-rel">
+              <div class="cl-rel-head">v1.0 · 一期 · 基础不变式与引擎（2026-06-10 ~ 06-11）</div>
+              <ul>
+                <li>① git 只读镜像（reset --hard）。② never-clobber 真身文件。③ manifest 所有权（只增删自建链接，删前与磁盘核对）。</li>
+                <li>跨平台链接引擎 + reconcile 差分同步（enabled → desired links）。</li>
+                <li>token 鉴权 REST API + 内嵌 SPA + SyncAll；按 OS 开机自启 + flock 单实例；每日定时调度（补跑 + RunNow）；卡片描述 / 搜索 / 概览 / 状态徽章 / 分组；跨平台交叉编译 Makefile。</li>
+                <li>可靠性加固：git 超时、仓名撞名处理、prune 守卫、关停 drain。</li>
+              </ul>
+            </div>
+            </div>
+          </div>
+
+          <h4>仓库列表（侧栏三类源）</h4>
+          <p>侧栏按来源分三区，<b>点任意卡片可弹窗查看该来源的全部 skill</b>：</p>
+          <ol>
+            <li><b>git 仓（我们管）</b>：clone 到 <code>~/.skillmanage/repos</code>，可拉取更新。弹窗里只读；要整仓移除用卡片上的「移除」。</li>
+            <li><b>本地源</b>：本地文件夹里的 skill，能力相同、按来源分两种——<b><code>local</code></b> 是 SkillManager 创建的受管存储（备份 / 手写归入 <code>~/.skillmanage/local</code>，弹窗里每个可<b>删除</b>）；点分区标题的<b>「添加本地源」</b>可把你选的<b>任意文件夹</b>登记为一个独立本地源（实时识别、<b>不复制</b>，软链直接指向原文件，可取别名、整源可「移除」）。侧栏按文件夹分卡，使用时（管理 / 现状）合并为一个「本地源」类。本地源是「移动」体系的<b>双向</b>目标：可把别处的 skill <b>移入</b>该文件夹，也可把其中的 skill <b>移出</b>到 local / git / 另一个本地源——这类<b>显式移动会写入该文件夹</b>（自动同步仍只读）。</li>
+            <li><b>npx skills（<code>skills.sh</code> / <code>skillsmp</code>）</b>：<code>~/.agents/skills</code> 里由 <code>npx skills</code> 装的 skill，只读识别——无论来自 <a href="https://skills.sh" class="online-link">skills.sh</a> 还是 <a href="https://skillsmp.com" class="online-link">skillsmp</a>，都归这一类（见下「在线搜索并安装」）。卡片上有<b>「更新」</b>代调 <code>npx skills update</code>（需本机有 <code>npx</code>）；绝不接管或改动它的真身与台账。</li>
+          </ol>
+
+          <h4>git 仓与鉴权</h4>
+          <p>仓库 URL 支持 <code>https://…</code>、<code>ssh://…</code>，以及 scp 式 <code>git@host:org/repo.git</code>；不支持明文 <code>http://</code>、本地 <code>file://</code> 和 <code>ext::</code>。<b>公开仓</b>用 https 直接添加、无需配置；<b>私有仓需先配好「免交互」鉴权</b>——点「更新」时以非交互方式拉取、<b>不弹窗输密码</b>，配不好只在该仓报错（不会卡住）：</p>
+          <ol>
+            <li><b>SSH（私有仓推荐）</b>：配好该 git 主机的 SSH key 并加入 <code>ssh-agent</code>（带 passphrase 的 key 要先解锁，因为工具以 <code>BatchMode</code> 运行、不会提示输入），公钥登记到 git 服务器。</li>
+            <li><b>HTTPS（最简单）</b>：点仓库卡片上的「填写凭据」按钮，在应用内填用户名 + 个人访问令牌(PAT)，存于本机 <code>~/.skillmanage/credentials.yaml</code>（0600），拉取时自动注入。也可改用系统凭据助手（macOS 钥匙串 / Git Credential Manager）。鉴权失败时该仓会提示去填。</li>
+          </ol>
+
+          <h4>同步目录（顶部 tab）</h4>
+          <p>cc 与 codex 的 skill 通用，同一个来源可同时映射进两边。</p>
+          <ol>
+            <li><b>添加</b>：点 <code>+</code> 手输 / 粘贴路径，或点选浏览。</li>
+            <li><b>自动展开</b>：选一个项目根（含 <code>.claude</code> / <code>.codex</code>）会自动展成 cc / codex 两个 tab，标签自动识别；认不出的标 <code>unknown</code>。</li>
+            <li><b>删除</b>：删一个 tab 会拆除该目录下<b>由本工具建立的软链</b>，你自己的真身 skill 不受影响。</li>
+          </ol>
+
+          <h4>目录现状视图</h4>
+          <p>选中一个 tab，主面板列出该目录里<b>实际存在</b>的每个 skill，<b>按来源分组</b>——各组<b>默认全部展开</b>，点组标题可单独收起 / 展开该组，互不影响。</p>
+          <ol>
+            <li><b>来源分组</b>：<code>本地源</code>（受管存储 <code>local</code> + 你登记的本地文件夹，<b>合并为一组</b>，每卡带标签区分归属）、<code>git</code>、<code>skills.sh</code>、<code>插件</code>、<code>未备份</code>（你手写、还没纳管的真身）、<code>未知软链</code>。</li>
+            <li><b>本工具管理的</b>（git / 本地源）：带<b>启用 / 停用</b>开关，切换即建 / 拆软链并提示结果。自动同步进来的不单独切换——要取消请点开左侧该来源卡片，在弹窗里关掉「自动同步」。</li>
+            <li><b>别家管理的</b>（插件）：只读不碰；<code>skills.sh</code> 的链可在此<b>停用</b>（仅拆此处软链投影，不动真身）。</li>
+          </ol>
+          <p>组标题旁的 <code>?</code> 点开有说明。</p>
+
+          <h4>导出 skill 为 zip</h4>
+          <p>任意 skill 的<b>详情弹窗操作区右侧</b>有<b>「导出 skill」</b>（与停用 / 备份等并排）：把该 skill 打包成 zip 存到 <code>~/.skillmanage/exports/</code>（解压得到单个顶层 skill 文件夹）。右侧「现状」里的 skill 多是软链，导出会先<b>解析到真身</b>再打包——所以源详情、现状详情都能导出。导出是<b>只读</b>操作，不改动真身；插件 skill 由 harness 管理，不提供导出。</p>
+
+          <h4>启用 / 自动同步（在源卡片弹窗里）</h4>
+          <p>先在顶部选好目标目录 tab，再点<b>左侧任一源卡片</b>（git 仓 / npx skills / 本地源）打开它的 skill 弹窗。</p>
+          <ol>
+            <li><b>单个启用</b>：每个 skill 行的<b>「启用」</b>按钮做单个映射，已启用的标「已启用」、同步中的标「自动同步中」。</li>
+            <li><b>整源同步</b>：弹窗顶部「启用到当前目录」旁的<b>「自动同步」</b>开关让整个来源自动同步——之后该来源新增 skill 自动加链、删除的自动清链。</li>
+            <li><b>停用</b>：停用某个 skill 在「目录现状」视图里操作。</li>
+          </ol>
+
+          <h4>备份 / 删除未备份 skill</h4>
+          <p>现状视图里标 <code>未备份</code> 的是你手写、还没纳管的真身 skill，有两个动作：</p>
+          <ol>
+            <li><b>备份</b>：把真身移入受管存储（<code>~/.skillmanage/local</code>）并在原位留软链——agent 里照常可用，归类移到 <code>本地</code>、纳入统一管理。</li>
+            <li><b>删除</b>：永久删除该真身目录（不可恢复，删前强确认，且只删确含 SKILL.md 的目录）。</li>
+          </ol>
+
+          <h4>在线搜索并安装（skills.sh / skillsmp）</h4>
+          <p>顶部搜索框同时搜<b>本地全部源</b>与<b>两个在线市场</b>——<a href="https://skills.sh" class="online-link">skills.sh</a> 与 <a href="https://skillsmp.com" class="online-link">skillsmp</a>，命中即可一键安装到本机。</p>
+          <ol>
+            <li><b>结果来源</b>：在线卡片按来源打徽章——skills.sh 显示 <code>↓</code> 下载数、skillsmp 显示 <code>★</code> 星数；本地命中不带在线徽章。</li>
+            <li><b>安装</b>：点在线卡片的<b>「安装」</b>统一走 <code>npx skills add</code>，装进 canonical <code>~/.agents/skills</code>、归入左侧<b>「npx skills」</b>源——零额外管理层，之后更新 / 停用与其它 npx skill 一致（需本机有 <code>npx</code>）。</li>
+            <li><b>筛选（齿轮 ⚙）</b>：分三组横排单选——<b>来源</b>（全部 / skills.sh / skillsmp）+ <b>排序</b>（默认 / 按下载·星 升降序，默认按热度降序）+ <b>数量限制</b>（全部 / 每个来源各取前 N 条——两源都保底露出，不会被对方挤占）；选择本地持久化。</li>
+            <li><b>容错</b>：两源并行查询，任一源失败（超时 / 限流 / 网络）只在结果区提示一条，<b>不影响另一源</b>结果展示。skillsmp 经 curl 拉取（绕过其 Cloudflare 对 Go TLS 指纹的 403），匿名 API 约 50 次/天限流。</li>
+          </ol>
+
+          <h4>与 npx skills（skills.sh / skillsmp）等工具共存</h4>
+          <p>本工具<b>只识别、不接管</b>别家（skills.sh / skillsmp、插件）装的 skill：<b>绝不改动它的真身与台账</b>（第四条不变式）。</p>
+          <ol>
+            <li><b>真身位置</b>：安装真身在 <code>~/.agents/skills</code>（跨工具中立目录，自动识别为来源），各 harness 目录里只是指向它的<b>软链投影</b>。</li>
+            <li><b>停用投影</b>：现状视图里可停用某一处的软链投影（拆软链、真身不动，且下次 npx update 可能重新投影回来），彻底卸载仍交给它自己。</li>
+            <li><b>更新交给它</b>：来源地址记在台账 <code>~/.agents/.skill-lock.json</code>（逐个 skill 记 <code>sourceUrl</code>）；侧栏 <b>npx skills</b> 卡片的<b>「更新」</b>代调 <code>npx skills update</code>，现状视图里逐个卡片也有「更新」。</li>
+          </ol>
+
+          <h4>更新：每天定时 + 手动全量 / 强制</h4>
+          <ol>
+            <li><b>每天定时</b>：每天早上 09:40（本地时间）自动更新一次全部源——拉取 git 仓上游 + 代调 <code>npx skills update</code> 刷新 npx skills 源，然后重新同步软链。</li>
+            <li><b>手动</b>：随时点「全量更新」（git 仓标题行只更 git；npx skills 卡片的「更新」代调 npx；单仓卡片只更该仓）。</li>
+            <li><b>有本地改动时</b>：被跳过并提示是否<b>还原并更新</b>（git reset --hard 丢弃本地改动、与上游一致，谨慎使用，仅作用于 git 源）。</li>
+            <li><b>检查节奏</b>：启动时只重建软链、不拉取；打开期间<b>每小时检查一次</b>上游（只检查不拉取，有更新的仓标「有更新」徽章）。</li>
+            <li><b>非交互拉取</b>：以 BatchMode 运行、不弹窗输密码；私有仓需先配好免交互鉴权，否则该仓标红、拉取失败。</li>
+            <li><b>仓名前圆点</b>：<b style="color:var(--ok)">绿</b>=上次同步成功、<b style="color:var(--err)">红</b>=失败（HTTPS 红点可点击重填凭据）、灰=尚未同步。</li>
+          </ol>
+
+          <h4>同步本地（自动反映工具外的文件改动）</h4>
+          <p>你可能不经本工具、直接在文件系统里增删 / 改动本地 skill 文件。工具会自动让显示与磁盘保持一致——后端各接口本就<b>每次请求实时扫描磁盘</b>，前端只需重拉（这与上面的「更新」是两件事：更新是拉取 git / npx <b>上游</b>，同步本地是反映<b>本机</b>文件变化）。</p>
+          <ol>
+            <li><b>自动同步</b>：打开期间<b>每 15 秒</b>在后台静默探测磁盘指纹，发现本地 skill 被工具外增删 / 改动时自动刷新一次。<b>仅在确有变化时整体刷新</b>，无变化绝不重绘，空闲时完全无感（不闪烁、不跳滚动条）。</li>
+            <li><b>不打断操作</b>：打开任何弹窗 / 输入时、以及标签页不可见时都暂停探测；切回标签页或窗口重新获得焦点时立即探测一次，秒级反映。</li>
+            <li><b>手动</b>：右上角<b>「↻ 同步本地」</b>按钮随时手动重扫，立即刷新。</li>
+          </ol>
+
+          <h4>同步仓库（git 同步：拉取上游 + 上传本地改动）</h4>
+          <p>点 git 仓卡片或仓弹窗顶部的<b>「同步仓库」</b>，是 git 源唯一的整仓同步入口（拉取 + 上传合一）。它先在本地检测该仓有无改动，再决定走哪条路：</p>
+          <ol>
+            <li><b>无本地改动</b> → 直接<b>更新</b>：拉取上游并以镜像方式对齐本地（见下「更新/对齐」命令）。</li>
+            <li><b>有本地改动</b>（新增 / 修改 / 删除 / 已提交未推送）→ 弹窗列出该仓<b>全部</b>改动 + 可编辑的提交信息，底部两个按钮：
+              <ul>
+                <li><b>确认</b> = 把全部改动 <code>commit</code> + <code>push</code> 到上游，再拉取对齐；</li>
+                <li><b>仅更新</b> = 不上传，拉取上游并<b>保留</b>本地改动（暂存 → 合并上游 → 还原）；非冲突改动保留、下次还能再「同步仓库」上传，与上游<b>冲突</b>则更新失败、交给 git 手动解决，<b>绝不丢弃</b>。</li>
+              </ul>
+              不支持只上传其中一部分——镜像模型下本地必须与上游完全一致，留半数改动与上游分叉无法成立。</li>
+          </ol>
+          <p><b>底层 git 命令使用流程</b>（按实际执行顺序；均为非交互、离散 argv、绝不经 shell；<code>&lt;b&gt;</code> = 该仓分支）。三种走法各自的命令序列：</p>
+          <p style="margin-bottom:4px"><b>① 无本地改动 → 直接更新</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD   # 1 解析分支
+git status --porcelain                              # 2 检测改动（空）
+git fetch --prune origin                            # 3 取上游
+git reset --hard origin/&lt;b&gt;                          # 4 对齐到上游
+git clean -fd                                       # 5 清掉上游已删的残留</pre>
+          <p style="margin:8px 0 4px"><b>② 有改动 → 确认（先上传再更新）</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD   # 1 解析分支
+git status --porcelain                              # 2 检测到改动
+git add -- &lt;skill 路径…&gt;                             # 3 暂存全部改动
+git commit -m "&lt;提交信息&gt;"                           # 4 提交（可编辑信息）
+git push origin &lt;b&gt;                                  # 5 推送；失败则保留提交、绝不 --force
+git fetch --prune origin                            # 6 取上游
+git reset --hard origin/&lt;b&gt;                          # 7 对齐（此时本地==上游）
+git clean -fd                                       # 8 清残留</pre>
+          <p style="margin:8px 0 4px"><b>③ 有改动 → 仅更新（<b>保留</b>本地，绝不丢弃）</b></p>
+          <pre class="help-flow">git symbolic-ref --short refs/remotes/origin/HEAD          # 1 解析分支
+git status --porcelain                                    # 2 检测本地改动（要保留）
+git fetch --prune origin                                  # 3 取上游
+git stash push --include-untracked -m skillmanager-update # 4 暂存本地改动
+git merge --no-edit origin/&lt;b&gt;                             # 5 合并上游（ff 或 merge commit）
+git stash pop                                             # 6 把本地改动重新应用到更新后的上游之上</pre>
+          <p><b>「仅更新」保留本地、绝不 <code>reset --hard</code></b>：非冲突改动随上游合并并保留（下次还能上传）；若与上游<b>冲突</b>，则 <code>git merge --abort</code> + <code>git stash pop</code> 还原（或 pop 阶段留下冲突 markers 并保留 stash），更新<b>失败</b>并提示用 git 手动解决——<b>不丢弃任何本地改动</b>。只有 ①（无改动）与 ②（确认：已 commit+push 后工作树干净）才以 <code>reset --hard</code>+<code>clean -fd</code> 对齐——那时本地已等于上游，没有可丢的东西。不支持「只上传一部分」仍是镜像模型所限。判断「已提交未推送」额外用 <code>git rev-list --count origin/&lt;b&gt;..HEAD</code> + <code>git diff --name-only origin/&lt;b&gt;..HEAD</code>；仅检查不拉取（每小时 / 状态徽章）用 <code>git rev-parse</code> 比对 <code>git ls-remote origin &lt;b&gt;</code>；添加仓库时一次 <code>git clone</code>。私有仓鉴权见上（SSH BatchMode / HTTPS PAT，均非交互）。</p>
+
+          <h4>导入 / 导出</h4>
+          <p>导出 / 导入的是<b>仓库列表</b>，用于在另一台机器快速重建来源配置。本机的链接所有权记录（manifest）不随导出走，避免误删别的机器上的链接。</p>
+
+          <h4>安全约束（设计用意）</h4>
+          <p>① <b>只读镜像</b>：从不改写 skill 内容，只做映射。② <b>never-clobber</b>：绝不覆盖你已有的真身文件。③ <b>manifest 所有权</b>：只增删本工具自己建立的链接，删除前一律与磁盘核对。④ Codex 的 <code>.system</code> / <code>vendor_imports/skills</code> 是守卫目录，永不写入或收编。</p>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="online-filter-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(420px,100%)">
+        <div class="modal-head">
+          <h3>在线结果筛选</h3>
+          <button id="online-filter-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:16px">
+          <div class="filter-group">
+            <div class="filter-group-title">来源</div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineSrc" value="both" /> 全部</label>
+              <label><input type="radio" name="onlineSrc" value="skillssh" /> skills.sh ↓</label>
+              <label><input type="radio" name="onlineSrc" value="skillsmp" /> skillsmp ★</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <div class="filter-group-title">排序（按下载 / 星数）</div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineSort" value="default" /> 默认</label>
+              <label><input type="radio" name="onlineSort" value="desc" /> 热度 ↓</label>
+              <label><input type="radio" name="onlineSort" value="asc" /> 热度 ↑</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <div class="filter-group-title">数量限制 <span style="font-weight:400;opacity:.6;font-size:12px">（每个来源各取前 N，两源都保底露出）</span></div>
+            <div class="filter-opts">
+              <label><input type="radio" name="onlineLimit" value="0" /> 全部</label>
+              <label><input type="radio" name="onlineLimit" value="10" /> 前 10</label>
+              <label><input type="radio" name="onlineLimit" value="20" /> 前 20</label>
+              <label><input type="radio" name="onlineLimit" value="50" /> 前 50</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="smp-key-modal" class="modal hidden">
+      <div class="modal-card" style="width:min(460px,100%)">
+        <div class="modal-head">
+          <h3>配置 skillsmp API key</h3>
+          <button id="smp-key-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:10px">
+          <div id="smp-key-status" class="muted" style="font-size:12px">未配置 · 匿名 50 次/天，易触发 403 风控</div>
+          <div style="display:flex;gap:8px">
+            <input id="smp-key-input" type="password" autocomplete="off" placeholder="sk_live_…（仅存本机，不随导出）" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border,#333);background:var(--card,#1a1a1a);color:inherit" />
+            <button id="smp-key-save" class="small">保存</button>
+            <button id="smp-key-clear" class="ghost small">清除</button>
+          </div>
+          <div class="muted" style="font-size:12px;line-height:1.6">
+            平时匿名直接用即可（50 次/天）；被 Cloudflare 风控返回 403 时再来配。用<b>你自己</b>的免费 key 提到 <b>500 次/天</b>并显著减少 403。<br/>
+            获取：登录 <a href="https://skillsmp.com/developers" class="online-link">skillsmp.com/developers</a> → 生成 API key（<code>sk_live_…</code>）→ 粘贴保存。key <b>仅存本机</b>（0600）、绝不随导出离开、绝不上传、绝不内置进工具。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3 id="modal-title"></h3>
+          <button id="modal-close" class="modal-x" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <p id="modal-authorship" class="muted hidden" style="font-size:12px;margin:0;padding:10px 18px 0"></p>
+        <p id="modal-desc" class="muted"></p>
+        <p id="modal-source" class="modal-source hidden"></p>
+        <div id="modal-actions" class="modal-actions hidden"></div>
+        <pre id="modal-content"></pre>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

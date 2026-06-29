@@ -1,0 +1,12 @@
+{
+  "version": "6.0.3",
+  "notes": "桌面端在线更新（检查 + 一键自更新）+ Windows 自更新修复 + 导出修复。",
+  "assets": {
+    "desktop-macos": "https://github.com/YSBZ/skill-manager/releases/download/v6.0.3/SkillManager-desktop-macos-v6.0.3.zip",
+    "desktop-windows": "https://github.com/YSBZ/skill-manager/releases/download/v6.0.3/SkillManager-desktop-windows-v6.0.3.zip"
+  },
+  "sha256": {
+    "desktop-macos": "43f66933f7a7d3c09057c88e221fee71d24acec1f9c67016d138a41c4c1cf12c",
+    "desktop-windows": "3aa1d81c47bce755c9530c1f512954301fe2d8f7a883f02a06122e55878ea57b"
+  }
+}

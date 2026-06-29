@@ -1,0 +1,14 @@
+# built binary
+/skillmanager
+/skillmanager.exe
+/skillmanage
+/skillmanage.exe
+# cross-compiled artifacts
+/dist/
+# runtime central folder if ever created in-tree during dev
+/.skillmanage/
+*.log
+.DS_Store
+# company-private online-update values (feed URL + read-only token); injected at
+# build time via ldflags, NEVER committed. Public builds omit it → update disabled.
+/build/update.local
